@@ -8,6 +8,11 @@ var tmpGlobalContent = null
 
 var allImages = [];
 var extractedImages = [];
+// Resolved image url (or the data uri itself) -> the filename generated for it.
+// A page that shows the same image in several places - a repeated logo, an icon
+// in every list row - would otherwise download, store and index it once per
+// <img>, at full size each time.
+var imageFileNames = new Map();
 var allowedTags = [
     'address', 'article', 'aside', 'footer', 'header', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
     'hgroup', 'nav', 'section', 'dd', 'div', 'dl', 'dt', 'figcaption', 'figure', 'hr', 'li',
@@ -41,9 +46,29 @@ var mathMLTags = [
     'mrow', 'ms', 'mspace', 'msqrt', 'mstyle', 'msub', 'msup', 'msubsup', 'mtable', 'mtd', 'mtext', 'mtr', 'munder', 'munderover', 'msgroup', 'mlongdiv', 'mscarries',
     'mscarry', 'mstack', 'semantics'
 ]
-var cssClassesToTmpIds = {};
-var tmpIdsToNewCss = {};
-var tmpIdsToNewCssSTRING = {};
+// Extraction runs in three phases, and the split matters:
+//
+//   read  - walk the LIVE dom, measure and compute everything that only exists
+//           there (getComputedStyle, offsetWidth, canvas bitmaps, iframe
+//           documents) and record the verdict per element
+//   clone - copy the nodes to extract
+//   write - mutate the CLONE from what the read phase recorded
+//
+// Doing the mutations on the live page instead - which is what this used to do -
+// left the page permanently damaged after a save: collapsed accordions and
+// display:none menus deleted, every same-origin iframe replaced by a div.
+//
+// The correspondence between a live element and its clone is carried by a marker
+// attribute written during the read phase and removed before it returns. A
+// parallel walk of the two trees would avoid even that, but a selection is cloned
+// with Range.cloneContents(), which gives no way to walk in lockstep.
+var SAE_MARK_ATTR = 'data-sae-mark';
+
+// generated css class name -> the declarations behind it, and the reverse lookup
+// used to give two elements that compute to the same style the same class.
+// Reset per job, so a chapter's style file holds only the classes it uses.
+var classNameToCss = new Map();
+var cssToClassName = new Map();
 
 // src: https://idpf.github.io/a11y-guidelines/content/style/reference.html
 var supportedCss = [
@@ -72,19 +97,31 @@ function getImageSrc(srcTxt) {
 
     // TODO - convert <imgs> with svg sources to jpeg OR add support for svg
 
+    let isB64Img = isBase64Img(srcTxt);
+    // Two <img> tags pointing at the same bytes must resolve to the same key:
+    // for remote images that is the absolute url, for inline ones the data uri.
+    // "img/a.png" and "./img/a.png" name one file but not one string, so the key
+    // is canonicalized - the url actually fetched is left alone.
+    let imageKey = isB64Img ? srcTxt : canonicalizeUrl(srcTxt);
+
+    let knownFileName = imageFileNames.get(imageKey);
+    if (knownFileName) {
+        return '../images/' + knownFileName;
+    }
+
     let fileExtension = getFileExtension(srcTxt);
     if (fileExtension === '') {
        fileExtension = "TODO-EXTRACT"
     }
     let newImgFileName = 'img-' + generateRandomNumber(true) + '.' + fileExtension;
+    imageFileNames.set(imageKey, newImgFileName);
 
-    let isB64Img = isBase64Img(srcTxt);
     if (isB64Img) {
         extractedImages.push({
             filename: newImgFileName, // TODO name
             data: getBase64ImgData(srcTxt)
         });
-    } else {        
+    } else {
         allImages.push({
             originalUrl: getImgDownloadUrl(srcTxt),
             filename: newImgFileName,  // TODO name
@@ -94,6 +131,179 @@ function getImageSrc(srcTxt) {
     return '../images/' + newImgFileName;
 }
 
+///// Read phase - everything below reads the live dom and writes nothing to it
+///// except the marker attribute, which readLivePage() removes again.
+
+function newReadState() {
+    return {
+        nextMarkId: 0,
+        // marker id -> what the write phase should do with the cloned element
+        marks: new Map(),
+        // live elements carrying a marker, so it can be taken off again
+        markedElements: [],
+        css: null
+    };
+}
+
+// Returns the record for an element, marking it on first use. One element can
+// collect several verdicts - a hidden iframe is both hidden and replaceable.
+function getMark(state, elem) {
+    let id = elem.getAttribute(SAE_MARK_ATTR);
+    if (id !== null && state.marks.has(id)) {
+        return state.marks.get(id);
+    }
+    id = String(state.nextMarkId++);
+    elem.setAttribute(SAE_MARK_ATTR, id);
+    state.markedElements.push(elem);
+    let mark = {};
+    state.marks.set(id, mark);
+    return mark;
+}
+
+// iframes: the content document is only reachable from the live element, and
+// only for same-origin frames - a cross-origin access throws
+function readIFrames(state) {
+    for (let iFrame of document.getElementsByTagName('iframe')) {
+        let frameBody = null;
+        try {
+            frameBody = iFrame.contentDocument && iFrame.contentDocument.body;
+        } catch (e) {
+            frameBody = null;
+        }
+        if (!frameBody) {
+            continue;
+        }
+        let bbox = iFrame.getBoundingClientRect();
+        getMark(state, iFrame).replaceWithHtml =
+            '<div style="width:' + bbox.width + 'px;height:' + bbox.height + 'px">' +
+            frameBody.innerHTML + '</div>';
+    }
+}
+
+// canvas: toDataURL() reads the live bitmap - a cloned canvas is blank. Reading
+// a canvas tainted by cross-origin drawing throws SecurityError, in which case
+// the canvas is left alone and dropped later with the other stripped tags.
+function readCanvases(state) {
+    document.body.querySelectorAll('canvas').forEach(function (elem) {
+        try {
+            let imgUrl = elem.toDataURL('image/jpeg');
+            getMark(state, elem).replaceWithHtml = '<img src="' + imgUrl + '" alt="" />';
+        } catch (e) {
+            console.log('Error:', e);
+        }
+    });
+}
+
+// svg: getBoundingClientRect() needs the live layout - the serialized markup
+// alone renders at the wrong size
+function readSvgs(state) {
+    let serializer = new XMLSerializer();
+    document.body.querySelectorAll('svg').forEach(function (elem) {
+        try {
+            let bbox = elem.getBoundingClientRect();
+            let svgXml = serializer.serializeToString(elem);
+            let imgSrc = 'data:image/svg+xml;base64,' + window.btoa(unescape(encodeURIComponent(svgXml)));
+            getMark(state, elem).replaceWithHtml =
+                '<img src="' + imgSrc + '" width="' + bbox.width + '" height="' + bbox.height + '" />';
+        } catch (e) {
+            console.log('Error:', e);
+        }
+    });
+}
+
+// Returns the class name standing for this computed style, reusing the name of
+// an earlier element that computed to exactly the same declarations.
+function classNameForComputedStyle(computedStyle) {
+    let declarations = {};
+    for (let cssTagName of supportedCss) {
+        let cssValue = getComputedCssValue(computedStyle, cssTagName);
+        if (cssValue && cssValue.length > 0) {
+            declarations[cssTagName] = cssValue;
+        }
+    }
+
+    // Keyed on the declarations, not on the element's class attribute: two
+    // elements sharing a class name can compute to completely different styles
+    // (the same .title in a sidebar and in an article), and keying on the name
+    // gave the second one the first one's css.
+    let key = JSON.stringify(declarations);
+    let existing = cssToClassName.get(key);
+    if (existing) {
+        return existing;
+    }
+
+    let className = generateRandomTag(2) + classNameToCss.size;
+    cssToClassName.set(key, className);
+    classNameToCss.set(className, declarations);
+    return className;
+}
+
+// Records, for every element, whether it survives into the ebook and which
+// generated class it gets. Mirrors what extractCss() used to decide inline while
+// deleting from the live page.
+function readVisibilityAndCss(state, includeStyle, appliedStyles) {
+    if (includeStyle) {
+        document.body.querySelectorAll('*').forEach((elem) => {
+            let tagName = elem.tagName.toLowerCase();
+            if (allowedTags.indexOf(tagName) < 0) return;
+            if (mathMLTags.indexOf(tagName) > -1) return;
+
+            if (!isElementVisible(elem)) {
+                getMark(state, elem).hidden = true;
+                return;
+            }
+            if (tagName === 'svg') return;
+
+            getMark(state, elem).cssClassName =
+                classNameForComputedStyle(window.getComputedStyle(elem));
+        });
+        state.css = jsonToCss(Object.fromEntries(classNameToCss));
+        return;
+    }
+
+    // no style requested - hidden elements are still dropped, and any style the
+    // background injected for this site is shipped as the chapter's stylesheet
+    document.body.querySelectorAll('*').forEach((elem) => {
+        if (!isElementVisible(elem)) {
+            getMark(state, elem).hidden = true;
+        }
+    });
+
+    if (appliedStyles && appliedStyles.length > 0) {
+        state.css = appliedStyles.reduce((all, applied) => all + applied.style, '');
+    }
+}
+
+function readLivePage(includeStyle, appliedStyles) {
+    let state = newReadState();
+    try {
+        readIFrames(state);
+        readCanvases(state);
+        readSvgs(state);
+        readVisibilityAndCss(state, includeStyle, appliedStyles);
+    } catch (e) {
+        console.log('Error:', e);
+    }
+    return state;
+}
+
+// Takes the markers back off the live page. Must run after the nodes are cloned
+// - the clones keep their copy of the attribute, which is what the write phase
+// looks up - and must run even when extraction fails, or the page is left
+// carrying our attributes.
+function clearLiveMarks(state) {
+    for (let elem of state.markedElements) {
+        try {
+            elem.removeAttribute(SAE_MARK_ATTR);
+        } catch (e) {
+            console.log('Error:', e);
+        }
+    }
+    state.markedElements = [];
+}
+
+///// Write phase - operates only on the cloned tree
+
 // tested
 function extractMathMl(htmlObject) {
     htmlObject.querySelectorAll('span[id^="MathJax-Element-"]').forEach(function (el) {
@@ -101,76 +311,36 @@ function extractMathMl(htmlObject) {
     });
 }
 
-// tested
-function extractCanvasToImg(htmlObject) {
-    htmlObject.querySelectorAll('canvas').forEach(function (elem) {
-        try {
-            // FIXME - docEl is not defined, so this throws for every canvas and
-            // no canvas is ever converted. Left as is to keep this change a pure
-            // library swap; the fix is to read from elem.
-            let imgUrl = docEl.toDataURL('image/jpeg');
-            replaceElementWithHTML(elem, '<img src="' + imgUrl + '" alt=""></img>');
-        } catch (e) {
-            console.log(e)
+// Applies the read phase's verdicts to the clone. Runs before the clone is
+// serialized: svg and canvas are in strippedContentTags, so anything still
+// carrying those tags at parse time is dropped along with its content.
+function applyReadState(cloneRoot, state) {
+    cloneRoot.querySelectorAll('[' + SAE_MARK_ATTR + ']').forEach(function (elem) {
+        let mark = state.marks.get(elem.getAttribute(SAE_MARK_ATTR));
+        elem.removeAttribute(SAE_MARK_ATTR);
+        if (!mark) {
+            return;
+        }
+        if (mark.hidden) {
+            elem.remove();
+            return;
+        }
+        if (mark.cssClassName) {
+            elem.setAttribute('data-class', mark.cssClassName);
+        }
+        if (mark.replaceWithHtml) {
+            // no-op when the element was already dropped with an ancestor
+            replaceElementWithHTML(elem, mark.replaceWithHtml);
         }
     });
+
+    extractMathMl(cloneRoot);
 }
 
-// tested
-function extractSvgToImg(htmlObject) {
-    let serializer = new XMLSerializer();
-    htmlObject.querySelectorAll('svg').forEach(function (elem) {
-        // add width & height because the result image was too big
-        let bbox = elem.getBoundingClientRect()
-        let newWidth = bbox.width
-        let newHeight = bbox.height
-        let svgXml = serializer.serializeToString(elem);
-        let imgSrc = 'data:image/svg+xml;base64,' + window.btoa(svgXml);
-        replaceElementWithHTML(elem, '<img src="' + imgSrc + '" width="'+newWidth+'" height="'+newHeight+'">' + '</img>');
-    });
-}
-
-// replaces all iframes by divs with the same innerHTML content
-function extractIFrames() {
-    let allIframes = document.getElementsByTagName('iframe')
-    let changeIFrames = []
-    let newDivs = []
-    for (let iFrame of allIframes) {
-        if (!iFrame.contentDocument || !iFrame.contentDocument.body) {
-            continue
-        }
-        let bodyContent = iFrame.contentDocument.body.innerHTML        
-        let bbox = iFrame.getBoundingClientRect()
-        let newDiv = document.createElement('div')
-        newDiv.style.width = bbox.width
-        newDiv.style.height = bbox.height
-        newDiv.innerHTML = bodyContent
-        changeIFrames.push(iFrame)
-        newDivs.push(newDiv)
-    }
-    for (let i = 0; i < newDivs.length; i++) {
-        let newDiv = newDivs[i]
-        let iFrame = changeIFrames[i]
-        let iframeParent = iFrame.parentNode
-        iframeParent.replaceChild(newDiv, iFrame)
-    }
-}
-
-function preProcess(htmlObject) {
-    // TODO
-    // htmlObject.querySelectorAll('script, style, noscript, iframe').forEach(el => el.remove());
-    // document.body.querySelectorAll('iframe').forEach(el => el.remove());
-    // remove empty elements other than img/br/hr
-    // formatPreCodeElements(document.body);
-
-    extractMathMl(htmlObject);
-    extractCanvasToImg(htmlObject);
-    extractSvgToImg(htmlObject);
-}
-
+// Appends to allImages / extractedImages - the caller owns resetting them, so
+// that a multi-range selection accumulates the images of every range instead of
+// each range discarding the ones collected before it.
 function parseHTML(rawContentString) {
-    allImages = [];
-    extractedImages = [];
     let results = '';
     let lastFragment = '';
     // Tags written to the output that still need a closing tag. Kept here rather
@@ -327,12 +497,13 @@ function parseHTML(rawContentString) {
 
 }
 
-function getContent(htmlContent) {
+// htmlContent is already detached: either a clone of the body or the contents of
+// a selection range. Nothing here touches the live page.
+function getContent(htmlContent, state) {
     try {
-        // TODO - move; called multiple times on selection
-        preProcess(document.body)
         let tmp = document.createElement('div');
-        tmp.appendChild(htmlContent.cloneNode(true));
+        tmp.appendChild(htmlContent);
+        applyReadState(tmp, state);
         // The wrapping <div> is added to the result rather than to the parser
         // input on purpose: a fragment parsed inside a <div> is parsed "in body",
         // where a stray <td> or <tr> - what a selection inside a table produces -
@@ -369,86 +540,6 @@ function getSelectedNodes() {
 
 /////
 
-function extractCss(includeStyle, appliedStyles) {
-    if (includeStyle) {
-        document.body.querySelectorAll('*').forEach((pre, i) => {
-            if (allowedTags.indexOf(pre.tagName.toLowerCase()) < 0) return;
-            if (mathMLTags.indexOf(pre.tagName.toLowerCase()) > -1) return;
-
-            if (!isElementVisible(pre)) {
-                pre.remove();
-            } else {
-                if (pre.tagName.toLowerCase() === 'svg') return;
-
-                let classNames = pre.getAttribute('class');
-                if (!classNames) {
-                    classNames = pre.getAttribute('id');
-                    if (!classNames) {
-                        classNames = pre.tagName + '-' + generateRandomNumber();
-                    }
-                }
-                let tmpName = cssClassesToTmpIds[classNames];
-                let tmpNewCss = tmpIdsToNewCss[tmpName];
-                if (!tmpName) {
-                    // TODO - collision  between class names when multiple pages
-                    tmpName = generateRandomTag(2) + i
-                    cssClassesToTmpIds[classNames] = tmpName;
-                }
-                if (!tmpNewCss) {
-                    tmpNewCss = {};
-
-                    let computedStyle = window.getComputedStyle(pre);
-                    for (let cssTagName of supportedCss) {
-                        let cssValue = getComputedCssValue(computedStyle, cssTagName);
-                        if (cssValue && cssValue.length > 0) {
-                            tmpNewCss[cssTagName] = cssValue;
-                        }
-                    }
-
-                    // Reuse CSS - if the same css code was generated for another element, reuse it's class name
-
-                    let tcss = JSON.stringify(tmpNewCss)
-                    let found = false
-
-                    if (Object.keys(tmpIdsToNewCssSTRING).length === 0) {
-                        tmpIdsToNewCssSTRING[tmpName] = tcss;
-                        tmpIdsToNewCss[tmpName] = tmpNewCss;
-                    } else {
-                        for (const key in tmpIdsToNewCssSTRING) {
-                            if (tmpIdsToNewCssSTRING[key] === tcss) {
-                                tmpName = key
-                                found = true
-                                break
-                            }
-                        }
-                        if (!found) {
-                            tmpIdsToNewCssSTRING[tmpName] = tcss;
-                            tmpIdsToNewCss[tmpName] = tmpNewCss;
-                        }
-                    }
-                }
-                pre.setAttribute('data-class', tmpName);
-            }
-        });
-        return jsonToCss(tmpIdsToNewCss);
-    } else {
-        // remove hidden elements when style is not included
-        document.body.querySelectorAll('*').forEach((pre) => {
-            if (!isElementVisible(pre)) {
-                pre.remove()
-            }
-        })
-        let mergedCss = '';
-        if (appliedStyles && appliedStyles.length > 0) {
-            for (let i = 0; i < appliedStyles.length; i++) {
-                mergedCss += appliedStyles[i].style;
-            }
-            return mergedCss;
-        }
-    }
-    return null
-}
-
 /////
 
 // Always resolves - one image that cannot be downloaded must not stop the rest
@@ -473,7 +564,9 @@ function deferredAddZip(url, filename) {
                 // ERROR
                 console.log("Error! Unable to extract the image type!");
             }
-            tmpGlobalContent = tmpGlobalContent.replace(oldFilename, filename)
+            // replaceAll, not replace: a deduped image resolves to one filename
+            // that can be referenced by any number of <img> tags in the content
+            tmpGlobalContent = tmpGlobalContent.replaceAll(oldFilename, filename)
         }
 
         extractedImages.push({
@@ -486,25 +579,85 @@ function deferredAddZip(url, filename) {
     });
 }
 
+// Extraction can outlive the background's job timeout, mostly in the image
+// downloads. A job that is still making progress keeps saying so; one whose tab
+// was closed or navigated away stops, and the background reclaims it.
+var HEARTBEAT_INTERVAL = 5000;
+
+function startHeartbeat() {
+    let send = () => {
+        try {
+            chrome.runtime.sendMessage({type: 'job-heartbeat'}, () => {
+                // the background may be asleep or gone - nothing to do
+                void chrome.runtime.lastError;
+            });
+        } catch (e) {
+            console.log('Error:', e);
+        }
+    };
+    send();
+    return setInterval(send, HEARTBEAT_INTERVAL);
+}
+
+function stopHeartbeat(handle) {
+    if (handle) {
+        clearInterval(handle);
+    }
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    // Injection probe - answering it is how the background tells that this tab
+    // already has the content scripts and must not get a second copy
+    if (request && request.type === 'sae-ping') {
+        sendResponse({ready: true});
+        return false;
+    }
+
+    // Other listeners handle 'alert' / 'shortcut' messages. Bail out before
+    // touching the page - the extraction below is expensive and, for an
+    // 'extract-*' request, sends its own response.
+    if (!request || (request.type !== 'extract-page' && request.type !== 'extract-selection')) {
+        return false;
+    }
+
     let imgsPromises = [];
     let result = {};
-    let pageSrc = '';
     let tmpContent = '';
     let styleFile = null;
 
-    extractIFrames()
+    // Reset once per job, not once per parsed fragment: a selection spanning
+    // several ranges calls getContent() for each one.
+    allImages = [];
+    extractedImages = [];
+    imageFileNames.clear();
+    classNameToCss.clear();
+    cssToClassName.clear();
 
-    if (request.type === 'extract-page') {
-        styleFile = extractCss(request.includeStyle, request.appliedStyles)
-        pageSrc = document.getElementsByTagName('body')[0];
-        tmpContent = getContent(pageSrc);
-    } else if (request.type === 'extract-selection') {
-        styleFile = extractCss(request.includeStyle, request.appliedStyles)
-        pageSrc = getSelectedNodes();
-        pageSrc.forEach((page) => {
-            tmpContent += getContent(page);
+    // Downloading the images can take far longer than the background's job
+    // timeout, so tell it we are still alive while they run.
+    let heartbeat = startHeartbeat();
+
+    let state = readLivePage(request.includeStyle, request.appliedStyles);
+    try {
+        // clone while the markers are still on the live elements
+        let clones = [];
+        if (request.type === 'extract-page') {
+            clones.push(document.body.cloneNode(true));
+        } else {
+            clones = getSelectedNodes();
+        }
+        // ... and take them off again before anything can throw further down
+        clearLiveMarks(state);
+
+        styleFile = state.css;
+        clones.forEach((clone) => {
+            tmpContent += getContent(clone, state);
         });
+    } catch (e) {
+        console.log('Error:', e);
+    } finally {
+        // clearLiveMarks is idempotent - this is the path where cloning threw
+        clearLiveMarks(state);
     }
 
     tmpGlobalContent = tmpContent
@@ -528,6 +681,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }).catch((e) => {
         console.log('Error:', e);
         sendResponse(null)
+    }).finally(() => {
+        stopHeartbeat(heartbeat);
     });
 
     return true;

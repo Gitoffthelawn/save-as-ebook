@@ -34,12 +34,25 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 ///////////////////
 ///////////////////
 
-// MV3: the service worker is evicted when idle, so the busy flag lives in
-// chrome.storage.session (in-memory, survives worker restarts, cleared when the
-// browser restarts) instead of a module variable. A pending setTimeout would not
-// survive eviction either, so instead of a reset timer we store the start time
-// and treat the flag as expired on read.
-const BUSY_TIMEOUT = 20000
+// MV3: the service worker is evicted when idle, so the record of the job in
+// flight lives in chrome.storage.session (in-memory, survives worker restarts,
+// cleared when the browser restarts) instead of a module variable. A pending
+// setTimeout would not survive eviction either.
+//
+// The job is considered gone when its heartbeat stops rather than when a fixed
+// deadline passes: a big page can spend well over a minute downloading images,
+// and a plain deadline declared it finished while it was still running, so a
+// second job could start and interleave with it through the content script's
+// globals. The content script pings while it works; a tab that was closed or
+// navigated away stops pinging and the job is reclaimed.
+const JOB_TIMEOUT = 30000
+
+// Injected on demand instead of declared in the manifest. That keeps the
+// extension off every page the user visits, and lets it run with activeTab
+// alone - a <all_urls> host permission would show a "read and change all your
+// data on all websites" warning at install. Order matters: jszip before the
+// script that uses it.
+const CONTENT_SCRIPTS = ['libs/jszip.js', 'utils.js', 'extractHtml.js', 'saveEbook.js']
 
 var defaultStyles = [
     {
@@ -160,21 +173,114 @@ display: none;
 
 ];
 
-function isBusy(callback) {
-    chrome.storage.session.get('busySince', (data) => {
-        if (!data || !data.busySince) {
-            callback(false)
-            return
+// job: {tabId, startedAt, lastHeartbeat, injectedCss}
+function getJob(callback) {
+    chrome.storage.session.get('job', (data) => {
+        let job = data && data.job ? data.job : null
+        if (job && Date.now() - job.lastHeartbeat >= JOB_TIMEOUT) {
+            // stopped reporting - the tab is gone or the extraction died
+            job = null
         }
-        callback(Date.now() - data.busySince < BUSY_TIMEOUT)
+        callback(job)
     })
 }
 
-function setBusy(callback) {
-    chrome.storage.session.set({'busySince': Date.now()}, () => {
+function isBusy(callback) {
+    getJob((job) => callback(!!job))
+}
+
+function startJob(tabId, callback) {
+    let now = Date.now()
+    chrome.storage.session.set({
+        'job': {tabId: tabId, startedAt: now, lastHeartbeat: now, injectedCss: null}
+    }, () => {
+        chrome.action.setBadgeBackgroundColor({color: "red"})
+        chrome.action.setBadgeText({text: "Busy"})
         if (callback) {
             callback()
         }
+    })
+}
+
+// Records that the job is still making progress. Only touches an existing job,
+// so a stray heartbeat from an abandoned tab cannot resurrect one.
+function touchJob() {
+    chrome.storage.session.get('job', (data) => {
+        if (!data || !data.job) {
+            return
+        }
+        data.job.lastHeartbeat = Date.now()
+        chrome.storage.session.set({'job': data.job})
+    })
+}
+
+// Records what still has to be undone when the job ends
+function updateJob(fields) {
+    chrome.storage.session.get('job', (data) => {
+        if (!data || !data.job) {
+            return
+        }
+        chrome.storage.session.set({'job': Object.assign(data.job, fields)})
+    })
+}
+
+// The single terminal path - every way a job can end goes through here, so the
+// badge, the injected css and the flag cannot survive it.
+function endJob() {
+    chrome.storage.session.get('job', (data) => {
+        let job = data && data.job ? data.job : null
+
+        chrome.storage.session.remove('job')
+        chrome.action.setBadgeText({text: ""})
+
+        // the styles the extension injected for this site are the page's problem
+        // once the job is over - leaving them applied silently restyles the page
+        if (job && job.injectedCss && job.tabId != null) {
+            ext.scripting.removeCSS({
+                target: {tabId: job.tabId},
+                css: job.injectedCss
+            }).catch(() => {})
+        }
+
+        // a service worker has no window handles - chrome.extension.getViews() does
+        // not exist here, so ask the popup to close itself. Most of the time no popup
+        // is open, which rejects with "Receiving end does not exist" - ignore it.
+        ext.runtime.sendMessage({type: 'popup-close'}).catch(() => {})
+    })
+}
+
+// A closed tab cannot finish its job or send another heartbeat
+chrome.tabs.onRemoved.addListener((tabId) => {
+    chrome.storage.session.get('job', (data) => {
+        if (data && data.job && data.job.tabId === tabId) {
+            endJob()
+        }
+    })
+})
+
+// Injects the content scripts unless the tab already has them. Re-injecting
+// would register a second copy of every message listener, so a tab that answers
+// the ping is left alone.
+function ensureContentScripts(tabId, callback) {
+    chrome.tabs.sendMessage(tabId, {type: 'sae-ping'}, (response) => {
+        // no receiver yet - reading lastError keeps it from being logged
+        void chrome.runtime.lastError
+
+        if (response && response.ready) {
+            callback(true)
+            return
+        }
+
+        ext.scripting.executeScript({
+            target: {tabId: tabId},
+            files: CONTENT_SCRIPTS
+        }).then(() => {
+            callback(true)
+        }).catch((error) => {
+            // no activeTab grant, a chrome:// page, the web store - all end here
+            console.log('Error:', error)
+            callback(false)
+        })
     })
 }
 
@@ -183,54 +289,65 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 function executeCommand(command) {
-    isBusy((busy) => {
-        if (busy) {
-            chrome.tabs.query({
-                currentWindow: true,
-                active: true
-            }, (tab) => {
-                chrome.tabs.sendMessage(tab[0].id, {'alert': 'Work in progress! Please wait until the current eBook is generated!'}, (r) => {
-                  console.log(r);
-                });
-            })
-            return;
-        }
-
-        // mark busy before dispatching - dispatch() can call resetBusy() from one
-        // of its callbacks, and that must not be overwritten by a later set
-        setBusy(() => {
-            if (command.type === 'save-page') {
-                dispatch('extract-page', false, []);
-            } else if (command.type === 'save-selection') {
-                dispatch('extract-selection', false, []);
-            } else if (command.type === 'add-page') {
-                dispatch('extract-page', true, []);
-            } else if (command.type === 'add-selection') {
-                dispatch('extract-selection', true, []);
-            }
-        })
-    })
-}
-
-function dispatch(action, justAddToBuffer, appliedStyles) {
-    if (!justAddToBuffer) {
-        _execRequest({type: 'remove'});
-    }
-    chrome.action.setBadgeBackgroundColor({color:"red"});
-    chrome.action.setBadgeText({text: "Busy"});
-
     chrome.tabs.query({
         currentWindow: true,
         active: true
     }, (tab) => {
+        if (!tab || !tab[0]) {
+            return;
+        }
+        let tabId = tab[0].id;
 
-        isIncludeStyles((result) =>{
-            let isIncludeStyle = result.includeStyle
-            prepareStyles(tab, isIncludeStyle, appliedStyles, (tmpAppliedStyles) => {
-                applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles)
+        // Injected before the busy check rather than after it: the messages this
+        // extension shows the user go through the content script, so a tab
+        // without one swallows them. Nothing is injected until the user asks for
+        // something, which is the point of dropping the declared content script,
+        // and injecting is cheap enough to do for a message.
+        ensureContentScripts(tabId, (injected) => {
+            if (!injected) {
+                // a chrome:// page, the web store, a pdf viewer, or no activeTab
+                // grant - there is nowhere to show a message either
+                console.log('Save as eBook cannot run in this tab');
+                return;
+            }
+
+            getJob((job) => {
+                if (job) {
+                    chrome.tabs.sendMessage(tabId, {'alert': 'Work in progress! Please wait until the current eBook is generated!'}, (r) => {
+                        void chrome.runtime.lastError;
+                    });
+                    return;
+                }
+
+                startJob(tabId, () => {
+                    if (command.type === 'save-page') {
+                        dispatch(tab, 'extract-page', false, []);
+                    } else if (command.type === 'save-selection') {
+                        dispatch(tab, 'extract-selection', false, []);
+                    } else if (command.type === 'add-page') {
+                        dispatch(tab, 'extract-page', true, []);
+                    } else if (command.type === 'add-selection') {
+                        dispatch(tab, 'extract-selection', true, []);
+                    } else {
+                        endJob();
+                    }
+                })
             })
         })
     });
+}
+
+function dispatch(tab, action, justAddToBuffer, appliedStyles) {
+    if (!justAddToBuffer) {
+        _execRequest({type: 'remove'});
+    }
+
+    isIncludeStyles((result) => {
+        let isIncludeStyle = result.includeStyle
+        prepareStyles(tab, isIncludeStyle, appliedStyles, (tmpAppliedStyles) => {
+            applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles)
+        })
+    })
 }
 
 function isIncludeStyles(callback) {
@@ -316,6 +433,8 @@ function prepareStyles(tab, includeStyle, appliedStyles, callback) {
             target: {tabId: tab[0].id},
             css: currentStyle.style
         }).then(() => {
+            // remembered so endJob() can take it off the page again
+            updateJob({injectedCss: currentStyle.style});
             appliedStyles.push(currentStyle);
             callback(appliedStyles)
         }).catch(() => {
@@ -330,15 +449,20 @@ function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles) 
         includeStyle: includeStyle,
         appliedStyles: appliedStyles
     }, (response) => {
+        // the content script can go away mid-extraction - a navigation tears it
+        // down and the callback fires with no response and lastError set
+        void chrome.runtime.lastError;
 
         if (!response) {
-            resetBusy()
-            chrome.tabs.sendMessage(tab[0].id, {'alert': 'Save as eBook does not work on this web site!'}, (r) => {});
+            endJob()
+            chrome.tabs.sendMessage(tab[0].id, {'alert': 'Save as eBook does not work on this web site!'}, (r) => {
+                void chrome.runtime.lastError;
+            });
             return;
         }
 
-        if (response.content.trim() === '') {
-            resetBusy()
+        if (!response.content || response.content.trim() === '') {
+            endJob()
             if (justAddToBuffer) {
                 chrome.tabs.sendMessage(tab[0].id, {'alert': 'Cannot add an empty selection as chapter!'}, (r) => {});
             } else {
@@ -347,30 +471,26 @@ function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles) 
             return;
         }
         if (!justAddToBuffer) {
-            chrome.tabs.sendMessage(tab[0].id, {'shortcut': 'build-ebook', response: [response]}, (r) => {});
+            // the job stays open until the content script reports 'done' - it
+            // still has to build and download the zip
+            chrome.tabs.sendMessage(tab[0].id, {'shortcut': 'build-ebook', response: [response]}, (r) => {
+                void chrome.runtime.lastError;
+            });
         } else {
             chrome.storage.local.get('allPages', (data) => {
                 if (!data || !data.allPages) {
                     data.allPages = [];
                 }
                 data.allPages.push(response);
-                chrome.storage.local.set({'allPages': data.allPages});
-                resetBusy()
-                chrome.tabs.sendMessage(tab[0].id, {'alert': 'Page or selection added as chapter!'}, (r) => {});
+                chrome.storage.local.set({'allPages': data.allPages}, () => {
+                    endJob()
+                    chrome.tabs.sendMessage(tab[0].id, {'alert': 'Page or selection added as chapter!'}, (r) => {
+                        void chrome.runtime.lastError;
+                    });
+                });
             })
         }
     });
-}
-
-function resetBusy() {
-    chrome.storage.session.remove('busySince')
-
-    chrome.action.setBadgeText({text: ""})
-
-    // a service worker has no window handles - chrome.extension.getViews() does
-    // not exist here, so ask the popup to close itself. Most of the time no popup
-    // is open, which rejects with "Receiving end does not exist" - ignore it.
-    ext.runtime.sendMessage({type: 'popup-close'}).catch(() => {})
 }
 
 chrome.runtime.onMessage.addListener(_execRequest);
@@ -446,17 +566,22 @@ function _execRequest(request, sender, sendResponse) {
     }
     if (request.type === 'set is busy') {
         if (request.isBusy) {
-            setBusy()
+            // the tab is only known for jobs the background started itself
+            startJob(sender && sender.tab ? sender.tab.id : null)
         } else {
-            resetBusy()
+            endJob()
         }
+    }
+    // the extraction is still running - see JOB_TIMEOUT
+    if (request.type === 'job-heartbeat') {
+        touchJob()
     }
     if (request.type === 'save-page' || request.type === 'save-selection' ||
         request.type === 'add-page' || request.type === 'add-selection') {
         executeCommand({type: request.type})
     }
     if (request.type === 'done') {
-        resetBusy()
+        endJob()
     }
     return true;
 }

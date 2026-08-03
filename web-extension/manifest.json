@@ -10,13 +10,9 @@
         "48": "icons/book48.png",
         "128": "icons/book128.png"
     },
-    "content_scripts": [{
-        "matches": ["<all_urls>"],
-        "js": ["./libs/jszip.js",
-            "saveEbook.js", "extractHtml.js", "utils.js"]
-    }],
     "background": {
-        "service_worker": "background.js"
+        "service_worker": "background.js",
+        "scripts": ["background.js"]
     },
     "action": {
         "default_icon": "icons/book32.png",
@@ -28,9 +24,6 @@
         "scripting",
         "storage",
         "unlimitedStorage"
-    ],
-    "host_permissions": [
-        "<all_urls>"
     ],
     "commands": {
         "save-page": {

@@ -162,6 +162,17 @@ function getImgDownloadUrl(imgSrc) {
     return getAbsoluteUrl(imgSrc);
 }
 
+// Resolves a url the way the browser does, so that the several spellings of one
+// location - "a.png", "./a.png", "/dir/a.png" - collapse to a single string.
+// Used for cache keys; getAbsoluteUrl stays the resolver for everything else.
+function canonicalizeUrl(url) {
+    try {
+        return new URL(url, document.baseURI).href;
+    } catch (e) {
+        return getAbsoluteUrl(url);
+    }
+}
+
 function getAbsoluteUrl(urlStr) {    
     if (!urlStr) {
         return '';

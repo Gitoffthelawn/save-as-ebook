@@ -1,15 +1,53 @@
 var cssFileName = 'ebook.css';
 var ebookTitle = null;
 
+// Compression is set per file, never globally: OCF requires 'mimetype' to be
+// the first entry and STORE-d, so readers can sniff the magic bytes.
+var DEFLATED = {compression: 'DEFLATE'};
+var STORED = {compression: 'STORE'};
+
+// getFileExtension() only ever returns png/gif/jpeg/svg/''. Of those, only svg
+// is text - the rest are already compressed and deflating them just burns CPU.
+// '' means the type could not be determined; those are downloaded rasters.
+function getImageZipOptions(filename) {
+    return getFileExtension(filename) === 'svg' ? DEFLATED : STORED;
+}
+
 chrome.runtime.onMessage.addListener((obj, sender, sendResponse) => {
-    if (obj.shortcut && obj.shortcut === 'build-ebook') {
+    if (obj && obj.shortcut === 'build-ebook') {
         buildEbook(obj.response);
-    } else if (obj.alert) {
+        return false;
+    }
+    if (obj && obj.alert) {
         console.log(obj.alert);
         alert(obj.alert);
+        return false;
     }
-    return true;
+    // not ours - returning true here would hold the message channel open for
+    // every message the other listeners handle
+    return false;
 })
+
+// Tells the background the job is over, whichever way it ended. Every exit from
+// _buildEbook() goes through this: without it a failed build leaves the badge on
+// and the extension refusing to start anything else until the job times out.
+function finishJob(errorMessage) {
+    if (errorMessage) {
+        console.log('Error:', errorMessage);
+        try {
+            alert(errorMessage);
+        } catch (e) {
+            console.log('Error:', e);
+        }
+    }
+    try {
+        chrome.runtime.sendMessage({type: "done"}, () => {
+            void chrome.runtime.lastError;
+        });
+    } catch (e) {
+        console.log('Error:', e);
+    }
+}
 
 function getImagesIndex(allImages) {
     return allImages.reduce(function(prev, elem, index) {
@@ -58,7 +96,8 @@ function _buildEbook(allPages, fromMenu=false) {
     }
 
     var zip = new JSZip();
-    zip.file('mimetype', 'application/epub+zip');
+    // Must stay first in the archive and uncompressed - do not add DEFLATE here.
+    zip.file('mimetype', 'application/epub+zip', STORED);
 
     var metaInfFolder = zip.folder("META-INF");
     metaInfFolder.file('container.xml',
@@ -67,7 +106,8 @@ function _buildEbook(allPages, fromMenu=false) {
         '<rootfiles>' +
         '<rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>' +
         '</rootfiles>' +
-        '</container>'
+        '</container>',
+        DEFLATED
     );
 
 
@@ -90,7 +130,8 @@ function _buildEbook(allPages, fromMenu=false) {
         '</ol>' +
         '</nav>' +
         '</body>' +
-        '</html>'
+        '</html>',
+        DEFLATED
     );
 
     oebps.file('toc.ncx',
@@ -113,13 +154,14 @@ function _buildEbook(allPages, fromMenu=false) {
                 '</navPoint>';
         }, '') +
         '</navMap>' +
-        '</ncx>'
+        '</ncx>',
+        DEFLATED
     );
 
-    oebps.file(cssFileName, ''); //TODO
+    oebps.file(cssFileName, '', DEFLATED); //TODO
     var styleFolder = oebps.folder('style');
     allPages.forEach(function(page) {
-        styleFolder.file(page.styleFileName, page.styleFileContent);
+        styleFolder.file(page.styleFileName, page.styleFileContent, DEFLATED);
     });
 
     var pagesFolder = oebps.folder('pages');
@@ -133,7 +175,8 @@ function _buildEbook(allPages, fromMenu=false) {
             '<link href="../style/' + page.styleFileName + '" rel="stylesheet" type="text/css" />' +
             '</head><body>' +
             page.content +
-            '</body></html>'
+            '</body></html>',
+            DEFLATED
         );
     });
 
@@ -165,7 +208,8 @@ function _buildEbook(allPages, fromMenu=false) {
             return prev + '\n' + '<itemref idref="ebook' + index + '" />';
         }, '') +
         '</spine>' +
-        '</package>'
+        '</package>',
+        DEFLATED
     );
 
     ///////////////
@@ -175,10 +219,11 @@ function _buildEbook(allPages, fromMenu=false) {
             for (let i = 0; i < page.images.length; i++) {
                 let tmpImg = page.images[i]
                 // TODO - Must be JSON serializable - see the same comment in extractHtml.js
+                let imgOptions = getImageZipOptions(tmpImg.filename)
                 // if (tmpImg.isBinary) {
-                //     imgsFolder.file(tmpImg.filename, tmpImg.data, {binary: true})
+                //     imgsFolder.file(tmpImg.filename, tmpImg.data, {binary: true, compression: imgOptions.compression})
                 // } else {
-                    imgsFolder.file(tmpImg.filename, tmpImg.data, {base64: true})
+                    imgsFolder.file(tmpImg.filename, tmpImg.data, {base64: true, compression: imgOptions.compression})
                 // }
             }
         });
@@ -187,17 +232,32 @@ function _buildEbook(allPages, fromMenu=false) {
     }
     
 
+    // Compressing a large book takes long enough to outlive the job timeout, so
+    // keep reporting progress until the file is handed to the download
+    let heartbeat = setInterval(function () {
+        try {
+            chrome.runtime.sendMessage({type: 'job-heartbeat'}, () => {
+                void chrome.runtime.lastError;
+            });
+        } catch (e) {
+            console.log('Error:', e);
+        }
+    }, 5000);
+
     zip.generateAsync({
             type: "blob",
             mimeType: "application/epub+zip"
         })
         .then(function(content) {
-            console.log("done !");
+            clearInterval(heartbeat);
             downloadBlob(content, ebookFileName);
-
-            chrome.runtime.sendMessage({
-                type: "done"
-            }, (response) => {});
+            finishJob(null);
+        })
+        .catch(function(error) {
+            // out of memory on a very large book, a corrupt image, a revoked
+            // blob url - all of them used to leave the job open forever
+            clearInterval(heartbeat);
+            finishJob('Could not generate the eBook: ' + error);
         });
 
 }
