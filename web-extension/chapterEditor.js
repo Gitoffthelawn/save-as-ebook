@@ -99,9 +99,7 @@ function showEditor() {
             list.appendChild(listItem);
         }
         modalList.appendChild(list);
-        $(list).sortable({
-            handle: '.chapterEditor-drag-handler',
-        });
+        makeListSortable(list, '.chapterEditor-drag-handler');
     }
 
     ////////
@@ -256,4 +254,81 @@ function showEditor() {
     /////////////////////
 
     getEbookPages(createChapterList);
+}
+
+// Drag & drop reordering of the chapter list, replacing jquery-sortable.
+// saveChanges() reads the chapters back in DOM order, so moving the <li> around
+// is all the reordering that is needed.
+function makeListSortable(list, handleSelector) {
+    var draggedItem = null;
+
+    // Items are only draggable while the pointer is held down on the handle -
+    // otherwise the whole row would be draggable and selecting text in the
+    // chapter title input would start a drag instead
+    list.addEventListener('mousedown', function(event) {
+        var handle = event.target.closest(handleSelector);
+        if (!handle || !list.contains(handle)) {
+            return;
+        }
+        var item = handle.closest('li');
+        if (item && item.parentNode === list) {
+            item.draggable = true;
+        }
+    });
+
+    function clearDraggable() {
+        for (var i = 0; i < list.children.length; i++) {
+            list.children[i].draggable = false;
+        }
+    }
+
+    document.addEventListener('mouseup', clearDraggable);
+
+    list.addEventListener('dragstart', function(event) {
+        var item = event.target.closest('li');
+        if (!item || !item.draggable) {
+            event.preventDefault();
+            return;
+        }
+        draggedItem = item;
+        event.dataTransfer.effectAllowed = 'move';
+        // Firefox refuses to start a drag unless some data is set
+        event.dataTransfer.setData('text/plain', item.id);
+        // applied late so the drag image is the untouched row
+        setTimeout(function() {
+            item.classList.add('chapterEditor-dragging');
+        }, 0);
+    });
+
+    list.addEventListener('dragover', function(event) {
+        if (!draggedItem) {
+            return;
+        }
+        // preventDefault marks this a valid drop target
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+
+        var target = event.target.closest('li');
+        if (!target || target === draggedItem || target.parentNode !== list) {
+            return;
+        }
+        // past the middle of the row means the item goes after it
+        var box = target.getBoundingClientRect();
+        var insertAfter = (event.clientY - box.top) > (box.height / 2);
+        list.insertBefore(draggedItem, insertAfter ? target.nextSibling : target);
+    });
+
+    list.addEventListener('drop', function(event) {
+        if (draggedItem) {
+            event.preventDefault();
+        }
+    });
+
+    list.addEventListener('dragend', function() {
+        if (draggedItem) {
+            draggedItem.classList.remove('chapterEditor-dragging');
+        }
+        draggedItem = null;
+        clearDraggable();
+    });
 }

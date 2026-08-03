@@ -1,3 +1,7 @@
+// Firefox's `chrome` namespace is callback-only - those calls return undefined,
+// so anything promise-based has to go through `browser`. Chrome has no
+// `browser`, and there `chrome` is promise-based under MV3.
+const ext = typeof browser !== 'undefined' ? browser : chrome;
 
 ///////////////////
 ///////////////////
@@ -5,19 +9,22 @@
 ///////////////////
 /// Only for testing
 
-chrome.runtime.onInstalled.addListener(details => {
-  if (navigator.userAgent === 'PuppeteerTestingAgent') {
-      let TEST_TIMER = null
-      chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-          if (TEST_TIMER) {
-              clearTimeout(TEST_TIMER)
-          }
+// MV3: every listener must be registered synchronously on every worker
+// startup, so this cannot live inside an onInstalled callback.
+let TEST_TIMER = null
 
-          TEST_TIMER = setTimeout(()=> {
-                executeCommand({type: 'save-page'})
-          }, 2000)
-      });
-  }
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (navigator.userAgent !== 'PuppeteerTestingAgent') {
+        return
+    }
+
+    if (TEST_TIMER) {
+        clearTimeout(TEST_TIMER)
+    }
+
+    TEST_TIMER = setTimeout(() => {
+        executeCommand({type: 'save-page'})
+    }, 2000)
 });
 
 
@@ -27,8 +34,12 @@ chrome.runtime.onInstalled.addListener(details => {
 ///////////////////
 ///////////////////
 
-var isBusy = false;
-var busyResetTimer = null
+// MV3: the service worker is evicted when idle, so the busy flag lives in
+// chrome.storage.session (in-memory, survives worker restarts, cleared when the
+// browser restarts) instead of a module variable. A pending setTimeout would not
+// survive eviction either, so instead of a reset timer we store the start time
+// and treat the flag as expired on read.
+const BUSY_TIMEOUT = 20000
 
 var defaultStyles = [
     {
@@ -149,46 +160,64 @@ display: none;
 
 ];
 
+function isBusy(callback) {
+    chrome.storage.session.get('busySince', (data) => {
+        if (!data || !data.busySince) {
+            callback(false)
+            return
+        }
+        callback(Date.now() - data.busySince < BUSY_TIMEOUT)
+    })
+}
+
+function setBusy(callback) {
+    chrome.storage.session.set({'busySince': Date.now()}, () => {
+        if (callback) {
+            callback()
+        }
+    })
+}
+
 chrome.commands.onCommand.addListener((command) => {
     executeCommand({type: command})
 });
 
 function executeCommand(command) {
-    if (isBusy) {
-        chrome.tabs.query({
-            currentWindow: true,
-            active: true
-        }, (tab) => {
-            chrome.tabs.sendMessage(tab[0].id, {'alert': 'Work in progress! Please wait until the current eBook is generated!'}, (r) => {
-              console.log(r);
-            });
+    isBusy((busy) => {
+        if (busy) {
+            chrome.tabs.query({
+                currentWindow: true,
+                active: true
+            }, (tab) => {
+                chrome.tabs.sendMessage(tab[0].id, {'alert': 'Work in progress! Please wait until the current eBook is generated!'}, (r) => {
+                  console.log(r);
+                });
+            })
+            return;
+        }
+
+        // mark busy before dispatching - dispatch() can call resetBusy() from one
+        // of its callbacks, and that must not be overwritten by a later set
+        setBusy(() => {
+            if (command.type === 'save-page') {
+                dispatch('extract-page', false, []);
+            } else if (command.type === 'save-selection') {
+                dispatch('extract-selection', false, []);
+            } else if (command.type === 'add-page') {
+                dispatch('extract-page', true, []);
+            } else if (command.type === 'add-selection') {
+                dispatch('extract-selection', true, []);
+            }
         })
-        return;
-    }
-    if (command.type === 'save-page') {
-        dispatch('extract-page', false, []);
-    } else if (command.type === 'save-selection') {
-        dispatch('extract-selection', false, []);
-    } else if (command.type === 'add-page') {
-        dispatch('extract-page', true, []);
-    } else if (command.type === 'add-selection') {
-        dispatch('extract-selection', true, []);
-    }
-
-    isBusy = true
-
-    // 
-    busyResetTimer = setTimeout(() => {
-        resetBusy()
-    }, 20000)
+    })
 }
 
 function dispatch(action, justAddToBuffer, appliedStyles) {
     if (!justAddToBuffer) {
         _execRequest({type: 'remove'});
     }
-    chrome.browserAction.setBadgeBackgroundColor({color:"red"});
-    chrome.browserAction.setBadgeText({text: "Busy"});
+    chrome.action.setBadgeBackgroundColor({color:"red"});
+    chrome.action.setBadgeText({text: "Busy"});
 
     chrome.tabs.query({
         currentWindow: true,
@@ -198,9 +227,7 @@ function dispatch(action, justAddToBuffer, appliedStyles) {
         isIncludeStyles((result) =>{
             let isIncludeStyle = result.includeStyle
             prepareStyles(tab, isIncludeStyle, appliedStyles, (tmpAppliedStyles) => {
-                applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles, () => {
-                    alert('done')
-                })
+                applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles)
             })
         })
     });
@@ -285,14 +312,19 @@ function prepareStyles(tab, includeStyle, appliedStyles, callback) {
             return
         }
 
-        chrome.tabs.insertCSS(tab[0].id, { code: currentStyle.style }, () => {
+        ext.scripting.insertCSS({
+            target: {tabId: tab[0].id},
+            css: currentStyle.style
+        }).then(() => {
             appliedStyles.push(currentStyle);
+            callback(appliedStyles)
+        }).catch(() => {
             callback(appliedStyles)
         });
     });
 }
 
-function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, callback) {
+function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles) {
     chrome.tabs.sendMessage(tab[0].id, {
         type: action,
         includeStyle: includeStyle,
@@ -331,19 +363,14 @@ function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, 
 }
 
 function resetBusy() {
-    isBusy = false
+    chrome.storage.session.remove('busySince')
 
-    if (busyResetTimer) {
-        clearTimeout(busyResetTimer)
-        busyResetTimer = null
-    }
-    
-    chrome.browserAction.setBadgeText({text: ""})
+    chrome.action.setBadgeText({text: ""})
 
-    let popups = chrome.extension.getViews({type: "popup"});
-    if (popups && popups.length > 0) {
-        popups[0].close()
-    }
+    // a service worker has no window handles - chrome.extension.getViews() does
+    // not exist here, so ask the popup to close itself. Most of the time no popup
+    // is open, which rejects with "Receiving end does not exist" - ignore it.
+    ext.runtime.sendMessage({type: 'popup-close'}).catch(() => {})
 }
 
 chrome.runtime.onMessage.addListener(_execRequest);
@@ -413,10 +440,16 @@ function _execRequest(request, sender, sendResponse) {
         chrome.storage.local.set({'includeStyle': request.includeStyle});
     }
     if (request.type === 'is busy?') {
-        sendResponse({isBusy: isBusy})
+        isBusy((busy) => {
+            sendResponse({isBusy: busy})
+        })
     }
     if (request.type === 'set is busy') {
-        isBusy = request.isBusy
+        if (request.isBusy) {
+            setBusy()
+        } else {
+            resetBusy()
+        }
     }
     if (request.type === 'save-page' || request.type === 'save-selection' ||
         request.type === 'add-page' || request.type === 'add-selection') {

@@ -1,3 +1,8 @@
+// Firefox's `chrome` namespace is callback-only - those calls return undefined,
+// so anything promise-based has to go through `browser`. Chrome has no
+// `browser`, and there `chrome` is promise-based under MV3.
+const ext = typeof browser !== 'undefined' ? browser : chrome;
+
 var allStyles = [];
 var currentStyle = null;
 var appliedStyles = [];
@@ -12,6 +17,13 @@ document.getElementById('pageChapterLabel').innerHTML = chrome.i18n.getMessage('
 document.getElementById('selectionChapterLabel').innerHTML = chrome.i18n.getMessage('selectionChapter');
 document.getElementById('editChapters').innerHTML = chrome.i18n.getMessage('editChapters');
 document.getElementById('waitMessage').innerHTML = chrome.i18n.getMessage('waitMessage');
+
+// the service worker cannot close the popup directly, it asks for it
+chrome.runtime.onMessage.addListener((request) => {
+    if (request && request.type === 'popup-close') {
+        window.close();
+    }
+});
 
 function removeEbook() {
     chrome.runtime.sendMessage({
@@ -120,13 +132,23 @@ document.getElementById("editStyles").onclick = function() {
         active: true
     }, function(tab) {
 
-        chrome.tabs.insertCSS(tab[0].id, {file: '/cssEditor.css'});
+        let tabId = tab[0].id;
 
-        chrome.tabs.executeScript(tab[0].id, {
-            file: '/cssEditor.js'
+        // the popup is closed only after the injection finished - closing it
+        // earlier would tear down the pending scripting promises
+        ext.scripting.insertCSS({
+            target: {tabId: tabId},
+            files: ['cssEditor.css']
+        }).then(() => {
+            return ext.scripting.executeScript({
+                target: {tabId: tabId},
+                files: ['cssEditor.js']
+            });
+        }).catch((error) => {
+            console.error(error);
+        }).then(() => {
+            window.close();
         });
-
-         window.close();
     });
 };
 
@@ -141,15 +163,21 @@ document.getElementById("editChapters").onclick = function() {
         active: true
     }, function(tab) {
 
-        chrome.tabs.executeScript(tab[0].id, {file: './libs/jquery.js'});
-        chrome.tabs.executeScript(tab[0].id, {file: './libs/jquery-sortable.js'});
-        chrome.tabs.insertCSS(tab[0].id, {file: '/chapterEditor.css'});
+        let tabId = tab[0].id;
 
-        chrome.tabs.executeScript(tab[0].id, {
-            file: '/chapterEditor.js'
+        ext.scripting.insertCSS({
+            target: {tabId: tabId},
+            files: ['chapterEditor.css']
+        }).then(() => {
+            return ext.scripting.executeScript({
+                target: {tabId: tabId},
+                files: ['chapterEditor.js']
+            });
+        }).catch((error) => {
+            console.error(error);
+        }).then(() => {
+            window.close();
         });
-
-         window.close();
     });
 };
 
