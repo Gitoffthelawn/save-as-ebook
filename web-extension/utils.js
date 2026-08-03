@@ -333,12 +333,58 @@ function removeSpecialChars(text) {
     return text.replace(/\//g, '-')
 }
 
+// Control characters that are not allowed anywhere in an XML 1.0 document.
+// A single one of them makes an epub reader reject the whole page.
+function removeInvalidXMLChars(text) {
+    return text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '');
+}
+
 function escapeXMLChars(text) {
-    return text.replace(/&/g, '&amp;')
+    return removeInvalidXMLChars(text)
+                   .replace(/&/g, '&amp;')
                    .replace(/>/g, '&gt;')
                    .replace(/</g, '&lt;')
                    .replace(/"/g, '&quot;')
                    .replace(/'/g, '&apos;');
+}
+
+// For text nodes - quotes are legal as-is there, and leaving them alone keeps
+// the generated markup readable
+function escapeXMLText(text) {
+    return removeInvalidXMLChars(text)
+                   .replace(/&/g, '&amp;')
+                   .replace(/>/g, '&gt;')
+                   .replace(/</g, '&lt;');
+}
+
+var _htmlEntityDecoder = null;
+
+// XHTML only predefines &amp; &lt; &gt; &quot; and &apos;, so every other named
+// entity (&nbsp;, &mdash;, ...) is a fatal error in an epub. Resolve them all to
+// the characters they stand for and let escapeXMLText/escapeXMLChars re-escape
+// whatever still needs it. Also repairs bare "&" that no entity follows.
+function decodeHtmlEntities(text) {
+    if (!text || text.indexOf('&') < 0) {
+        return text;
+    }
+    try {
+        if (typeof document !== 'undefined' && document.createElement) {
+            if (!_htmlEntityDecoder) {
+                _htmlEntityDecoder = document.createElement('textarea');
+            }
+            // A textarea holds raw text, so nothing in here can become an element
+            // or run - but "<" must be hidden to keep "</textarea>" from closing it.
+            // The second replace protects every "&" that does not start a complete
+            // entity, so that a url like "?a=1&sect=2" doesn't turn into "?a=1§=2".
+            _htmlEntityDecoder.innerHTML = text
+                .replace(/</g, '&lt;')
+                .replace(/&(?![a-zA-Z][a-zA-Z0-9]*;|#[0-9]+;|#[xX][0-9a-fA-F]+;)/g, '&amp;');
+            return _htmlEntityDecoder.value;
+        }
+    } catch (e) {
+        console.log('Error:', e);
+    }
+    return decodeHtmlEntity(text);
 }
 
 function getEbookFileName(name) {

@@ -82,9 +82,12 @@
 (function () {
 
 	// Regular Expressions for parsing tags and attributes
-	var startTag = /^<([-A-Za-z0-9_]+)((?:\s+[a-zA-Z_:][-a-zA-Z0-9_:.]*(?:\s*=\s*(?:(?:"[^"]*")|(?:'[^']*')|[^>\s]+))?)*)\s*(\/?)>/,
-		endTag = /^<\/([-A-Za-z0-9_]+)[^>]*>/,
-		attr = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*(?:(?:"((?:\\.|[^"])*)")|(?:'((?:\\.|[^'])*)')|([^>\s]+)))?/g;
+	// The attribute name character class is deliberately permissive: real world
+	// pages carry names no spec allows (framework syntax like @click or [attr]),
+	// and a name we refuse to match turns the whole tag into text.
+	var startTag = /^<([-A-Za-z0-9_:.]+)((?:\s+[^\s"'>\/=]+(?:\s*=\s*(?:(?:"[^"]*")|(?:'[^']*')|(?:[^>\s]*)))?)*)\s*(\/?)>/,
+		endTag = /^<\/([-A-Za-z0-9_:.]+)[^>]*>/,
+		attr = /([^\s"'>\/=]+)(?:\s*=\s*(?:(?:"((?:\\.|[^"])*)")|(?:'((?:\\.|[^'])*)')|([^>\s]+)))?/g;
 
 	// Empty Elements - HTML 5
 	var empty = makeMap("area,base,basefont,br,col,frame,hr,img,input,link,meta,param,embed,command,keygen,source,track,wbr");
@@ -95,9 +98,30 @@
 	// Inline Elements - HTML 5
 	var inline = makeMap("abbr,acronym,applet,b,basefont,bdo,big,br,button,cite,code,del,dfn,em,font,i,iframe,img,input,ins,kbd,label,map,object,q,s,samp,script,select,small,span,strike,strong,sub,sup,textarea,tt,u,var");
 
-	// Elements that you can, intentionally, leave open
-	// (and which close themselves)
-	var closeSelf = makeMap("colgroup,dd,dt,li,options,p,td,tfoot,th,thead,tr");
+	// Elements that you can, intentionally, leave open: a start tag from the
+	// matching list implies the end tag of the element that is still open.
+	// Without this "<tr><td>a<tr><td>b" puts the second row inside the first cell.
+	var impliedEnd = {
+		li: makeMap("li"),
+		dt: makeMap("dt,dd"),
+		dd: makeMap("dt,dd"),
+		p: makeMap("p"),
+		rt: makeMap("rt,rp"),
+		rp: makeMap("rt,rp"),
+		option: makeMap("option"),
+		optgroup: makeMap("option,optgroup"),
+		colgroup: makeMap("caption,colgroup"),
+		caption: makeMap("caption"),
+		td: makeMap("td,th"),
+		th: makeMap("td,th"),
+		tr: makeMap("td,th,tr"),
+		thead: makeMap("td,th,tr,caption,colgroup"),
+		tbody: makeMap("td,th,tr,caption,colgroup,thead,tbody"),
+		tfoot: makeMap("td,th,tr,caption,colgroup,thead,tbody")
+	};
+
+	// These close an open <p> - "<p>one<div>two" is two blocks, not nested ones
+	var closesParagraph = makeMap("address,article,aside,blockquote,details,div,dl,fieldset,figcaption,figure,footer,form,h1,h2,h3,h4,h5,h6,header,hgroup,hr,main,menu,nav,ol,p,pre,section,table,ul");
 
 	// Attributes that have their values filled in disabled="disabled"
 	var fillAttrs = makeMap("checked,compact,declare,defer,disabled,ismap,multiple,nohref,noresize,noshade,nowrap,readonly,selected");
@@ -106,7 +130,12 @@
 	var special = makeMap("script,style");
 
 	var HTMLParser = this.HTMLParser = function (html, handler) {
-		var index, chars, match, stack = [], last = html;
+		if (html == null)
+			html = "";
+		else if (typeof html != "string")
+			html = String(html);
+
+		var index, chars, match, text, isTag, openSpecial, stack = [], last = html;
 		stack.last = function () {
 			return this[this.length - 1];
 		};
@@ -114,32 +143,59 @@
 		while (html) {
 			chars = true;
 
+			// startsWith, not indexOf(x) == 0: indexOf scans the whole remaining
+			// document before reporting "not at position 0", which makes parsing a
+			// long page quadratic
+			isTag = html.charCodeAt(0) == 60; // "<"
+
 			// Make sure we're not in a script or style element
 			if (!stack.last() || !special[stack.last()]) {
 
 				// Comment
-				if (html.indexOf("<!--") == 0) {
+				if (isTag && html.startsWith("<!--")) {
 					index = html.indexOf("-->");
 
-					if (index >= 0) {
-						if (handler.comment)
-							handler.comment(html.substring(4, index));
-						html = html.substring(index + 3);
-						chars = false;
-					}
+					// An unterminated comment swallows the rest of the input,
+					// which is what a browser does with it too
+					if (handler.comment)
+						handler.comment(index >= 0 ? html.substring(4, index) : html.substring(4));
+					html = index >= 0 ? html.substring(index + 3) : "";
+					chars = false;
+
+					// CDATA section - keep the text, drop the wrapper
+				} else if (isTag && html.startsWith("<![CDATA[")) {
+					index = html.indexOf("]]>");
+
+					if (handler.chars)
+						handler.chars(index >= 0 ? html.substring(9, index) : html.substring(9));
+					html = index >= 0 ? html.substring(index + 3) : "";
+					chars = false;
+
+					// Doctype, processing instruction or any other declaration - skipped
+				} else if (isTag && (html.startsWith("<!") || html.startsWith("<?"))) {
+					index = html.indexOf(">");
+					html = index >= 0 ? html.substring(index + 1) : "";
+					chars = false;
 
 					// end tag
-				} else if (html.indexOf("</") == 0) {
+				} else if (isTag && html.startsWith("</")) {
 					match = html.match(endTag);
 
 					if (match) {
 						html = html.substring(match[0].length);
 						match[0].replace(endTag, parseEndTag);
 						chars = false;
+					} else {
+						// Bogus end tag, e.g. "</>" or "</ p>" - dropped, like a browser does
+						index = html.indexOf(">");
+						if (index >= 0) {
+							html = html.substring(index + 1);
+							chars = false;
+						}
 					}
 
 					// start tag
-				} else if (html.indexOf("<") == 0) {
+				} else if (isTag) {
 					match = html.match(startTag);
 
 					if (match) {
@@ -152,27 +208,49 @@
 				if (chars) {
 					index = html.indexOf("<");
 
-					var text = index < 0 ? html : html.substring(0, index);
-					html = index < 0 ? "" : html.substring(index);
+					if (index == 0) {
+						// A "<" that opens neither a tag nor a comment - a bare "a < b",
+						// or a tag too broken to match. Emit it as text and move past it
+						// so that one malformed character can't abort the whole parse.
+						if (handler.chars)
+							handler.chars("<");
+						html = html.substring(1);
+					} else {
+						text = index < 0 ? html : html.substring(0, index);
+						html = index < 0 ? "" : html.substring(index);
 
-					if (handler.chars)
-						handler.chars(text);
+						if (handler.chars)
+							handler.chars(text);
+					}
 				}
 
 			} else {
-				html = html.replace(new RegExp("([\\s\\S]*?)<\/" + stack.last() + "[^>]*>"), function (all, text) {
-					text = text.replace(/<!--([\s\S]*?)-->|<!\[CDATA\[([\s\S]*?)]]>/g, "$1$2");
-					if (handler.chars)
-						handler.chars(text);
+				openSpecial = stack.last();
+				match = html.match(new RegExp("^([\\s\\S]*?)<\/" + openSpecial + "[^>]*>"));
 
-					return "";
-				});
+				if (match) {
+					html = html.substring(match[0].length);
+					text = match[1];
+				} else {
+					// Unclosed <script>/<style> - everything left belongs to it
+					text = html;
+					html = "";
+				}
 
-				parseEndTag("", stack.last());
+				text = text.replace(/<!--([\s\S]*?)-->|<!\[CDATA\[([\s\S]*?)]]>/g, "$1$2");
+				if (handler.chars)
+					handler.chars(text);
+
+				parseEndTag("", openSpecial);
 			}
 
-			if (html == last)
-				throw "Parse Error: " + html;
+			if (html == last) {
+				// Every branch above consumes at least one character, so this is
+				// unreachable - it only guards against an infinite loop
+				if (handler.chars)
+					handler.chars(html);
+				break;
+			}
 			last = html;
 		}
 
@@ -188,8 +266,15 @@
 				}
 			}
 
-			if (closeSelf[tagName] && stack.last() == tagName) {
-				parseEndTag("", tagName);
+			if (closesParagraph[tagName] && stack.last() == "p") {
+				parseEndTag("", "p");
+			}
+
+			var implied = impliedEnd[tagName];
+			if (implied) {
+				while (stack.last() && implied[stack.last()]) {
+					parseEndTag("", stack.last());
+				}
 			}
 
 			unary = empty[tagName] || !!unary;

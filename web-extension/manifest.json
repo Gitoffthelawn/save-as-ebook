@@ -1,5 +1,5 @@
 {
-    "manifest_version": 2,
+    "manifest_version": 3,
     "name": "__MSG_extName__",
     "version": "1.4.2",
     "default_locale": "en",
@@ -7,7 +7,8 @@
     "homepage_url": "https://github.com/alexadam/save-as-ebook",
     "description": "Save a web page or selection as eBook (.epub)",
     "icons": {
-        "48": "icons/book48.png"
+        "48": "icons/book48.png",
+        "128": "icons/book128.png"
     },
     "content_scripts": [{
         "matches": ["<all_urls>"],
@@ -16,19 +17,21 @@
             "saveEbook.js", "extractHtml.js", "utils.js"]
     }],
     "background": {
+        "service_worker": "background.js",
         "scripts": ["background.js"]
     },
-    "browser_action": {
+    "action": {
         "default_icon": "icons/book32.png",
         "default_title": "Save as eBook",
         "default_popup": "menu.html"
      },
     "permissions": [
-        "contextMenus",
         "activeTab",
+        "scripting",
         "storage",
-        "unlimitedStorage",
-        "notifications",
+        "unlimitedStorage"
+    ],
+    "host_permissions": [
         "<all_urls>"
     ],
     "commands": {

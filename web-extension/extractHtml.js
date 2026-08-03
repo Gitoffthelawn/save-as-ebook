@@ -25,6 +25,17 @@ var allowedTags = [
     // , 'svg', 'g', 'path', 'line', 'circle', 'text'
 ];
 // const svgTags = ['svg', 'g', 'path', 'line', 'circle', 'text']
+// Allowed tags that have no content and must be written self-closed, otherwise
+// the generated page is not well formed XML
+var voidTags = ['br', 'col', 'hr', 'img', 'wbr'];
+// Tags that are dropped together with everything inside them. Any other tag
+// that is not in allowedTags is unwrapped instead - the tag goes, its text stays.
+var strippedContentTags = [
+    'script', 'style', 'noscript', 'template', 'iframe', 'object', 'embed', 'applet',
+    'head', 'title', 'meta', 'link', 'base',
+    'textarea', 'select', 'option', 'optgroup', 'input',
+    'audio', 'video', 'canvas', 'svg', 'map', 'area'
+];
 var mathMLTags = [
     'math', 'maction', 'menclose', 'merror', 'mfenced', 'mfrac', 'mglyph', 'mi', 'mlabeledtr', 'mmultiscripts', 'mn', 'mo', 'mover', 'mpadded', 'mphantom', 'mroot',
     'mrow', 'ms', 'mspace', 'msqrt', 'mstyle', 'msub', 'msup', 'msubsup', 'mtable', 'mtd', 'mtext', 'mtr', 'munder', 'munderover', 'msgroup', 'mlongdiv', 'mscarries',
@@ -161,105 +172,152 @@ function parseHTML(rawContentString) {
     extractedImages = [];
     let results = '';
     let lastFragment = '';
-    let lastTag = '';
+    // Tags written to the output that still need a closing tag. Kept here rather
+    // than trusting the input to be balanced: a page can close tags it never
+    // opened, or leave tags open, and the epub still has to be valid XML.
+    let openTags = [];
+    // Tags whose content is being dropped, innermost last
+    let skippedTags = [];
+
+    let isVoidTag = (tag) => voidTags.indexOf(tag) > -1;
+
+    let attrValue = (value) => escapeXMLChars(decodeHtmlEntities(value == null ? '' : String(value)));
+
+    let closeTagsDownTo = (index) => {
+        for (let i = openTags.length - 1; i >= index; i--) {
+            results += '</' + openTags[i] + '>';
+        }
+        openTags.length = index;
+    };
 
     try {
         HTMLParser(rawContentString, {
             start: function(tag, attrs, unary) {
-                lastTag = tag;
-                if (allowedTags.indexOf(tag) < 0) {
+                if (skippedTags.length > 0) {
+                    // Inside dropped content - track nesting so that the matching
+                    // end tag, and only it, ends the skip
+                    if (!unary && !isVoidTag(tag)) {
+                        skippedTags.push(tag);
+                    }
                     return;
                 }
 
+                if (allowedTags.indexOf(tag) < 0) {
+                    if (strippedContentTags.indexOf(tag) > -1 && !unary && !isVoidTag(tag)) {
+                        skippedTags.push(tag);
+                    }
+                    return;
+                }
+
+                let tmpAttrsTxt = '';
+
                 if (tag === 'img') {
-                    let tmpAttrsTxt = '';
                     let tmpSrc = ''
                     for (let i = 0; i < attrs.length; i++) {
                         if (attrs[i].name === 'src') {
                             tmpSrc = getImageSrc(attrs[i].value)
-                            tmpAttrsTxt += ' src="' + tmpSrc + '"';
+                            tmpAttrsTxt += ' src="' + attrValue(tmpSrc) + '"';
                         } else if (attrs[i].name === 'data-class') {
-                            tmpAttrsTxt += ' class="' + attrs[i].value + '"';
+                            tmpAttrsTxt += ' class="' + attrValue(attrs[i].value) + '"';
                         } else if (attrs[i].name === 'width') {
                             // used when converting svg to img - the result image was too big
-                            tmpAttrsTxt += ' width="' + attrs[i].value + '"';
+                            tmpAttrsTxt += ' width="' + attrValue(attrs[i].value) + '"';
                         } else if (attrs[i].name === 'height') {
                             // used when converting svg to img - the result image was too big
-                            tmpAttrsTxt += ' height="' + attrs[i].value + '"';
+                            tmpAttrsTxt += ' height="' + attrValue(attrs[i].value) + '"';
                         }
                     }
                     if (tmpSrc === '') {
                         // ignore imgs without source
-                        lastFragment = ''
-                    } else {
-                        lastFragment = tmpAttrsTxt.length === 0 ? '<img></img>' : '<img' + tmpAttrsTxt + ' alt=""></img>';
+                        return;
                     }
+                    tmpAttrsTxt += ' alt=""';
                 } else if (tag === 'a') {
-                    let tmpAttrsTxt = '';
                     for (let i = 0; i < attrs.length; i++) {
                         if (attrs[i].name === 'href') {
-                            tmpAttrsTxt += ' href="' + getHref(attrs[i].value) + '"';
+                            tmpAttrsTxt += ' href="' + attrValue(getHref(attrs[i].value)) + '"';
                         } else if (attrs[i].name === 'data-class') {
-                            tmpAttrsTxt += ' class="' + attrs[i].value + '"';
+                            tmpAttrsTxt += ' class="' + attrValue(attrs[i].value) + '"';
                         }
                     }
-                    lastFragment = tmpAttrsTxt.length === 0 ? '<a>' : '<a' + tmpAttrsTxt + '>';
-                } else if (tag === 'br' || tag === 'hr') {
-                    let tmpAttrsTxt = '';
-                    for (let i = 0; i < attrs.length; i++) {
-                        if (attrs[i].name === 'data-class') {
-                            tmpAttrsTxt += ' class="' + attrs[i].value + '"';
-                        }
-                    }
-                    lastFragment = '<' + tag + tmpAttrsTxt + '></' + tag + '>';
                 } else if (tag === 'math') {
-                    let tmpAttrsTxt = '';
                     tmpAttrsTxt += ' xmlns="http://www.w3.org/1998/Math/MathML"';
                     for (let i = 0; i < attrs.length; i++) {
                         if (attrs[i].name === 'alttext') {
-                            tmpAttrsTxt += ' alttext="' + attrs[i].value + '"';
+                            tmpAttrsTxt += ' alttext="' + attrValue(attrs[i].value) + '"';
                         }
                     }
-                    lastFragment = '<' + tag + tmpAttrsTxt + '>';
                 } else {
-                    let tmpAttrsTxt = '';
                     for (let i = 0; i < attrs.length; i++) {
                         if (attrs[i].name === 'data-class') {
-                            tmpAttrsTxt += ' class="' + attrs[i].value + '"';
+                            tmpAttrsTxt += ' class="' + attrValue(attrs[i].value) + '"';
                         }
                     }
+                }
+
+                // A void tag, or a tag the page self-closed ("<span/>"), never gets
+                // an end callback - close it here or the output is unbalanced
+                if (isVoidTag(tag) || unary) {
+                    lastFragment = '<' + tag + tmpAttrsTxt + '/>';
+                } else {
                     lastFragment = '<' + tag + tmpAttrsTxt + '>';
+                    openTags.push(tag);
                 }
 
                 results += lastFragment;
                 lastFragment = '';
             },
             end: function(tag) {
-                if (allowedTags.indexOf(tag) < 0 || tag === 'img' || tag === 'br' || tag === 'hr') {
+                if (skippedTags.length > 0) {
+                    for (let i = skippedTags.length - 1; i >= 0; i--) {
+                        if (skippedTags[i] === tag) {
+                            skippedTags.length = i;
+                            return;
+                        }
+                    }
+                    // End tag for something never opened inside the dropped content
                     return;
                 }
 
-                results += "</" + tag + ">";
-            },
-            chars: function(text) {
-                if (lastTag !== '' && allowedTags.indexOf(lastTag) < 0) {
+                if (allowedTags.indexOf(tag) < 0 || isVoidTag(tag)) {
                     return;
                 }
-                results += text;
+
+                for (let i = openTags.length - 1; i >= 0; i--) {
+                    if (openTags[i] === tag) {
+                        // Anything still open inside it was never closed by the page
+                        closeTagsDownTo(i);
+                        return;
+                    }
+                }
+                // End tag without a matching start tag - dropped
+            },
+            chars: function(text) {
+                if (skippedTags.length > 0) {
+                    return;
+                }
+                results += escapeXMLText(decodeHtmlEntities(text));
             },
             comment: function(text) {
                 // results += "<!--" + text + "-->";
             }
         });
 
-        // TODO - (re)move
-        results = results.replace(/&nbsp;/gi, '&#160;');
+        // Whatever the page left open
+        closeTagsDownTo(0);
 
         return results;
 
     } catch (e) {
         console.log('Error:', e);
-        return 'Error: ' + e  //+"  " + force($(rawContentString))
+        // Keep the part that was parsed before the error rather than losing the
+        // whole page, but close it first so the epub stays valid
+        try {
+            closeTagsDownTo(0);
+        } catch (e2) {
+            console.log('Error:', e2);
+        }
+        return results;
     }
 
 }
@@ -274,7 +332,14 @@ function getContent(htmlContent) {
         return parseHTML(tmpHtml);
     } catch (e) {
         console.log('Error:', e);
-        return htmlContent;
+        // Never hand back the node itself - it ends up spliced into the xhtml page
+        // as "[object HTMLBodyElement]". Fall back to the plain text of the content.
+        try {
+            return '<div>' + escapeXMLText(htmlContent.textContent || '') + '</div>';
+        } catch (e2) {
+            console.log('Error:', e2);
+            return '';
+        }
     }
 }
 
