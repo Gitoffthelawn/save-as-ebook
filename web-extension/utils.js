@@ -420,3 +420,114 @@ function jsonToCss(jsonObj) {
     }
     return result;
 }
+
+/////
+// DOM helpers - these replace the handful of jQuery calls the extension used to
+// make. They deliberately keep jQuery's exact semantics, which are not always
+// the same as the similarly named native methods.
+
+// Element.replaceWith() inserts a string as *text*, so it cannot stand in for
+// jQuery's .replaceWith(html). Parse the markup first, then swap it in.
+function replaceElementWithHTML(elem, html) {
+    if (!elem || !elem.parentNode) {
+        return;
+    }
+    let parent = elem.parentNode;
+    let holder = document.createElement('div');
+    holder.innerHTML = html;
+    while (holder.firstChild) {
+        parent.insertBefore(holder.firstChild, elem);
+    }
+    parent.removeChild(elem);
+}
+
+// jQuery's :visible - an element counts as visible when it takes up space in
+// the layout. Note that visibility:hidden and opacity:0 are *not* hidden by
+// this definition, which is what the css extraction has always relied on.
+function isElementVisible(elem) {
+    return !!(elem.offsetWidth || elem.offsetHeight || elem.getClientRects().length);
+}
+
+function cssPropertyToCamelCase(name) {
+    return name.replace(/-([a-z])/g, (all, letter) => letter.toUpperCase());
+}
+
+// jQuery's .css(name) reads the resolved value and falls back to the indexed
+// property, which is what makes shorthands like "font" and "border" resolve on
+// browsers that leave getPropertyValue() empty for them.
+function getComputedCssValue(computedStyle, name) {
+    let value = computedStyle.getPropertyValue(name);
+    if (!value) {
+        value = computedStyle[cssPropertyToCamelCase(name)];
+    }
+    return value;
+}
+
+/////
+
+// Reports an HTML fragment as the same stream of start/end/chars/comment events
+// that pure-parser used to emit, so the callers are unchanged. The difference is
+// that the browser's own HTML5 parser does the parsing, which gets malformed
+// markup and implied tags right where a regex parser guesses.
+//
+// A <template> is used because its content is parsed into an inert document:
+// no scripts run and, importantly here, no <img> is ever fetched - the images
+// are downloaded later from the rewritten urls instead.
+//
+// Every element reports an end event, including void ones, so callers can pair
+// start/end without tracking which tags can have children.
+function walkHtmlFragment(html, handler) {
+    let template = document.createElement('template');
+    template.innerHTML = html;
+
+    let walk = (parent) => {
+        for (let node = parent.firstChild; node; node = node.nextSibling) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+                let tag = node.localName;
+                let attrs = [];
+                for (let i = 0; i < node.attributes.length; i++) {
+                    attrs.push({
+                        name: node.attributes[i].name.toLowerCase(),
+                        // already entity-decoded by the parser
+                        value: node.attributes[i].value
+                    });
+                }
+                handler.start(tag, attrs, false);
+                walk(node);
+                handler.end(tag);
+            } else if (node.nodeType === Node.TEXT_NODE || node.nodeType === Node.CDATA_SECTION_NODE) {
+                handler.chars(node.nodeValue);
+            } else if (node.nodeType === Node.COMMENT_NODE) {
+                handler.comment(node.nodeValue);
+            }
+        }
+    };
+
+    walk(template.content);
+}
+
+/////
+
+function fetchBinaryContent(url) {
+    return fetch(url).then((response) => {
+        if (!response.ok) {
+            throw new Error('HTTP ' + response.status + ' for ' + url);
+        }
+        return response.arrayBuffer();
+    });
+}
+
+function downloadBlob(blob, fileName) {
+    let objectUrl = URL.createObjectURL(blob);
+    let link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = fileName;
+    link.rel = 'noopener';
+    link.style.display = 'none';
+    (document.body || document.documentElement).appendChild(link);
+    link.click();
+    link.parentNode.removeChild(link);
+    // the download reads from the url after the click returns, so it can only be
+    // released later - same delay FileSaver.js used
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 40000);
+}

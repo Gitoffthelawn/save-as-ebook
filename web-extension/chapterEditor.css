@@ -62,6 +62,12 @@ ul, ul.chapterEditor-chapters-list {
     padding: 3px;
     margin-right: 5px;
     border-radius: 5px;
+    /* keeps the handle, not the text inside it, as the drag source */
+    user-select: none;
+}
+.chapterEditor-chapter-item.chapterEditor-dragging {
+    opacity: 0.4;
+    background-color: #e8e8e8;
 }
 .chapterEditor-chapter-item > input[type="text"] {
     padding: 5px;

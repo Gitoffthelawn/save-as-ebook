@@ -95,18 +95,21 @@ function getImageSrc(srcTxt) {
 }
 
 // tested
-function extractMathMl($htmlObject) {
-    $htmlObject.find('span[id^="MathJax-Element-"]').each(function (i, el) {
-        $(el).replaceWith('<span>' + el.getAttribute('data-mathml') + '</span>');
+function extractMathMl(htmlObject) {
+    htmlObject.querySelectorAll('span[id^="MathJax-Element-"]').forEach(function (el) {
+        replaceElementWithHTML(el, '<span>' + el.getAttribute('data-mathml') + '</span>');
     });
 }
 
 // tested
-function extractCanvasToImg($htmlObject) {
-    $htmlObject.find('canvas').each(function (index, elem) {
+function extractCanvasToImg(htmlObject) {
+    htmlObject.querySelectorAll('canvas').forEach(function (elem) {
         try {
+            // FIXME - docEl is not defined, so this throws for every canvas and
+            // no canvas is ever converted. Left as is to keep this change a pure
+            // library swap; the fix is to read from elem.
             let imgUrl = docEl.toDataURL('image/jpeg');
-            $(elem).replaceWith('<img src="' + imgUrl + '" alt=""></img>');
+            replaceElementWithHTML(elem, '<img src="' + imgUrl + '" alt=""></img>');
         } catch (e) {
             console.log(e)
         }
@@ -114,16 +117,16 @@ function extractCanvasToImg($htmlObject) {
 }
 
 // tested
-function extractSvgToImg($htmlObject) {
+function extractSvgToImg(htmlObject) {
     let serializer = new XMLSerializer();
-    $htmlObject.find('svg').each(function (index, elem) {
+    htmlObject.querySelectorAll('svg').forEach(function (elem) {
         // add width & height because the result image was too big
         let bbox = elem.getBoundingClientRect()
         let newWidth = bbox.width
         let newHeight = bbox.height
         let svgXml = serializer.serializeToString(elem);
         let imgSrc = 'data:image/svg+xml;base64,' + window.btoa(svgXml);
-        $(elem).replaceWith('<img src="' + imgSrc + '" width="'+newWidth+'" height="'+newHeight+'">' + '</img>');
+        replaceElementWithHTML(elem, '<img src="' + imgSrc + '" width="'+newWidth+'" height="'+newHeight+'">' + '</img>');
     });
 }
 
@@ -153,18 +156,16 @@ function extractIFrames() {
     }
 }
 
-function preProcess($htmlObject) {
+function preProcess(htmlObject) {
     // TODO
-    // $htmlObject.find('script, style, noscript, iframe').remove();
-    // $('body').find('script, style, noscript, iframe').remove()
-    // $('body').find('script, style, noscript, iframe').contents().remove()
-    // $('body').find('iframe').remove()
-    // $('body').find('*:empty').not('img').not('br').not('hr').remove();
-    // formatPreCodeElements($('body'));
+    // htmlObject.querySelectorAll('script, style, noscript, iframe').forEach(el => el.remove());
+    // document.body.querySelectorAll('iframe').forEach(el => el.remove());
+    // remove empty elements other than img/br/hr
+    // formatPreCodeElements(document.body);
 
-    extractMathMl($htmlObject);
-    extractCanvasToImg($htmlObject);
-    extractSvgToImg($htmlObject);
+    extractMathMl(htmlObject);
+    extractCanvasToImg(htmlObject);
+    extractSvgToImg(htmlObject);
 }
 
 function parseHTML(rawContentString) {
@@ -181,7 +182,10 @@ function parseHTML(rawContentString) {
 
     let isVoidTag = (tag) => voidTags.indexOf(tag) > -1;
 
-    let attrValue = (value) => escapeXMLChars(decodeHtmlEntities(value == null ? '' : String(value)));
+    // walkHtmlFragment hands over values the HTML parser has already decoded, so
+    // they only need escaping - decoding here as well would turn a literal
+    // "&amp;lt;" on the page into a "<" in the epub
+    let attrValue = (value) => escapeXMLChars(value == null ? '' : String(value));
 
     let closeTagsDownTo = (index) => {
         for (let i = openTags.length - 1; i >= index; i--) {
@@ -191,7 +195,7 @@ function parseHTML(rawContentString) {
     };
 
     try {
-        HTMLParser(rawContentString, {
+        walkHtmlFragment(rawContentString, {
             start: function(tag, attrs, unary) {
                 if (skippedTags.length > 0) {
                     // Inside dropped content - track nesting so that the matching
@@ -296,7 +300,8 @@ function parseHTML(rawContentString) {
                 if (skippedTags.length > 0) {
                     return;
                 }
-                results += escapeXMLText(decodeHtmlEntities(text));
+                // already decoded by the parser - see attrValue above
+                results += escapeXMLText(text);
             },
             comment: function(text) {
                 // results += "<!--" + text + "-->";
@@ -325,11 +330,15 @@ function parseHTML(rawContentString) {
 function getContent(htmlContent) {
     try {
         // TODO - move; called multiple times on selection
-        preProcess($('body'))
+        preProcess(document.body)
         let tmp = document.createElement('div');
         tmp.appendChild(htmlContent.cloneNode(true));
-        let tmpHtml = '<div>' + tmp.innerHTML + '</div>';
-        return parseHTML(tmpHtml);
+        // The wrapping <div> is added to the result rather than to the parser
+        // input on purpose: a fragment parsed inside a <div> is parsed "in body",
+        // where a stray <td> or <tr> - what a selection inside a table produces -
+        // is dropped. Parsed on its own it is parsed "in template", which keeps
+        // table cells intact.
+        return '<div>' + parseHTML(tmp.innerHTML) + '</div>';
     } catch (e) {
         console.log('Error:', e);
         // Never hand back the node itself - it ends up spliced into the xhtml page
@@ -362,14 +371,12 @@ function getSelectedNodes() {
 
 function extractCss(includeStyle, appliedStyles) {
     if (includeStyle) {
-        $('body').find('*').each((i, pre) => {
-            let $pre = $(pre);
-
+        document.body.querySelectorAll('*').forEach((pre, i) => {
             if (allowedTags.indexOf(pre.tagName.toLowerCase()) < 0) return;
             if (mathMLTags.indexOf(pre.tagName.toLowerCase()) > -1) return;
 
-            if (!$pre.is(':visible')) {
-                $pre.replaceWith('');
+            if (!isElementVisible(pre)) {
+                pre.remove();
             } else {
                 if (pre.tagName.toLowerCase() === 'svg') return;
 
@@ -390,8 +397,9 @@ function extractCss(includeStyle, appliedStyles) {
                 if (!tmpNewCss) {
                     tmpNewCss = {};
 
+                    let computedStyle = window.getComputedStyle(pre);
                     for (let cssTagName of supportedCss) {
-                        let cssValue = $pre.css(cssTagName);
+                        let cssValue = getComputedCssValue(computedStyle, cssTagName);
                         if (cssValue && cssValue.length > 0) {
                             tmpNewCss[cssTagName] = cssValue;
                         }
@@ -425,10 +433,9 @@ function extractCss(includeStyle, appliedStyles) {
         return jsonToCss(tmpIdsToNewCss);
     } else {
         // remove hidden elements when style is not included
-        $('body').find('*').each((i, pre) => {
-            let $pre = $(pre)
-            if (!$pre.is(':visible')) {
-                $pre.replaceWith('')
+        document.body.querySelectorAll('*').forEach((pre) => {
+            if (!isElementVisible(pre)) {
+                pre.remove()
             }
         })
         let mergedCss = '';
@@ -444,46 +451,39 @@ function extractCss(includeStyle, appliedStyles) {
 
 /////
 
+// Always resolves - one image that cannot be downloaded must not stop the rest
+// of the ebook from being built
 function deferredAddZip(url, filename) {
-    let deferred = $.Deferred();
-    JSZipUtils.getBinaryContent(url, function(err, data) {        
-        if (err) {
-            // deferred.reject(err); TODO
-            console.log('Error:', err);
-            deferred.resolve();
-        } else {
-            // TODO - move to utils.js
-            if (filename.endsWith("TODO-EXTRACT")) {
-                let oldFilename = filename
-                let arr = (new Uint8Array(data)).subarray(0, 4);
-                let header = "";
-                for(let i = 0; i < arr.length; i++) {
-                    header += arr[i].toString(16);
-                }
-                if (header.startsWith("89504e47")) {
-                    filename = filename.replace("TODO-EXTRACT", "png")
-                } else if (header.startsWith("47494638")) {
-                    filename = filename.replace("TODO-EXTRACT", "gif")
-                } else if (header.startsWith("ffd8ff")) {
-                    filename = filename.replace("TODO-EXTRACT", "jpg")
-                } else {
-                    // ERROR
-                    console.log("Error! Unable to extract the image type!");
-                    deferred.resolve();
-                }
-                tmpGlobalContent = tmpGlobalContent.replace(oldFilename, filename)
+    return fetchBinaryContent(url).then((data) => {
+        // TODO - move to utils.js
+        if (filename.endsWith("TODO-EXTRACT")) {
+            let oldFilename = filename
+            let arr = (new Uint8Array(data)).subarray(0, 4);
+            let header = "";
+            for(let i = 0; i < arr.length; i++) {
+                header += arr[i].toString(16);
             }
-                        
-            extractedImages.push({
-                filename: filename,
-                // TODO - must be JSON serializable
-                data: base64ArrayBuffer(data)
-            });
-            
-            deferred.resolve();
+            if (header.startsWith("89504e47")) {
+                filename = filename.replace("TODO-EXTRACT", "png")
+            } else if (header.startsWith("47494638")) {
+                filename = filename.replace("TODO-EXTRACT", "gif")
+            } else if (header.startsWith("ffd8ff")) {
+                filename = filename.replace("TODO-EXTRACT", "jpg")
+            } else {
+                // ERROR
+                console.log("Error! Unable to extract the image type!");
+            }
+            tmpGlobalContent = tmpGlobalContent.replace(oldFilename, filename)
         }
+
+        extractedImages.push({
+            filename: filename,
+            // TODO - must be JSON serializable
+            data: base64ArrayBuffer(data)
+        });
+    }).catch((err) => {
+        console.log('Error:', err);
     });
-    return deferred;
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -513,7 +513,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         imgsPromises.push(deferredAddZip(tmpImg.originalUrl, tmpImg.filename));
     });
 
-    $.when.apply($, imgsPromises).done(() => {
+    Promise.all(imgsPromises).then(() => {
         let tmpTitle = getPageTitle(document.title);
         result = {
             url: getPageUrl(tmpTitle),
@@ -525,7 +525,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             content: tmpGlobalContent
         };
         sendResponse(result);
-    }).fail((e) => {
+    }).catch((e) => {
         console.log('Error:', e);
         sendResponse(null)
     });

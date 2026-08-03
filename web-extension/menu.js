@@ -169,11 +169,9 @@ document.getElementById("editChapters").onclick = function() {
             target: {tabId: tabId},
             files: ['chapterEditor.css']
         }).then(() => {
-            // a single call with an ordered file list - the files are executed
-            // in order, so chapterEditor.js always sees jquery
             return ext.scripting.executeScript({
                 target: {tabId: tabId},
-                files: ['libs/jquery.js', 'libs/jquery-sortable.js', 'chapterEditor.js']
+                files: ['chapterEditor.js']
             });
         }).catch((error) => {
             console.error(error);

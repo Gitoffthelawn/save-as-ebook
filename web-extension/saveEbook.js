@@ -193,7 +193,7 @@ function _buildEbook(allPages, fromMenu=false) {
         })
         .then(function(content) {
             console.log("done !");
-            saveAs(content, ebookFileName);
+            downloadBlob(content, ebookFileName);
 
             chrome.runtime.sendMessage({
                 type: "done"
