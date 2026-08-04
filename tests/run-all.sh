@@ -9,8 +9,20 @@ echo "### DOM tests (headless Chrome)"
 ./run-dom-tests.sh || status=1
 
 echo
+echo "### pure utilities"
+node utils.js || status=1
+
+echo
+echo "### background jobs and message state"
+node background.js || status=1
+
+echo
 echo "### chapter outline and navigation tree"
 node outline.js || status=1
+
+echo
+echo "### EPUB builder scenarios"
+node epub-builder.js || status=1
 
 # Both shapes, because the package metadata differs between them: a one-chapter
 # book states the article's own date and description, a compilation cannot.
@@ -28,6 +40,10 @@ for build in "fixture.epub" "single.epub --single"; do
     echo "### EPUBCheck: $1"
     ./run-epubcheck.sh "out/$1" || status=1
 done
+
+echo
+echo "### negative EPUB structure checks"
+node check-epub-negative.js "out/fixture.epub" || status=1
 
 echo
 [ "$status" -eq 0 ] && echo "ALL PASSED" || echo "FAILURES - see above"

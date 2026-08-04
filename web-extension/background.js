@@ -46,6 +46,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 // globals. The content script pings while it works; a tab that was closed or
 // navigated away stops pinging and the job is reclaimed.
 const JOB_TIMEOUT = 30000
+let jobClaimPending = false
 
 // Injected on demand instead of declared in the manifest. That keeps the
 // extension off every page the user visits, and lets it run with activeTab
@@ -179,7 +180,8 @@ function getJob(callback) {
         let job = data && data.job ? data.job : null
         if (job && Date.now() - job.lastHeartbeat >= JOB_TIMEOUT) {
             // stopped reporting - the tab is gone or the extraction died
-            job = null
+            finishJob(job, false, () => callback(null))
+            return
         }
         callback(job)
     })
@@ -202,6 +204,30 @@ function startJob(tabId, callback) {
     })
 }
 
+// Serializes the read-then-write used to claim a job. Storage operations are
+// asynchronous, so without the in-worker reservation two commands arriving in
+// the same turn can both observe an empty session store and both start.
+function tryStartJob(tabId, callback) {
+    if (jobClaimPending) {
+        callback(false)
+        return
+    }
+
+    jobClaimPending = true
+    getJob((job) => {
+        if (job) {
+            jobClaimPending = false
+            callback(false)
+            return
+        }
+
+        startJob(tabId, () => {
+            jobClaimPending = false
+            callback(true)
+        })
+    })
+}
+
 // Records that the job is still making progress. Only touches an existing job,
 // so a stray heartbeat from an abandoned tab cannot resurrect one.
 function touchJob() {
@@ -215,22 +241,30 @@ function touchJob() {
 }
 
 // Records what still has to be undone when the job ends
-function updateJob(fields) {
+function updateJob(fields, callback) {
     chrome.storage.session.get('job', (data) => {
         if (!data || !data.job) {
+            if (callback) {
+                callback(false)
+            }
             return
         }
-        chrome.storage.session.set({'job': Object.assign(data.job, fields)})
+        chrome.storage.session.set({'job': Object.assign(data.job, fields)}, () => {
+            if (callback) {
+                callback(true)
+            }
+        })
     })
 }
 
-// The single terminal path - every way a job can end goes through here, so the
-// badge, the injected css and the flag cannot survive it.
-function endJob() {
-    chrome.storage.session.get('job', (data) => {
-        let job = data && data.job ? data.job : null
-
-        chrome.storage.session.remove('job')
+// Clears a job already read from storage. Keeping cleanup in one place also
+// lets getJob dispose of an expired record before a replacement is started.
+//
+// closePopup is false for a reclaimed job: nothing is waiting on that one any
+// more, and the popup that would receive the message is the one that just
+// opened and asked whether the extension was busy.
+function finishJob(job, closePopup, callback) {
+    chrome.storage.session.remove('job', () => {
         chrome.action.setBadgeText({text: ""})
 
         // the styles the extension injected for this site are the page's problem
@@ -245,7 +279,20 @@ function endJob() {
         // a service worker has no window handles - chrome.extension.getViews() does
         // not exist here, so ask the popup to close itself. Most of the time no popup
         // is open, which rejects with "Receiving end does not exist" - ignore it.
-        ext.runtime.sendMessage({type: 'popup-close'}).catch(() => {})
+        if (closePopup) {
+            ext.runtime.sendMessage({type: 'popup-close'}).catch(() => {})
+        }
+
+        if (callback) {
+            callback()
+        }
+    })
+}
+
+// The single terminal path - every way a live job can end goes through here.
+function endJob() {
+    chrome.storage.session.get('job', (data) => {
+        finishJob(data && data.job ? data.job : null, true)
     })
 }
 
@@ -311,27 +358,25 @@ function executeCommand(command) {
                 return;
             }
 
-            getJob((job) => {
-                if (job) {
+            tryStartJob(tabId, (started) => {
+                if (!started) {
                     chrome.tabs.sendMessage(tabId, {'alert': 'Work in progress! Please wait until the current eBook is generated!'}, (r) => {
                         void chrome.runtime.lastError;
                     });
                     return;
                 }
 
-                startJob(tabId, () => {
-                    if (command.type === 'save-page') {
-                        dispatch(tab, 'extract-page', false, []);
-                    } else if (command.type === 'save-selection') {
-                        dispatch(tab, 'extract-selection', false, []);
-                    } else if (command.type === 'add-page') {
-                        dispatch(tab, 'extract-page', true, []);
-                    } else if (command.type === 'add-selection') {
-                        dispatch(tab, 'extract-selection', true, []);
-                    } else {
-                        endJob();
-                    }
-                })
+                if (command.type === 'save-page') {
+                    dispatch(tab, 'extract-page', false, []);
+                } else if (command.type === 'save-selection') {
+                    dispatch(tab, 'extract-selection', false, []);
+                } else if (command.type === 'add-page') {
+                    dispatch(tab, 'extract-page', true, []);
+                } else if (command.type === 'add-selection') {
+                    dispatch(tab, 'extract-selection', true, []);
+                } else {
+                    endJob();
+                }
             })
         })
     });
@@ -434,9 +479,19 @@ function prepareStyles(tab, includeStyle, appliedStyles, callback) {
             css: currentStyle.style
         }).then(() => {
             // remembered so endJob() can take it off the page again
-            updateJob({injectedCss: currentStyle.style});
-            appliedStyles.push(currentStyle);
-            callback(appliedStyles)
+            updateJob({injectedCss: currentStyle.style}, (updated) => {
+                if (updated) {
+                    appliedStyles.push(currentStyle);
+                } else {
+                    // The tab or a timeout ended the job while CSS was being
+                    // inserted, so there is no later endJob to clean it up.
+                    ext.scripting.removeCSS({
+                        target: {tabId: tab[0].id},
+                        css: currentStyle.style
+                    }).catch(() => {})
+                }
+                callback(appliedStyles)
+            });
         }).catch(() => {
             callback(appliedStyles)
         });
@@ -500,6 +555,7 @@ function _execRequest(request, sender, sendResponse) {
         chrome.storage.local.get('allPages', function (data) {
             if (!data || !data.allPages) {
                 sendResponse({allPages: []});
+                return;
             }
             sendResponse({allPages: data.allPages});
         })
@@ -581,14 +637,6 @@ function _execRequest(request, sender, sendResponse) {
         isBusy((busy) => {
             sendResponse({isBusy: busy})
         })
-    }
-    if (request.type === 'set is busy') {
-        if (request.isBusy) {
-            // the tab is only known for jobs the background started itself
-            startJob(sender && sender.tab ? sender.tab.id : null)
-        } else {
-            endJob()
-        }
     }
     // the extraction is still running - see JOB_TIMEOUT
     if (request.type === 'job-heartbeat') {

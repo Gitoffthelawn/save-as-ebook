@@ -110,9 +110,8 @@ window.addEventListener('load', function () {
 
   // ---- quotations, and the tag that was missing altogether ----
   has('blockquote is no longer unwrapped', content, '<blockquote');
-  // Only the shape is asserted, not the host: getAbsoluteUrl() resolves against
-  // window.location, and this fixture is opened from a file:// url rather than
-  // from the <base> the images in the other fixtures are written against.
+  // Only the shape is asserted here; exact base-URL behavior lives in the pure
+  // utility suite, while this fixture checks that extraction uses the resolver.
   report('blockquote cite is resolved to an absolute url',
          /<blockquote cite="[a-z]+:\/\/[^"]*sources\/one">/.test(content),
          (content.match(/<blockquote[^>]*>/) || ['no match'])[0]);

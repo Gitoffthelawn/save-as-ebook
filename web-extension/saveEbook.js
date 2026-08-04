@@ -25,7 +25,8 @@ function getImageZipOptions(filename) {
 function dropUntypedImages(page) {
     var images = page.images || [];
     var usable = images.filter(function(image) {
-        return getImageType(image.filename) !== '';
+        return image && typeof image.filename === 'string' &&
+               typeof image.data === 'string' && getImageType(image.filename) !== '';
     });
     if (usable.length === images.length) {
         return page;
@@ -33,13 +34,79 @@ function dropUntypedImages(page) {
     var content = String(page.content || '');
     images.forEach(function(image) {
         if (usable.indexOf(image) < 0) {
-            console.log('Dropping an image of unknown type:', image.filename);
-            content = removeImgTags(content, image.filename);
+            var filename = image && image.filename;
+            console.log('Dropping an image of unknown type:', filename);
+            content = removeImgTags(content, filename);
         }
     });
     // a copy: these pages are the buffered chapters, and rebuilding a book must
     // not quietly edit what is in storage
     return Object.assign({}, page, {images: usable, content: content});
+}
+
+// Only complete chapter records can become spine items. A null or partially
+// written record can be left behind if the browser is closed while storage is
+// being updated; skipping that record is preferable to losing every good
+// chapter beside it. Optional fields are normalized for chapters saved by older
+// extension versions.
+function normalizeChapters(allPages) {
+    if (!Array.isArray(allPages)) {
+        return [];
+    }
+    return allPages.filter(function(page) {
+        return page && typeof page === 'object' &&
+               typeof page.title === 'string' && page.title.trim().length > 0 &&
+               typeof page.url === 'string' && page.url.trim().length > 0;
+    }).map(function(page, index) {
+        return dropUntypedImages(Object.assign({}, page, {
+            content: typeof page.content === 'string' ? page.content : '',
+            images: Array.isArray(page.images) ? page.images : [],
+            styleFileName: typeof page.styleFileName === 'string' && page.styleFileName ?
+                           page.styleFileName : 'style' + index + '.css',
+            styleFileContent: typeof page.styleFileContent === 'string' ? page.styleFileContent : ''
+        }));
+    }).map(dropMissingImages);
+}
+
+// Extraction normally writes every image reference and image byte record as a
+// pair. Interrupted downloads and chapters saved by older versions can violate
+// that invariant. Remove only local archive references which have no byte
+// record; remote-looking sources are left alone for the normal EPUB validation
+// path rather than guessed about here.
+//
+// The reference has to be anchored at the start of the src, not matched
+// anywhere in it: a cdn url ending in "/images/photo.jpg" names a file this
+// archive was never meant to contain, and stripping that <img> would delete a
+// picture rather than repair a dangling reference.
+function dropMissingImages(page) {
+    var filenames = Object.create(null);
+    page.images.forEach(function(image) {
+        filenames[image.filename] = true;
+    });
+    var content = String(page.content || '').replace(/<img\b[^>]*\bsrc="([^"]*)"[^>]*>/gi,
+        function(tag, src) {
+            var match = src.match(/^(?:\.{1,2}\/)*images\/([^/?#]+)(?:[?#].*)?$/i);
+            return match && !filenames[match[1]] ? '' : tag;
+        });
+    return content === page.content ? page : Object.assign({}, page, {content: content});
+}
+
+// The archive has one namespace for images even though chapter records each
+// carry their own image list. The same downloaded asset can therefore occur in
+// several records. Keep one manifest item and one zip member per filename; all
+// chapter references continue to resolve to that shared member.
+function collectUniqueImages(allPages) {
+    var seen = Object.create(null);
+    var images = [];
+    allPages.forEach(function(page) {
+        page.images.forEach(function(image) {
+            if (!seen[image.filename]) {
+                seen[image.filename] = true;
+                images.push(image);
+            }
+        });
+    });
+    return images;
 }
 
 chrome.runtime.onMessage.addListener((obj, sender, sendResponse) => {
@@ -80,7 +147,8 @@ function finishJob(errorMessage) {
 
 function getImagesIndex(allImages) {
     return allImages.reduce(function(prev, elem, index) {
-        return prev + '\n' + '<item href="images/' + elem.filename + '" id="img' + elem.filename + '" media-type="image/' + getImageType(elem.filename) + '"/>';
+        return prev + '\n' + '<item href="images/' + escapeXMLChars(elem.filename) +
+               '" id="img' + index + '" media-type="image/' + getImageType(elem.filename) + '"/>';
     }, '');
 }
 
@@ -657,9 +725,12 @@ function buildEbook(allPages, fromMenu=false) {
 
 // http://ebooks.stackexchange.com/questions/1183/what-is-the-minimum-required-content-for-a-valid-epub
 function _buildEbook(allPages, fromMenu=false) {
-    allPages = allPages.filter(function(page) {
-        return page !== null;
-    }).map(dropUntypedImages);
+    allPages = normalizeChapters(allPages);
+    if (allPages.length === 0) {
+        finishJob('There are no valid chapters to save.');
+        return;
+    }
+    var allImages = collectUniqueImages(allPages);
 
     console.log('Prepare Content...');
 
@@ -865,9 +936,7 @@ function _buildEbook(allPages, fromMenu=false) {
         allPages.reduce(function(prev, page, index) {
             return prev + '\n' + '<item id="style' + index + '" href="style/' + page.styleFileName + '" media-type="text/css" />';
         }, '') +
-        allPages.reduce(function(prev, page, index) {
-            return prev + '\n' + getImagesIndex(page.images);
-        }, '') +
+        getImagesIndex(allImages) +
         '</manifest>' +
         '<spine toc="ncx">' +
         allPages.reduce(function(prev, page, index) {
@@ -881,17 +950,14 @@ function _buildEbook(allPages, fromMenu=false) {
     ///////////////
     try {
         let imgsFolder = oebps.folder("images");
-        allPages.forEach(function(page) {
-            for (let i = 0; i < page.images.length; i++) {
-                let tmpImg = page.images[i]
-                // TODO - Must be JSON serializable - see the same comment in extractHtml.js
-                let imgOptions = getImageZipOptions(tmpImg.filename)
-                // if (tmpImg.isBinary) {
-                //     imgsFolder.file(tmpImg.filename, tmpImg.data, {binary: true, compression: imgOptions.compression})
-                // } else {
-                    imgsFolder.file(tmpImg.filename, tmpImg.data, {base64: true, compression: imgOptions.compression})
-                // }
-            }
+        allImages.forEach(function(tmpImg) {
+            // TODO - Must be JSON serializable - see the same comment in extractHtml.js
+            let imgOptions = getImageZipOptions(tmpImg.filename)
+            // if (tmpImg.isBinary) {
+            //     imgsFolder.file(tmpImg.filename, tmpImg.data, {binary: true, compression: imgOptions.compression})
+            // } else {
+                imgsFolder.file(tmpImg.filename, tmpImg.data, {base64: true, compression: imgOptions.compression})
+            // }
         });
     } catch (error) {
         console.log(error);

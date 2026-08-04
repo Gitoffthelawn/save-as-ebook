@@ -148,7 +148,7 @@ function getImageSrc(srcTxt) {
     // Two <img> tags pointing at the same bytes must resolve to the same key:
     // for remote images that is the absolute url, for inline ones the data uri.
     // "img/a.png" and "./img/a.png" name one file but not one string, so the key
-    // is canonicalized - the url actually fetched is left alone.
+    // is the resolved url rather than the attribute as it was written.
     let imageKey = isB64Img ? srcTxt : canonicalizeUrl(srcTxt);
 
     let knownFileName = imageFileNames.get(imageKey);
@@ -839,10 +839,9 @@ function extraHtmlAttributes(tag, attrs) {
 // stays a link to a position inside the chapter, and everything else is
 // resolved against the page so that it still works away from it.
 //
-// Absolutising a fragment was the old behaviour and it broke both halves at
-// once: getAbsoluteUrl() appends "#note-3" to the *directory* the page is in, so
-// a footnote marker became a link to a different address entirely, and following
-// it left the book.
+// Absolutising a fragment was the old behaviour: even when it resolves to the
+// correct source page, following that absolute URL leaves the book instead of
+// jumping to the matching id in this chapter.
 function linkHref(rawHref) {
     let value = rawHref == null ? '' : String(rawHref).trim();
     if (value === '' || !isSafeLinkUrl(value)) {

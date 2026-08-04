@@ -98,7 +98,8 @@ JSZip.loadAsync(raw).then(async (zip) => {
     const items = [...opf.matchAll(/<item\s+([^>]*)\/>/g)].map((m) => ({
         attrs: m[1],
         id: (m[1].match(/id="([^"]+)"/) || [])[1],
-        href: (m[1].match(/href="([^"]+)"/) || [])[1]
+        href: (m[1].match(/href="([^"]+)"/) || [])[1],
+        mediaType: (m[1].match(/media-type="([^"]+)"/) || [])[1]
     }));
     check('manifest is not empty', items.length > 0, items.length + ' items');
 
@@ -116,6 +117,26 @@ JSZip.loadAsync(raw).then(async (zip) => {
     const untyped = items.filter((i) => !/media-type="[^"]+\/[^"]+"/.test(i.attrs));
     check('every manifest item declares a real media type', untyped.length === 0,
           untyped.map((i) => i.href).join(', '));
+
+    // A syntactically valid media type can still tell a reader to use the wrong
+    // decoder. These are all of the file types the writer currently emits.
+    const mediaTypes = {
+        '.xhtml': 'application/xhtml+xml',
+        '.css': 'text/css',
+        '.ncx': 'application/x-dtbncx+xml',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.svg': 'image/svg+xml',
+        '.webp': 'image/webp'
+    };
+    const mistyped = items.filter((i) => {
+        const expected = mediaTypes[path.posix.extname(i.href || '').toLowerCase()];
+        return expected && i.mediaType !== expected;
+    });
+    check('manifest media types match their files', mistyped.length === 0,
+          mistyped.map((i) => i.href + ' is ' + i.mediaType).join(', '));
 
     // webp is a core image type in epub 3.3, so it is embedded as it arrived
     const webp = items.filter((i) => /\.webp$/i.test(i.href || ''));

@@ -121,13 +121,6 @@ function checkIfBusy(callback) {
     });
 }
 
-function setIsBusy(isBusy) {
-    chrome.runtime.sendMessage({
-        type: "set is busy",
-        isBusy: isBusy
-    }, function(response) {});
-}
-
 /////
 function getCurrentUrl() {
     let url = window.location.href;
@@ -230,12 +223,14 @@ function getFileExtension(fileName) {
         if (isBase64Img(fileName)) {
             tmpFileName = getBase64ImgType(fileName);
         } else {
-            tmpFileName = fileName.split('.').pop();
+            // Strip URL-only components before looking for the last dot. Doing
+            // this afterwards mistakes /image?format=.png for a PNG filename.
+            tmpFileName = fileName.split(/[?#]/)[0].split('.').pop();
         }
 
-        if (tmpFileName.indexOf('?') > 0) {
-            tmpFileName = tmpFileName.split('?')[0];
-        }
+        // A data URI type cannot normally contain either delimiter, but keeping
+        // this here makes the normalization common to both input forms.
+        tmpFileName = tmpFileName.split(/[?#]/)[0];
         tmpFileName = tmpFileName.toLowerCase();
         if (tmpFileName === 'jpg') {
             tmpFileName = 'jpeg';
@@ -275,10 +270,10 @@ function magicBytes(data, count) {
 function sniffImageExtension(data) {
     try {
         let header = magicBytes(data, 12);
-        if (header.startsWith('89504e47')) {
+        if (header.startsWith('89504e470d0a1a0a')) {
             return 'png';
         }
-        if (header.startsWith('47494638')) {
+        if (header.startsWith('474946383761') || header.startsWith('474946383961')) {
             return 'gif';
         }
         if (header.startsWith('ffd8ff')) {
@@ -347,37 +342,16 @@ function getAbsoluteUrl(urlStr) {
         return '';
     }
     try {
-        urlStr = decodeHtmlEntity(urlStr);    
-        let currentUrl = getCurrentUrl();
-        let originUrl = getOriginUrl();
-        let absoluteUrl = urlStr;
-
-        originUrl = removeEndingSlash(originUrl)
-        currentUrl = removeEndingSlash(currentUrl)
-
-        if (urlStr.indexOf('//') === 0) {
-            absoluteUrl = window.location.protocol + urlStr;
-        } else if (urlStr.indexOf('/') === 0) {
-            absoluteUrl = originUrl + urlStr;
-        } else if (urlStr.indexOf('#') === 0) {
-            absoluteUrl = currentUrl + urlStr;
-        } else if (urlStr.indexOf('http') !== 0) {
-            absoluteUrl = currentUrl + '/' + urlStr;
-        }
-        // TODO is this needed?
-        // absoluteUrl = escapeXMLChars(absoluteUrl);
-        return absoluteUrl;
+        urlStr = decodeHtmlEntity(urlStr);
+        // The platform resolver handles <base>, query-only and fragment-only
+        // references, parent segments, protocol-relative URLs, and absolute
+        // non-HTTP schemes. Reimplementing those branches by hand inevitably
+        // turns at least one of them into a path below the current directory.
+        return new URL(urlStr, document.baseURI || window.location.href).href;
     } catch (e) {
         console.log('Error:', e);
         return urlStr;
     }
-}
-
-function removeEndingSlash(inputStr) {
-    if (inputStr.endsWith('/')) {
-        return inputStr.substring(0, inputStr.length - 1);
-    }
-    return inputStr;
 }
 
 // https://gist.github.com/jonleighton/958841
