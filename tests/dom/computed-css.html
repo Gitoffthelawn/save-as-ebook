@@ -1,0 +1,134 @@
+<!doctype html>
+<html>
+<head>
+<!-- The chapter stylesheet is built out of computed styles, and getComputedStyle
+     answers a shorthand with the empty string whenever it cannot serialize one.
+     That is not something a DOM shim can be made to reproduce faithfully - the
+     rules for which shorthands serialize and when are the browser's - so the
+     only place this can be checked is a real one. -->
+<script>
+window.chrome = {
+  runtime: {onMessage: {addListener: function(){}}, sendMessage: function(){}},
+  i18n: {getMessage: function(){ return ''; }}
+};
+</script>
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/extractHtml.js"></script>
+<style>
+  /* A shorthand that serializes: what every page got before, and must still get */
+  .plain      { font: italic 700 18px Georgia, serif; }
+  .boxed      { border: 1px solid rgb(255, 0, 0); }
+  .unbordered { color: rgb(0, 0, 0); }
+
+  /* ...and the shorthands that do not. Neither of these is exotic: a variable
+     font is how a modern site sets its body text, and a rule under a heading is
+     the most common border on the web. */
+  .variable   { font-family: Georgia; font-size: 18px; font-style: italic;
+                font-weight: 700; font-variation-settings: "wght" 500; }
+  .ligatures  { font-family: Georgia; font-size: 18px;
+                font-feature-settings: "liga" 0; }
+  .underlined { border-bottom: 2px solid rgb(0, 0, 255); }
+  .mixed      { border: 1px solid rgb(255, 0, 0); border-left-width: 4px; }
+</style>
+</head>
+<body>
+  <p class="plain">plain</p>
+  <p class="boxed">boxed</p>
+  <p class="unbordered">unbordered</p>
+  <p class="variable">variable</p>
+  <p class="ligatures">ligatures</p>
+  <p class="underlined">underlined</p>
+  <p class="mixed">mixed</p>
+
+<script>
+function report(name, ok, detail) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' -- ' + detail : '');
+  document.getElementById('results').appendChild(li);
+}
+
+window.addEventListener('load', function () {
+  var out = document.createElement('ul');
+  out.id = 'results';
+  document.body.appendChild(out);
+
+  // The declarations the generated class for this element holds - which is what
+  // ends up in the chapter's stylesheet.
+  function declarationsFor(selector) {
+    classNameToCss.clear();
+    cssToClassName.clear();
+    var element = document.querySelector(selector);
+    var className = classNameForComputedStyle(window.getComputedStyle(element));
+    return classNameToCss.get(className);
+  }
+
+  function has(declarations, name) {
+    return Object.prototype.hasOwnProperty.call(declarations, name);
+  }
+
+  // ---- the shorthand still wins where it works ----
+  //
+  // Pages that never hit the empty-string case have to keep getting exactly the
+  // css they got before: one declaration, from the shorthand.
+  var plain = declarationsFor('.plain');
+  report('a serializable font shorthand is still used as one declaration',
+         has(plain, 'font') && !has(plain, 'font-family'), JSON.stringify(plain));
+  report('and it carries the style and the weight',
+         /italic/.test(plain['font']) && /700/.test(plain['font']), plain['font']);
+
+  var boxed = declarationsFor('.boxed');
+  report('a border with four equal sides is still one declaration',
+         has(boxed, 'border') && !has(boxed, 'border-top'), JSON.stringify(boxed));
+
+  // ---- and the longhands answer where it does not ----
+  var variable = declarationsFor('.variable');
+  report('font-variation-settings no longer costs the element every font property',
+         has(variable, 'font-family') && has(variable, 'font-size') &&
+         has(variable, 'font-style') && has(variable, 'font-weight'),
+         JSON.stringify(variable));
+  report('the italics survive', variable['font-style'] === 'italic',
+         JSON.stringify(variable));
+  report('so does the weight', variable['font-weight'] === '700',
+         JSON.stringify(variable));
+
+  var ligatures = declarationsFor('.ligatures');
+  report('font-feature-settings does the same and is handled the same',
+         ligatures['font-size'] === '18px' && /Georgia/.test(ligatures['font-family']),
+         JSON.stringify(ligatures));
+
+  // Every longhand is written, initial or not: these properties inherit, and an
+  // element that left out font-weight because it computes to 400 would inherit
+  // the 700 of an ancestor's generated class instead.
+  report('an inherited property is written even when it is the initial value',
+         has(ligatures, 'font-weight') && has(ligatures, 'font-style'),
+         JSON.stringify(ligatures));
+
+  var underlined = declarationsFor('.underlined');
+  report('a rule under a heading survives',
+         underlined['border-bottom'] === '2px solid rgb(0, 0, 255)',
+         JSON.stringify(underlined));
+  // borders do not inherit, so the three sides that are not there can be left
+  // out - and leaving them out is what keeps one underline from being written
+  // as three declarations saying "no border here"
+  report('the sides that are not a border are not written',
+         !has(underlined, 'border-top') && !has(underlined, 'border-left') &&
+         !has(underlined, 'border-right'),
+         JSON.stringify(underlined));
+
+  var mixed = declarationsFor('.mixed');
+  report('four different sides are all written',
+         mixed['border-left'] === '4px solid rgb(255, 0, 0)' &&
+         mixed['border-top'] === '1px solid rgb(255, 0, 0)',
+         JSON.stringify(mixed));
+
+  // ---- the css is still valid css ----
+  var stylesheet = jsonToCss({c1: declarationsFor('.variable'), c2: declarationsFor('.mixed')});
+  report('the generated declarations parse as css',
+         stylesheet.indexOf('font-family:') > -1 && stylesheet.indexOf('border-left:') > -1,
+         stylesheet);
+
+  document.title = 'DONE';
+});
+</script>
+</body>
+</html>

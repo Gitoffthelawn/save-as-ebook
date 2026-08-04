@@ -1,11 +1,7 @@
-for (var i=0; i<document.styleSheets.length; i++) {
-    document.styleSheets.item(i).disabled = true;
-}
-
-var tmp = document.getElementById('chapterEditor-Modal');
-if (tmp) {
-    tmp.parentNode.removeChild(tmp);
-}
+// Runs on chapters.html. It used to be injected into the open web page, where it
+// had to disable that page's stylesheets to stop them bleeding into the editor
+// and remove an already-injected copy of itself - neither applies on a page of
+// our own, and disabling the stylesheets here would strip the editor's own css.
 showEditor();
 
 var allPagesRef = null;
@@ -186,12 +182,8 @@ function showEditor() {
     };
 
     function closeModal() {
-        for (var i=0; i<document.styleSheets.length; i++) {
-            document.styleSheets.item(i).disabled = false;
-        }
-        modal.style.display = "none";
-        modalContent.parentNode.removeChild(modalContent);
-        modal.parentNode.removeChild(modal);
+        // the editor is the whole tab now, so closing it closes the tab
+        window.close();
     }
 
     function removeListItem(atIndex) {

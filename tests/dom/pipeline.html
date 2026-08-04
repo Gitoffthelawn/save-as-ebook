@@ -1,0 +1,119 @@
+<!doctype html>
+<html>
+<head>
+<!-- The extension scripts are loaded before <base> on purpose: <base> is what
+     gives the fixture a realistic document.baseURI to resolve image urls
+     against, but it would also redirect these relative script paths. -->
+<script>
+// ---- stubs the content scripts expect ----
+window.chrome = {
+  runtime: {onMessage: {addListener: function(){}}, sendMessage: function(){}},
+  i18n: {getMessage: function(){ return ''; }}
+};
+</script>
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/extractHtml.js"></script>
+<base href="https://example.com/blog/">
+<style>
+  .collapsed { display: none; }
+  #menu { display: none; }
+  .art { color: rgb(1, 2, 3); }
+  .sidebar-title { color: rgb(9, 9, 9); }
+</style>
+</head>
+<body>
+  <div id="menu">hidden menu text</div>
+  <div class="collapsed"><p>collapsed accordion body</p></div>
+  <article class="art">
+    <p class="title">article paragraph</p>
+    <img src="/img/logo.png">
+    <img src="https://example.com/img/logo.png"><img src="../img/logo.png">
+    <svg width="10" height="10"><rect width="10" height="10"/></svg>
+    <canvas id="c" width="8" height="8"></canvas>
+  </article>
+  <aside><p class="title">sidebar paragraph</p></aside>
+  <iframe id="f" srcdoc="<p>inside the frame</p>"></iframe>
+
+<script>
+function report(name, ok, detail) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' -- ' + detail : '');
+  document.getElementById('results').appendChild(li);
+}
+
+window.addEventListener('load', function () {
+  // paint the canvas so toDataURL has something to read
+  var ctx = document.getElementById('c').getContext('2d');
+  ctx.fillStyle = 'red'; ctx.fillRect(0, 0, 8, 8);
+
+  var out = document.createElement('ul');
+  out.id = 'results';
+  document.body.appendChild(out);
+
+  var beforeHtml = document.body.innerHTML;
+  var beforeIframes = document.getElementsByTagName('iframe').length;
+  var beforeMenu = !!document.getElementById('menu');
+  var beforeCollapsed = document.querySelectorAll('.collapsed').length;
+
+  // ---- the pipeline, exactly as the listener drives it ----
+  allImages = []; extractedImages = []; imageFileNames.clear();
+  classNameToCss.clear(); cssToClassName.clear();
+
+  var state = readLivePage(true, []);
+  var clone = document.body.cloneNode(true);
+  clearLiveMarks(state);
+  var content = getContent(clone, state);
+
+  // ---- 1. the live page must be untouched ----
+  report('live dom unchanged', document.body.innerHTML === beforeHtml,
+         document.body.innerHTML === beforeHtml ? '' : 'body html differs');
+  report('iframe survives', document.getElementsByTagName('iframe').length === beforeIframes,
+         'before=' + beforeIframes + ' after=' + document.getElementsByTagName('iframe').length);
+  report('hidden menu survives', beforeMenu && !!document.getElementById('menu'));
+  report('collapsed accordion survives',
+         document.querySelectorAll('.collapsed').length === beforeCollapsed);
+  report('no marker attributes left behind',
+         document.querySelectorAll('[data-sae-mark]').length === 0,
+         'found ' + document.querySelectorAll('[data-sae-mark]').length);
+
+  // ---- 2. the extracted content must be right ----
+  report('hidden content dropped from output',
+         content.indexOf('hidden menu text') < 0 && content.indexOf('collapsed accordion') < 0);
+  report('visible content kept', content.indexOf('article paragraph') > -1);
+  report('iframe body inlined', content.indexOf('inside the frame') > -1);
+  // the inline data: urls are rewritten to ../images/ by getImageSrc, so the
+  // conversion shows up in extractedImages, not in the content string
+  var inlineTypes = extractedImages.map(function (i) {
+    return i.filename.split('.').pop();
+  }).sort().join(',');
+  report('svg + canvas converted to inline images', extractedImages.length === 2,
+         'extractedImages=' + extractedImages.length + ' types=' + inlineTypes);
+  report('no <svg> tag survived into output', content.indexOf('<svg') < 0);
+  report('no <canvas> tag survived into output', content.indexOf('<canvas') < 0);
+  var refs = content.match(/\.\.\/images\/[^"']+/g) || [];
+  report('every content image ref resolves to a produced file',
+         refs.length === 5 && new Set(refs).size === 3,
+         'refs=' + refs.length + ' unique=' + new Set(refs).size);
+  report('images deduped by resolved url', allImages.length === 1,
+         'allImages=' + allImages.length + ' urls=' + allImages.map(function(i){return i.originalUrl;}).join(' '));
+
+  // ---- 3. the css keying bug ----
+  var artClass = null, sideClass = null;
+  var cloneCheck = document.body.cloneNode(true);
+  // re-read to inspect marks directly
+  var st2 = readLivePage(true, []);
+  document.querySelectorAll('article p.title, aside p.title').forEach(function (el) {
+    var m = st2.marks.get(el.getAttribute('data-sae-mark'));
+    if (el.closest('article')) { artClass = m && m.cssClassName; }
+    else { sideClass = m && m.cssClassName; }
+  });
+  clearLiveMarks(st2);
+  report('same class attr + different computed style => different css class',
+         artClass && sideClass && artClass !== sideClass,
+         'article=' + artClass + ' sidebar=' + sideClass);
+
+  document.title = 'DONE';
+});
+</script>
+</body>
+</html>

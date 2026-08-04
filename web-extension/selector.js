@@ -7,8 +7,6 @@ let cleanXPaths = []
 
 
 let bodyElem = document.getElementsByTagName('body')[0]
-let bodyInner = bodyElem.innerHTML
-bodyElem.innerHTML = ''
 
 // let container = document.createElement('div')
 // container.style.display = "flex"
@@ -40,10 +38,32 @@ bodyElem.innerHTML = ''
 // bodyElem.appendChild(container)
 // bodyElem.appendChild(menu)
 
-bodyElem.innerHTML = `<div style="width: 100%;">
-        <div id="super-selector" style="max-width:75%; position: absolute;">${bodyInner}'</div>
-        <div id="slector-main-menu" style="width:25%; min-width: 300px; height: 100%; right: 0; position: fixed;">MENU</div>
-    </div>`
+// The page's own nodes are moved into the wrapper rather than re-parsed from
+// its markup: that keeps their listeners, iframes and form state alive, and it
+// avoids the "unsafe assignment to innerHTML" the add-on stores flag.
+let wrapper = document.createElement('div')
+wrapper.style.width = '100%'
+
+let page = document.createElement('div')
+page.id = 'super-selector'
+page.style.maxWidth = '75%'
+page.style.position = 'absolute'
+while (bodyElem.firstChild) {
+    page.appendChild(bodyElem.firstChild)
+}
+
+let menu = document.createElement('div')
+menu.id = 'slector-main-menu'
+menu.style.width = '25%'
+menu.style.minWidth = '300px'
+menu.style.height = '100%'
+menu.style.right = '0'
+menu.style.position = 'fixed'
+menu.textContent = 'MENU'
+
+wrapper.appendChild(page)
+wrapper.appendChild(menu)
+bodyElem.appendChild(wrapper)
 
 
 document.getElementById('super-selector').addEventListener('mousemove', (e) => {

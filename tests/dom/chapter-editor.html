@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+<head>
+<link rel="stylesheet" href="../../web-extension/chapterEditor.css">
+<link rel="stylesheet" href="../../web-extension/cssEditor.css">
+</head>
+<body>
+<script>
+// Stand in for the extension apis the editors use on their own page
+var FIXTURE_PAGES = [
+  {title: 'Chapter One', url: 'c1.xhtml', content: '<div><p>one</p></div>', images: [], removed: false},
+  {title: 'Chapter Two', url: 'c2.xhtml', content: '<div><p>two</p></div>', images: [], removed: false}
+];
+var FIXTURE_STYLES = [{title: 'Wikipedia', url: 'wikipedia\\.org', style: '#x{display:none}'}];
+var sent = [];
+
+window.chrome = {
+  runtime: {
+    onMessage: {addListener: function(){}},
+    lastError: null,
+    getURL: function(p){ return 'chrome-extension://fake/' + p; },
+    sendMessage: function(msg, cb) {
+      sent.push(msg.type);
+      var reply = {};
+      if (msg.type === 'get') reply = {allPages: FIXTURE_PAGES};
+      if (msg.type === 'get title') reply = {title: 'My Book'};
+      if (msg.type === 'get styles') reply = {styles: FIXTURE_STYLES};
+      if (msg.type === 'get current style') reply = {currentStyle: 0};
+      if (msg.type === 'get include style') reply = {includeStyle: true};
+      if (cb) setTimeout(function(){ cb(reply); }, 0);
+    }
+  },
+  i18n: {getMessage: function(k){ return k; }},
+  tabs: {query: function(q, cb){ cb([{id: 1, url: 'https://example.com'}]); },
+         create: function(){}, update: function(){}},
+  commands: {getAll: function(cb){ cb([]); }}
+};
+
+var errors = [];
+window.addEventListener('error', function(e){ errors.push(e.message); });
+</script>
+
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/libs/jszip.js"></script>
+<script src="../../web-extension/saveEbook.js"></script>
+<script src="../../web-extension/chapterEditor.js"></script>
+
+<script>
+function report(name, ok, detail) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' -- ' + detail : '');
+  document.getElementById('results').appendChild(li);
+}
+
+setTimeout(function () {
+  var out = document.createElement('ul');
+  out.id = 'results';
+  document.body.appendChild(out);
+
+  report('chapterEditor script ran without throwing', errors.length === 0, errors.join(' | '));
+  report('editor modal rendered', !!document.getElementById('chapterEditor-Modal'));
+  report('ebook title loaded from storage',
+         (document.getElementById('chapterEditor-ebookTitle') || {}).value === 'My Book');
+  var items = document.getElementsByClassName('chapterEditor-chapter-item');
+  report('both chapters listed', items.length === 2, 'found ' + items.length);
+  report('editor css not disabled',
+         Array.prototype.every.call(document.styleSheets, function (s) { return !s.disabled; }));
+  report('page stylesheets left enabled (no global disable)',
+         document.styleSheets.length > 0);
+
+  document.title = 'DONE';
+}, 300);
+</script>
+</body>
+</html>

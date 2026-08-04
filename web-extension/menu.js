@@ -1,22 +1,18 @@
-// Firefox's `chrome` namespace is callback-only - those calls return undefined,
-// so anything promise-based has to go through `browser`. Chrome has no
-// `browser`, and there `chrome` is promise-based under MV3.
-const ext = typeof browser !== 'undefined' ? browser : chrome;
-
 var allStyles = [];
 var currentStyle = null;
 var appliedStyles = [];
 
-// create menu labels
-document.getElementById('menuTitle').innerHTML = chrome.i18n.getMessage('extName');
-document.getElementById('includeStyle').innerHTML = chrome.i18n.getMessage('includeStyle');
-document.getElementById('editStyles').innerHTML = chrome.i18n.getMessage('editStyles');
-document.getElementById('savePageLabel').innerHTML = chrome.i18n.getMessage('savePage');
-document.getElementById('saveSelectionLabel').innerHTML = chrome.i18n.getMessage('saveSelection');
-document.getElementById('pageChapterLabel').innerHTML = chrome.i18n.getMessage('pageChapter');
-document.getElementById('selectionChapterLabel').innerHTML = chrome.i18n.getMessage('selectionChapter');
-document.getElementById('editChapters').innerHTML = chrome.i18n.getMessage('editChapters');
-document.getElementById('waitMessage').innerHTML = chrome.i18n.getMessage('waitMessage');
+// create menu labels - the translations are plain text, so textContent both
+// renders them correctly and keeps the store's "unsafe innerHTML" check quiet
+document.getElementById('menuTitle').textContent = chrome.i18n.getMessage('extName');
+document.getElementById('includeStyle').textContent = chrome.i18n.getMessage('includeStyle');
+document.getElementById('editStyles').textContent = chrome.i18n.getMessage('editStyles');
+document.getElementById('savePageLabel').textContent = chrome.i18n.getMessage('savePage');
+document.getElementById('saveSelectionLabel').textContent = chrome.i18n.getMessage('saveSelection');
+document.getElementById('pageChapterLabel').textContent = chrome.i18n.getMessage('pageChapter');
+document.getElementById('selectionChapterLabel').textContent = chrome.i18n.getMessage('selectionChapter');
+document.getElementById('editChapters').textContent = chrome.i18n.getMessage('editChapters');
+document.getElementById('waitMessage').textContent = chrome.i18n.getMessage('waitMessage');
 
 // the service worker cannot close the popup directly, it asks for it
 chrome.runtime.onMessage.addListener((request) => {
@@ -121,64 +117,24 @@ document.getElementById('includeStyleCheck').onclick = function () {
     });
 }
 
+// Both editors are extension pages now rather than scripts injected into
+// whatever site is open: they need no access to the page, and on their own page
+// they cannot be read or interfered with by it.
+//
+// Reusing an already open editor tab would mean querying tabs by url, which
+// needs the "tabs" permission - not worth re-adding a permission this change set
+// is trying to shed.
+function openEditor(page) {
+    chrome.tabs.create({url: chrome.runtime.getURL(page)});
+    window.close();
+}
+
 document.getElementById("editStyles").onclick = function() {
-
-    if (document.getElementById('cssEditor-Modal')) {
-        return;
-    }
-
-    chrome.tabs.query({
-        currentWindow: true,
-        active: true
-    }, function(tab) {
-
-        let tabId = tab[0].id;
-
-        // the popup is closed only after the injection finished - closing it
-        // earlier would tear down the pending scripting promises
-        ext.scripting.insertCSS({
-            target: {tabId: tabId},
-            files: ['cssEditor.css']
-        }).then(() => {
-            return ext.scripting.executeScript({
-                target: {tabId: tabId},
-                files: ['cssEditor.js']
-            });
-        }).catch((error) => {
-            console.error(error);
-        }).then(() => {
-            window.close();
-        });
-    });
+    openEditor('styles.html');
 };
 
 document.getElementById("editChapters").onclick = function() {
-    
-    if (document.getElementById('chapterEditor-Modal')) {
-        return;
-    }
-
-    chrome.tabs.query({
-        currentWindow: true,
-        active: true
-    }, function(tab) {
-
-        let tabId = tab[0].id;
-
-        ext.scripting.insertCSS({
-            target: {tabId: tabId},
-            files: ['chapterEditor.css']
-        }).then(() => {
-            return ext.scripting.executeScript({
-                target: {tabId: tabId},
-                files: ['chapterEditor.js']
-            });
-        }).catch((error) => {
-            console.error(error);
-        }).then(() => {
-            window.close();
-        });
-    });
+    openEditor('chapters.html');
 };
 
 function dispatch(commandType, justAddToBuffer) {

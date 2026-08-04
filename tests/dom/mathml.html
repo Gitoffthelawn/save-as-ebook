@@ -1,0 +1,199 @@
+<!doctype html>
+<html>
+<head>
+<script>
+window.chrome = {
+  runtime: {onMessage: {addListener: function(){}}, sendMessage: function(){}},
+  i18n: {getMessage: function(){ return ''; }}
+};
+</script>
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/extractHtml.js"></script>
+<base href="https://example.com/paper/">
+<style>
+  /* KaTeX hides its MathML the way KaTeX does: clipped to a pixel rather than
+     display:none, so it is "visible" as far as the extraction is concerned and
+     the duplicate has to be dealt with deliberately. */
+  .katex-mathml {
+    position: absolute; clip: rect(1px, 1px, 1px, 1px);
+    padding: 0; border: 0; height: 1px; width: 1px; overflow: hidden;
+  }
+</style>
+</head>
+<body>
+
+<!-- MathJax v3/v4: <mjx-container> is a custom element, so it is unwrapped -
+     the real MathML has to be lifted out of it during the read phase or all
+     that survives is the CHTML the renderer drew. -->
+<p>MathJax 3:
+<mjx-container class="MathJax" jax="CHTML" display="true">
+  <mjx-math><mjx-msup><mjx-mi>CHTMLSOUP</mjx-mi></mjx-msup></mjx-math>
+  <mjx-assistive-mml unselectable="on" display="block">
+    <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
+      <msup><mi>x</mi><mn>2</mn></msup>
+    </math>
+  </mjx-assistive-mml>
+</mjx-container>
+</p>
+
+<!-- KaTeX ships the formula twice: once as MathML and once as positioned
+     spans. Nothing about either is hidden by size, so both used to survive. -->
+<p>KaTeX:
+<span class="katex">
+  <span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics>
+    <mrow><msub><mi>a</mi><mi>n</mi></msub></mrow>
+    <annotation encoding="application/x-tex">a_{KATEXTEX}</annotation>
+  </semantics></math></span>
+  <span class="katex-html" aria-hidden="true"><span class="base">KATEXDUPLICATE</span></span>
+</span>
+</p>
+
+<!-- MathJax v2 keeps the source in a data attribute on a <span> frame -->
+<p>MathJax 2:
+<span class="MathJax" id="MathJax-Element-1-Frame"
+      data-mathml='<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>V2MATH</mi></math>'>V2SOUP</span>
+<!-- ...and a frame with no data-mathml must not turn into the string "null" -->
+<span class="MathJax" id="MathJax-Element-2-Frame">NODATA</span>
+</p>
+
+<!-- Elements MathML Core removed -->
+<p>Fences:
+<math xmlns="http://www.w3.org/1998/Math/MathML">
+  <mfenced open="[" close="]" separators=";"><mi>p</mi><mi>q</mi></mfenced>
+  <mfenced><mi>u</mi><mfenced open="{" close="}"><mi>v</mi></mfenced></mfenced>
+  <mfenced open="" close=""><mi>bare</mi></mfenced>
+</math>
+</p>
+
+<p>Tables and boxes:
+<math xmlns="http://www.w3.org/1998/Math/MathML">
+  <mtable columnalign="left right">
+    <mlabeledtr><mtd><mtext>(3.1)</mtext></mtd><mtd><mi>z</mi></mtd></mlabeledtr>
+  </mtable>
+  <menclose notation="box"><mi>ENCLOSED</mi></menclose>
+  <mstack><mn>42</mn><mscarries><mscarry><mn>9</mn></mscarry></mscarries></mstack>
+</math>
+</p>
+
+<!-- Attributes: the ones that carry the layout, and the ones that must not
+     reach the file -->
+<p>Attributes:
+<math xmlns="http://www.w3.org/1998/Math/MathML" display="block" alttext="the alt text">
+  <mstyle mathvariant="bold" scriptlevel="0" displaystyle="true">
+    <mfrac linethickness="0"><mn>1</mn><mn>2</mn></mfrac>
+    <mo stretchy="false" largeop="true" movablelimits="true" accent="true">&#8721;</mo>
+    <mi onclick="alert(1)" href="javascript:void(0)" style="color:red" id="carried-over"
+        class="page-class" mathcolor="blue">v</mi>
+    <mmultiscripts><mi>R</mi><mprescripts /><mn>1</mn><none /></mmultiscripts>
+  </mstyle>
+</math>
+</p>
+
+<script>
+// The runner reads results with a line-based grep, so a detail carrying a
+// newline - a slice of the extracted content is full of them - makes the whole
+// assertion disappear from the report instead of failing it.
+function report(name, ok, detail) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name +
+                   (detail ? ' -- ' + String(detail).replace(/\s+/g, ' ').trim() : '');
+  document.getElementById('results').appendChild(li);
+}
+
+function countOf(text, needle) {
+  return text.split(needle).length - 1;
+}
+
+window.addEventListener('load', function () {
+  var out = document.createElement('ul');
+  out.id = 'results';
+  document.body.appendChild(out);
+
+  var beforeHtml = document.body.innerHTML;
+
+  allImages = []; extractedImages = []; imageFileNames.clear();
+  classNameToCss.clear(); cssToClassName.clear();
+
+  var state = readLivePage(true, []);
+  var clone = document.body.cloneNode(true);
+  clearLiveMarks(state);
+  var content = getContent(clone, state);
+
+  report('live dom unchanged', document.body.innerHTML === beforeHtml);
+
+  // ---- the renderers ----
+  report('MathJax 3 assistive MathML is lifted out of <mjx-container>',
+         content.indexOf('<msup><mi>x</mi><mn>2</mn></msup>') > -1, content.slice(0, 200));
+  report('the MathJax 3 CHTML output is dropped with the container',
+         content.indexOf('CHTMLSOUP') < 0);
+  report('the lifted <math> keeps display="block"',
+         /<math[^>]*\sdisplay="block"/.test(content));
+
+  report('KaTeX MathML survives', content.indexOf('<msub><mi>a</mi><mi>n</mi></msub>') > -1);
+  report('the KaTeX span duplicate is dropped', content.indexOf('KATEXDUPLICATE') < 0);
+  report('KaTeX contributes exactly one formula', countOf(content, '<msub') === 1);
+  report('the TeX annotation is not printed beside the formula',
+         content.indexOf('<annotation') < 0 && content.indexOf('>a_{KATEXTEX}') < 0);
+  report('...it becomes the alttext instead',
+         content.indexOf('alttext="a_{KATEXTEX}"') > -1);
+  report('<semantics> survives, since MathML Core renders its first child',
+         content.indexOf('<semantics') > -1);
+
+  report('MathJax 2 data-mathml is used', content.indexOf('<mi>V2MATH</mi>') > -1);
+  report('the MathJax 2 rendered output is replaced', content.indexOf('V2SOUP') < 0);
+  report('a MathJax 2 frame with no data-mathml is left alone',
+         content.indexOf('NODATA') > -1 && content.indexOf('null') < 0);
+
+  // ---- what MathML Core removed ----
+  report('no <mfenced> reaches the output', content.indexOf('<mfenced') < 0);
+  report('mfenced becomes its fences',
+         content.indexOf('<mo fence="true">[</mo>') > -1 &&
+         content.indexOf('<mo separator="true">;</mo>') > -1 &&
+         content.indexOf('<mo fence="true">]</mo>') > -1);
+  report('mfenced defaults to round brackets and a comma',
+         content.indexOf('<mo fence="true">(</mo>') > -1 &&
+         content.indexOf('<mo separator="true">,</mo>') > -1);
+  report('a nested mfenced is expanded too',
+         content.indexOf('<mo fence="true">{</mo>') > -1);
+  report('open="" means no bracket, not a default one',
+         countOf(content, '<mo fence="true">(</mo>') === 1);
+
+  report('no <mlabeledtr> reaches the output', content.indexOf('<mlabeledtr') < 0);
+  report('mlabeledtr becomes an <mtr>, keeping its label cell',
+         content.indexOf('<mtr>') > -1 && content.indexOf('(3.1)') > -1);
+  report('no <menclose> reaches the output', content.indexOf('<menclose') < 0);
+  report('...but its content does', content.indexOf('ENCLOSED') > -1);
+  report('elementary-math wrappers are gone',
+         content.indexOf('<mstack') < 0 && content.indexOf('<mscarr') < 0);
+  report('a carried digit is dropped rather than left inside the number',
+         content.indexOf('<mn>9</mn>') < 0 && content.indexOf('<mn>42</mn>') > -1);
+
+  // ---- attributes ----
+  var kept = ['display="block"', 'alttext="the alt text"', 'mathvariant="bold"',
+              'scriptlevel="0"', 'displaystyle="true"', 'linethickness="0"',
+              'stretchy="false"', 'largeop="true"', 'movablelimits="true"',
+              'accent="true"', 'columnalign="left right"', 'mathcolor="blue"'];
+  var missing = kept.filter(function (a) { return content.indexOf(a) < 0; });
+  report('the attributes that carry the layout survive', missing.length === 0,
+         'missing ' + missing.join(', '));
+
+  var dropped = ['onclick', 'javascript:', 'style="color:red"', 'carried-over', 'page-class'];
+  var leaked = dropped.filter(function (a) { return content.indexOf(a) > -1; });
+  report('scripting, links, page styling and page ids do not survive',
+         leaked.length === 0, 'leaked ' + leaked.join(', '));
+
+  report('mmultiscripts keeps its <mprescripts> and <none>',
+         content.indexOf('<mprescripts>') > -1 && content.indexOf('<none>') > -1);
+
+  report('every <math> is namespaced',
+         countOf(content, '<math ') ===
+         countOf(content, '<math xmlns="http://www.w3.org/1998/Math/MathML"'),
+         countOf(content, '<math ') + ' math elements');
+  report('the namespace is declared once per element',
+         countOf(content, 'xmlns=') === countOf(content, '<math '));
+
+  document.title = 'DONE';
+});
+</script>
+</body>
+</html>

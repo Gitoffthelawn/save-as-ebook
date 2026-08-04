@@ -1,12 +1,4 @@
-for (var i=0; i<document.styleSheets.length; i++) {
-    document.styleSheets.item(i).disabled = true;
-}
-
-var tmp = document.getElementById('cssEditor-Modal');
-if (tmp) {
-    tmp.parentNode.removeChild(tmp);
-}
-
+// Runs on styles.html - see the note at the top of chapterEditor.js
 var allPagesRef = null;
 var allStyles = [];
 var currentStyle = null;
@@ -337,12 +329,8 @@ function showEditor() {
     };
 
     function closeModal() {
-        for (var i=0; i<document.styleSheets.length; i++) {
-            document.styleSheets.item(i).disabled = false;
-        }
-        modal.style.display = "none";
-        modalContent.parentNode.removeChild(modalContent);
-        modal.parentNode.removeChild(modal);
+        // the editor is the whole tab now, so closing it closes the tab
+        window.close();
     }
 
     function saveChanges() {

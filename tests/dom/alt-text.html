@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+<script>
+window.chrome = {
+  runtime: {onMessage: {addListener: function(){}}, sendMessage: function(){}},
+  i18n: {getMessage: function(){ return ''; }}
+};
+</script>
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/extractHtml.js"></script>
+<base href="https://example.com/blog/">
+<style>
+  canvas, svg, img { display: block; width: 8px; height: 8px; }
+</style>
+</head>
+<body>
+
+<!-- Order matters: the assertions below identify each image by its position in
+     the output, because src is rewritten to a generated filename on the way
+     through. Every element must be visible or it is dropped before it is
+     written. -->
+<article>
+  <img id="i0" src="/img/a.png" alt="A described photograph">
+  <img id="i1" src="/img/b.png" alt="">
+  <img id="i2" src="/img/c.png">
+  <img id="i3" src="/img/d.png" alt="   collapsed   and
+       trimmed   ">
+  <img id="i4" src="/img/e.png" alt='Quotes " and &amp; ampersands'>
+
+  <canvas id="c0" width="8" height="8" aria-label="a labelled chart"></canvas>
+  <canvas id="c1" width="8" height="8">canvas fallback text</canvas>
+  <canvas id="c2" width="8" height="8"></canvas>
+  <canvas id="c3" width="8" height="8" aria-hidden="true">ignored</canvas>
+
+  <svg id="s0" width="8" height="8"><title>a titled diagram</title><rect width="8" height="8"/></svg>
+  <svg id="s1" width="8" height="8"><g><title>only names one shape</title><rect width="8" height="8"/></g></svg>
+  <svg id="s2" width="8" height="8" role="presentation"><title>decorative anyway</title><rect width="8" height="8"/></svg>
+  <svg id="s3" width="8" height="8"><rect width="8" height="8"/></svg>
+</article>
+
+<script>
+function report(name, ok, detail) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' -- ' + detail : '');
+  document.getElementById('results').appendChild(li);
+}
+
+function eq(name, actual, expected) {
+  report(name, actual === expected,
+         actual === expected ? '' : 'got [' + actual + '] wanted [' + expected + ']');
+}
+
+window.addEventListener('load', function () {
+  var out = document.createElement('ul');
+  out.id = 'results';
+  document.body.appendChild(out);
+
+  allImages = []; extractedImages = []; imageFileNames.clear();
+  classNameToCss.clear(); cssToClassName.clear();
+
+  var state = readLivePage(true, []);
+  var clone = document.body.cloneNode(true);
+  clearLiveMarks(state);
+  var content = getContent(clone, state);
+
+  // The three states, flattened to something an assertion can name. "none" is
+  // the one that used to be impossible to produce: every image was written with
+  // alt="", which claimed the source had marked it decorative.
+  var alts = (content.match(/<img\b[^>]*>/g) || []).map(function (tag) {
+    var m = tag.match(/\salt="([^"]*)"/);
+    if (!m) { return 'none'; }
+    return m[1] === '' ? 'decorative' : m[1];
+  });
+
+  eq('images found', alts.length, 13);
+
+  eq('alt text is carried through', alts[0], 'A described photograph');
+  eq('an empty alt stays empty - the source marked it decorative', alts[1], 'decorative');
+  eq('an absent alt stays absent rather than becoming empty', alts[2], 'none');
+  eq('alt whitespace is collapsed', alts[3], 'collapsed and trimmed');
+  eq('alt is escaped for xml', alts[4], 'Quotes &quot; and &amp; ampersands');
+
+  eq('canvas aria-label becomes alt', alts[5], 'a labelled chart');
+  eq('canvas fallback content becomes alt', alts[6], 'canvas fallback text');
+  eq('an undescribed canvas gets no alt', alts[7], 'none');
+  eq('an aria-hidden canvas is decorative', alts[8], 'decorative');
+
+  eq('svg title becomes alt', alts[9], 'a titled diagram');
+  eq('a title inside a group does not describe the whole svg', alts[10], 'none');
+  eq('role=presentation makes an svg decorative', alts[11], 'decorative');
+  eq('an undescribed svg gets no alt', alts[12], 'none');
+
+  // the reason the distinction is worth keeping: the accessibility metadata is
+  // computed from these counts, and cannot be computed from alt="" everywhere
+  var undescribed = alts.filter(function (a) { return a === 'none'; }).length;
+  report('undescribed images are countable', undescribed === 4, 'found ' + undescribed);
+
+  // the runner's proof that the fixture got this far - see run-dom-tests.sh
+  document.title = 'DONE';
+});
+</script>
+</body>
+</html>
