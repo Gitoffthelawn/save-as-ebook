@@ -21,15 +21,25 @@ cd "$(dirname "$0")/dom" || exit 1
 failed=0
 for fixture in *.html; do
     echo "== $fixture"
-    output=$("$CHROME" --headless --disable-gpu --no-sandbox \
+    dom=$("$CHROME" --headless --disable-gpu --no-sandbox \
         --allow-file-access-from-files --virtual-time-budget=8000 \
-        --dump-dom "file://$PWD/$fixture" 2>/dev/null \
-        | grep -o '<li>[^<]*</li>' | sed 's/<[^>]*>//g')
+        --dump-dom "file://$PWD/$fixture" 2>/dev/null)
+    output=$(echo "$dom" | grep -o '<li>[^<]*</li>' | sed 's/<[^>]*>//g')
 
     if [ -z "$output" ]; then
         echo "  FAIL: fixture produced no results (did a script throw before reporting?)"
         failed=1
         continue
+    fi
+
+    # Every fixture sets its title last. Without this a fixture that throws
+    # halfway through still passes on the assertions it managed to report, and
+    # the ones it never reached are indistinguishable from ones that do not
+    # exist - which is also what happens to an assertion whose detail carries a
+    # newline, since the grep above is line-based.
+    if ! echo "$dom" | grep -q '<title>DONE</title>'; then
+        echo "  FAIL: fixture did not run to completion (no DONE title)"
+        failed=1
     fi
 
     echo "$output" | sed 's/^/  /'

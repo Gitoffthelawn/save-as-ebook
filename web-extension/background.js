@@ -510,6 +510,24 @@ function _execRequest(request, sender, sendResponse) {
     if (request.type === 'remove') {
         chrome.storage.local.remove('allPages');
         chrome.storage.local.remove('title');
+        // the identifier belongs to the discarded set of chapters - the next
+        // ebook is a different book and must not reuse it
+        chrome.storage.local.remove('uuid');
+    }
+    // Minted on first use and kept until the ebook is discarded, so rebuilding
+    // after editing chapters produces the same dc:identifier. The service worker
+    // is always a secure context, so randomUUID() is available here.
+    if (request.type === 'get uuid') {
+        chrome.storage.local.get('uuid', function (data) {
+            if (data && data.uuid) {
+                sendResponse({uuid: data.uuid});
+                return;
+            }
+            let uuid = crypto.randomUUID();
+            chrome.storage.local.set({'uuid': uuid}, function () {
+                sendResponse({uuid: uuid});
+            });
+        })
     }
     if (request.type === 'get title') {
         chrome.storage.local.get('title', function (data) {

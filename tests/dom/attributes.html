@@ -1,0 +1,170 @@
+<!doctype html>
+<html>
+<head>
+<script>
+window.chrome = {
+  runtime: {onMessage: {addListener: function(){}}, sendMessage: function(){}},
+  i18n: {getMessage: function(){ return ''; }}
+};
+</script>
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/extractHtml.js"></script>
+<base href="https://example.com/blog/">
+</head>
+<body>
+
+<!-- Everything here is an attribute that used to be dropped on the way out.
+     The extraction is run with includeStyle off, so the only attributes in the
+     output are the ones being asserted about - a generated class on every
+     element would drown them. -->
+<article>
+  <p id="intro" lang="fr" dir="rtl">un paragraphe</p>
+  <p lang="en_US">repaired underscore</p>
+  <p lang="javascript">not a language</p>
+  <p dir="sideways">not a direction</p>
+
+  <p id="dup">first</p>
+  <p id="dup">second</p>
+  <p id="9lives">not an XML name</p>
+
+  <blockquote cite="/sources/one">quoted</blockquote>
+  <p><q cite="/sources/two">inline quote</q></p>
+
+  <p><abbr title="HyperText Markup Language">HTML</abbr></p>
+  <p><time datetime="2024-03-01">March</time></p>
+  <p><time datetime="2024-03-01T09:30:00+02:00">with an offset</time></p>
+  <p><time datetime="last tuesday">not a datetime</time></p>
+  <p><data value="42">forty two</data></p>
+  <p><bdo dir="rtl">reversed run</bdo></p>
+
+  <!-- the id is only here to keep the runner's "<li>...</li>" scrape, which
+       reads the whole page, from picking the fixture's own list up as a result -->
+  <ol start="7" reversed>
+    <li id="seven">seven</li>
+    <li value="42">forty two</li>
+  </ol>
+
+  <table>
+    <colgroup><col span="2"><col></colgroup>
+    <tr><th scope="col" colspan="2">spans two</th><th scope="row">a row header</th></tr>
+    <tr><td rowspan="0">to the end</td><td colspan="two">not a number</td><td colspan="0">not allowed</td></tr>
+  </table>
+
+  <p>
+    <a href="#intro">to a surviving element</a>
+    <a href="#">a button pretending to be a link</a>
+    <a href="javascript:alert(1)">a script</a>
+    <a href="JAVA&#9;SCRIPT:alert(1)">a script with a tab in the scheme</a>
+    <a href="/elsewhere">off the page</a>
+  </p>
+
+  <p onclick="boom()" style="color: red" class="from-the-page" role="banner"
+     aria-label="a label" target="_blank">attributes that do not travel</p>
+</article>
+
+<script>
+function report(name, ok, detail) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' -- ' + detail : '');
+  document.getElementById('results').appendChild(li);
+}
+
+function eq(name, actual, expected) {
+  report(name, actual === expected,
+         actual === expected ? '' : 'got [' + actual + '] wanted [' + expected + ']');
+}
+
+function has(name, haystack, needle) {
+  report(name, haystack.indexOf(needle) > -1, haystack.indexOf(needle) > -1 ? '' : 'no ' + needle);
+}
+
+function hasNot(name, haystack, needle) {
+  report(name, haystack.indexOf(needle) < 0, haystack.indexOf(needle) < 0 ? '' : 'found ' + needle);
+}
+
+window.addEventListener('load', function () {
+  var out = document.createElement('ul');
+  out.id = 'results';
+  document.body.appendChild(out);
+
+  allImages = []; extractedImages = []; imageFileNames.clear();
+  classNameToCss.clear(); cssToClassName.clear(); usedElementIds.clear();
+
+  var state = readLivePage(false, []);
+  var clone = document.body.cloneNode(true);
+  clearLiveMarks(state);
+  var content = getContent(clone, state);
+
+  // ---- language and direction ----
+  has('a nested lang survives', content, '<p id="intro" lang="fr" dir="rtl">');
+  has('an underscored lang is repaired', content, '<p lang="en-US">');
+  hasNot('a lang that is not a language is dropped', content, 'lang="javascript"');
+  hasNot('a dir that is not a direction is dropped', content, 'dir="sideways"');
+  has('bdo keeps the dir that is its whole purpose', content, '<bdo dir="rtl">');
+
+  // ---- ids ----
+  has('an id survives extraction', content, '<p id="intro"');
+  has('the first of two equal ids keeps it', content, '<p id="dup">first</p>');
+  has('the second loses it rather than repeating it', content, '<p>second</p>');
+  hasNot('an id that is not an XML name is dropped', content, 'id="9lives"');
+
+  // ---- quotations, and the tag that was missing altogether ----
+  has('blockquote is no longer unwrapped', content, '<blockquote');
+  // Only the shape is asserted, not the host: getAbsoluteUrl() resolves against
+  // window.location, and this fixture is opened from a file:// url rather than
+  // from the <base> the images in the other fixtures are written against.
+  report('blockquote cite is resolved to an absolute url',
+         /<blockquote cite="[a-z]+:\/\/[^"]*sources\/one">/.test(content),
+         (content.match(/<blockquote[^>]*>/) || ['no match'])[0]);
+  report('q cite is resolved to an absolute url',
+         /<q cite="[a-z]+:\/\/[^"]*sources\/two">/.test(content),
+         (content.match(/<q[^>]*>/) || ['no match'])[0]);
+
+  // ---- tags that are a span without their attribute ----
+  has('abbr keeps its expansion', content, '<abbr title="HyperText Markup Language">');
+  has('time keeps its machine date', content, '<time datetime="2024-03-01">');
+  has('...and a full timestamp with an offset', content,
+      '<time datetime="2024-03-01T09:30:00+02:00">');
+  hasNot('a datetime epubcheck would reject is dropped', content, 'last tuesday');
+  has('the element it was on stays', content, '<time>not a datetime</time>');
+  has('data keeps its value', content, '<data value="42">');
+
+  // ---- list numbering ----
+  has('ol keeps the number it starts at', content, 'start="7"');
+  has('a bare boolean is written in the long form xhtml needs', content, 'reversed="reversed"');
+  has('an li keeps the number it overrides', content, '<li value="42">');
+
+  // ---- table structure ----
+  has('colgroup keeps its span', content, '<col span="2"/>');
+  has('a header keeps its scope and its span', content, '<th scope="col" colspan="2">');
+  has('scope=row survives too', content, '<th scope="row">');
+  has('rowspan=0 is legal and means to the end of the section', content, '<td rowspan="0">');
+  hasNot('a colspan that is not a number is dropped', content, 'colspan="two"');
+  hasNot('colspan=0 is not legal and is dropped', content, 'colspan="0"');
+
+  // ---- links ----
+  has('a link into the page stays inside the chapter', content, '<a href="#intro">');
+  has('a bare # names nothing and loses its href', content,
+      '<a>a button pretending to be a link</a>');
+  has('a javascript: url loses its href', content, '<a>a script</a>');
+  has('a scheme with a control character in it is still javascript:', content,
+      '<a>a script with a tab in the scheme</a>');
+  report('a link off the page is still absolutised',
+         /<a href="[a-z]+:[^"]*elsewhere">/.test(content),
+         (content.match(/<a href="[^"]*elsewhere"[^>]*>/) || ['no match'])[0]);
+
+  // ---- what must never travel ----
+  hasNot('event handlers do not travel', content, 'onclick');
+  hasNot('inline style does not travel', content, 'style="color: red"');
+  hasNot('the page class does not travel', content, 'from-the-page');
+  hasNot('target does not travel', content, 'target=');
+  hasNot('role does not travel - it has to validate, and a page role need not',
+         content, 'role=');
+  hasNot('aria-label does not travel', content, 'aria-label');
+
+  // the runner's proof that the fixture got this far - see run-dom-tests.sh
+  document.title = 'DONE';
+});
+</script>
+</body>
+</html>

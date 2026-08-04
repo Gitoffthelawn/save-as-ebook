@@ -62,6 +62,36 @@ function saveEbookTitle(title) {
     });
 }
 
+// The identifier of the ebook being assembled from chapters. Minted once by the
+// background and kept next to the chapters, because dc:identifier is what a
+// library uses to decide whether a file is a new book or a newer copy of one it
+// already has - a fresh id on every rebuild turns re-downloads into duplicates.
+function getEbookUuid(callback) {
+    chrome.runtime.sendMessage({
+        type: "get uuid"
+    }, function(response) {
+        callback(response && response.uuid ? response.uuid : null);
+    });
+}
+
+// crypto.randomUUID() only exists in a secure context, and a content script on a
+// plain http page is not one - so saving from those pages would otherwise have
+// no identifier at all. getRandomValues() has no such restriction.
+function generateUuid() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    let bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 1
+    let hex = '';
+    for (let i = 0; i < bytes.length; i++) {
+        hex += (bytes[i] + 0x100).toString(16).substring(1);
+    }
+    return hex.substring(0, 8) + '-' + hex.substring(8, 12) + '-' +
+           hex.substring(12, 16) + '-' + hex.substring(16, 20) + '-' + hex.substring(20);
+}
+
 function getEbookPages(callback) {
     chrome.runtime.sendMessage({
         type: "get"
@@ -108,6 +138,83 @@ function getCurrentUrl() {
     return url;
 }
 
+// A BCP 47 well-formedness check, not a registry lookup - enough to reject what
+// pages actually put in lang="" while letting through anything a reader could
+// use. It matters because dc:language was a hardcoded but always-valid "en":
+// replacing it with whatever the page claims is only an improvement if the junk
+// ("", "javascript", "{{locale}}") is filtered out first. Underscores are
+// repaired rather than rejected - lang="en_US" is invalid html, but its intent
+// is not in doubt.
+function normalizeLanguageTag(raw) {
+    if (!raw || typeof raw !== 'string') {
+        return '';
+    }
+    let subtags = raw.trim().replace(/_/g, '-').split('-');
+    // The primary subtag is an ISO 639 code. The 4-8 letter range is reserved or
+    // registered and no real page uses it, so excluding it here is what stops
+    // "javascript" and "default" from being taken for languages.
+    if (!/^[a-zA-Z]{2,3}$/.test(subtags[0])) {
+        return '';
+    }
+    for (let i = 1; i < subtags.length; i++) {
+        if (!/^[a-zA-Z0-9]{1,8}$/.test(subtags[i])) {
+            return '';
+        }
+    }
+    // Conventional casing - language lower, script title, region upper. Tags are
+    // case insensitive, so this is cosmetic, but it keeps en-US out of the file
+    // spelled three different ways.
+    return subtags.map(function(subtag, index) {
+        if (index === 0) {
+            return subtag.toLowerCase();
+        }
+        if (/^[a-zA-Z]{4}$/.test(subtag)) {
+            return subtag.charAt(0).toUpperCase() + subtag.substring(1).toLowerCase();
+        }
+        if (/^[a-zA-Z]{2}$/.test(subtag)) {
+            return subtag.toUpperCase();
+        }
+        return subtag.toLowerCase();
+    }).join('-');
+}
+
+// An id has to be an XML name to be addressable at all. Ids only need to be
+// unique within one xhtml file, and a chapter is exactly one file, so nothing
+// here has to be unique across the book.
+//
+// Lives in utils.js rather than in either of its two callers because extraction
+// and writing have to agree on it exactly: extractHtml.js decides which ids
+// survive from the page, saveEbook.js mints the ones the headings need and has
+// to avoid colliding with them.
+function isUsableId(id) {
+    return /^[A-Za-z_][-A-Za-z0-9_.]*$/.test(id);
+}
+
+// Schemes that do something other than address a document. javascript: is the
+// one that matters - it is inert in most readers but not all, and epubcheck
+// rejects it - and the rest either execute or point outside the archive.
+//
+// The test is on the href as the page wrote it, before it is resolved: a
+// relative link has no scheme, and resolving it first would give everything the
+// scheme of the page and hide the ones being looked for. Control characters go
+// first because "java\tscript:" is a url browsers still follow.
+var deniedUrlSchemes = /^(javascript|data|vbscript|blob|filesystem):/i;
+
+function isSafeLinkUrl(rawHref) {
+    return !deniedUrlSchemes.test(String(rawHref).replace(/[\u0000-\u0020]/g, ''));
+}
+
+// The address the chapter was taken from, for dc:source. Deliberately not
+// getCurrentUrl(): that one drops the query and the last path segment because it
+// is a base for resolving relative links, which makes it point at the directory
+// rather than the article. Only the fragment goes - it addresses a position
+// inside the page, not the page.
+function getPageSourceUrl() {
+    let url = window.location.href;
+    let hash = url.indexOf('#');
+    return hash > -1 ? url.substring(0, hash) : url;
+}
+
 function getOriginUrl() {
     let originUrl = window.location.origin;
     if (!originUrl) {
@@ -136,7 +243,11 @@ function getFileExtension(fileName) {
             tmpFileName = 'svg';
         } 
 
-        if (['png', 'gif', 'jpeg', 'svg'].indexOf(tmpFileName.trim()) < 0) {
+        // The epub 3.3 core image types. A reading system must support all of
+        // these, so any of them can be embedded as-is with no fallback; anything
+        // outside the list is a foreign resource, which needs one. webp joined
+        // the list in 3.3 - avif deliberately did not.
+        if (['png', 'gif', 'jpeg', 'svg', 'webp'].indexOf(tmpFileName.trim()) < 0) {
             return ''
         }
         return tmpFileName;
@@ -144,6 +255,61 @@ function getFileExtension(fileName) {
         console.log('Error:', e);
         return '';
     }
+}
+
+// The first `count` bytes as lowercase hex. Every byte is two characters:
+// unpadded, a 0x04 would read as "4" and shift every byte after it along.
+function magicBytes(data, count) {
+    let arr = (new Uint8Array(data)).subarray(0, count);
+    let header = '';
+    for (let i = 0; i < arr.length; i++) {
+        header += arr[i].toString(16).padStart(2, '0');
+    }
+    return header;
+}
+
+// The file extension for downloaded bytes whose url did not name one. Returns ''
+// when the bytes are not an image this build can declare a media type for -
+// see getFileExtension for what that is. jpg rather than jpeg because this names
+// a file; getFileExtension normalizes it back when the media type is written.
+function sniffImageExtension(data) {
+    try {
+        let header = magicBytes(data, 12);
+        if (header.startsWith('89504e47')) {
+            return 'png';
+        }
+        if (header.startsWith('47494638')) {
+            return 'gif';
+        }
+        if (header.startsWith('ffd8ff')) {
+            return 'jpg';
+        }
+        // RIFF....WEBP: the four bytes the check skips are the file size, so
+        // this cannot be read as one run the way the others are.
+        if (header.startsWith('52494646') && header.substring(16, 24) === '57454250') {
+            return 'webp';
+        }
+        return '';
+    } catch (e) {
+        console.log('Error:', e);
+        return '';
+    }
+}
+
+function escapeRegExp(str) {
+    return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Drops every <img> pointing at one generated filename. Used when the bytes
+// behind it never made it into the archive: content referencing a file that is
+// not there fails the whole book, where a missing picture costs one image.
+function removeImgTags(content, filename) {
+    if (!content || !filename) {
+        return content;
+    }
+    return String(content).replace(
+        new RegExp('<img\\b[^>]*\\bsrc="[^"]*' + escapeRegExp(filename) + '"[^>]*>', 'gi'),
+        '');
 }
 
 function getImageType(fileName) {

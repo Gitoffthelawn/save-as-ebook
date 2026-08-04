@@ -1,0 +1,158 @@
+<!doctype html>
+<html>
+<head>
+<!-- readPageMetadata() reads the live <head>, which nothing else in the pipeline
+     can see: head, meta, link, title and script are all in strippedContentTags,
+     so by the time getContent() runs, none of this exists any more. That makes a
+     real document the only place it can be tested - and the values it produces
+     go straight into a package document an epub reader has to parse, from pages
+     nobody controls. Most of what is checked here is rejection, not extraction. -->
+<script>
+window.chrome = {
+  runtime: {onMessage: {addListener: function(){}}, sendMessage: function(){}},
+  i18n: {getMessage: function(){ return ''; }}
+};
+</script>
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/extractHtml.js"></script>
+<script src="../../web-extension/saveEbook.js"></script>
+</head>
+<body>
+
+<script>
+function report(name, ok, detail) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' -- ' + detail : '');
+  document.getElementById('results').appendChild(li);
+}
+
+function eq(name, actual, expected) {
+  report(name, actual === expected,
+         actual === expected ? '' : 'got "' + actual + '" wanted "' + expected + '"');
+}
+
+// Scenarios are injected rather than written into this file's own head: one
+// document can only have one head, and most of these are about what happens when
+// the page says something different. Elements found by querySelectorAll are
+// found wherever they sit, and a <script> inserted through innerHTML never runs,
+// so json-ld can be staged safely.
+function withPage(html, lang, fn) {
+  var holder = document.createElement('div');
+  holder.innerHTML = html;
+  document.body.appendChild(holder);
+  var previousLang = document.documentElement.getAttribute('lang');
+  if (lang === null) {
+    document.documentElement.removeAttribute('lang');
+  } else {
+    document.documentElement.setAttribute('lang', lang);
+  }
+  try {
+    return fn();
+  } finally {
+    holder.parentNode.removeChild(holder);
+    if (previousLang === null) {
+      document.documentElement.removeAttribute('lang');
+    } else {
+      document.documentElement.setAttribute('lang', previousLang);
+    }
+  }
+}
+
+window.addEventListener('load', function () {
+  var out = document.createElement('ul');
+  out.id = 'results';
+  document.body.appendChild(out);
+
+  // ---- 1. json-ld, in the shapes sites actually ship ----
+  // @graph with a decoy WebPage node ahead of the Article, authors as an array
+  // of objects, publisher as an object. The og: tags are deliberately wrong so
+  // that reading them instead of the json-ld shows up as a failure.
+  var jsonLd = '{"@context":"https://schema.org","@graph":[' +
+      '{"@type":"WebPage","name":"decoy","description":"decoy description"},' +
+      '{"@type":["NewsArticle","CreativeWork"],' +
+       '"author":[{"@type":"Person","name":"Jane Smith"},{"@type":"Person","name":"Ada Lovelace"}],' +
+       '"publisher":{"@type":"Organization","name":"Example Press"},' +
+       '"datePublished":"2024-03-01T08:00:00+02:00",' +
+       '"description":"the json-ld description"}]}';
+  var m = withPage(
+      '<script type="application/ld+json">' + jsonLd + '<\/script>' +
+      '<meta property="og:site_name" content="Wrong Publisher">' +
+      '<meta name="author" content="Wrong Author">',
+      'en', function () { return readPageMetadata(); });
+
+  eq('json-ld beats meta tags for author', m.authors.join('|'), 'Jane Smith|Ada Lovelace');
+  eq('json-ld publisher object resolves to its name', m.publisher, 'Example Press');
+  eq('json-ld datePublished kept with its offset', m.date, '2024-03-01T08:00:00+02:00');
+  eq('the Article node wins over the WebPage node', m.description, 'the json-ld description');
+
+  // ---- 2. meta tags when there is no json-ld ----
+  m = withPage(
+      '<meta name="author" content="Grace Hopper">' +
+      '<meta name="author" content="Grace Hopper">' +
+      '<meta name="author" content="Alan Turing">' +
+      '<meta property="og:site_name" content="Example Daily">' +
+      '<meta property="og:description" content="  the   og description  ">' +
+      '<meta property="article:published_time" content="2024-04-02">',
+      'en-GB', function () { return readPageMetadata(); });
+
+  eq('repeated authors are deduped, order kept', m.authors.join('|'), 'Grace Hopper|Alan Turing');
+  eq('og:site_name is the fallback publisher', m.publisher, 'Example Daily');
+  eq('description whitespace is collapsed', m.description, 'the og description');
+  eq('a bare date is not given an invented time', m.date, '2024-04-02');
+  eq('lang is read from the html element', m.lang, 'en-GB');
+
+  // ---- 3. what pages get wrong ----
+  // Every one of these used to be capable of reaching the package document.
+  m = withPage(
+      '<script type="application/ld+json">{"@type":"Article", not json<\/script>' +
+      '<meta property="article:author" content="https://example.com/profiles/17">' +
+      '<meta name="date" content="not a date at all">' +
+      '<meta name="publisher" content="   ">',
+      'javascript', function () { return readPageMetadata(); });
+
+  eq('malformed json-ld does not take the page down with it', m.authors.length, 0);
+  eq('an article:author url is not a creator', m.authors.length, 0);
+  eq('an unparseable date is dropped', m.date, '');
+  eq('a whitespace-only publisher is dropped', m.publisher, '');
+  eq('lang="javascript" is rejected', m.lang, '');
+
+  // a date far outside any plausible range parses fine and means nothing
+  m = withPage('<meta name="date" content="0001-01-01">', 'en',
+               function () { return readPageMetadata(); });
+  eq('an implausible year is dropped', m.date, '');
+
+  // ---- 4. language ----
+  m = withPage('', 'EN_us', function () { return readPageMetadata(); });
+  eq('lang="EN_us" is repaired rather than rejected', m.lang, 'en-US');
+
+  m = withPage('<meta property="og:locale" content="pt_BR">', null,
+               function () { return readPageMetadata(); });
+  eq('og:locale is the fallback language', m.lang, 'pt-BR');
+
+  eq('normalizeLanguageTag: empty', normalizeLanguageTag(''), '');
+  eq('normalizeLanguageTag: template placeholder', normalizeLanguageTag('{{locale}}'), '');
+  eq('normalizeLanguageTag: script and region cased', normalizeLanguageTag('zh-hans-cn'), 'zh-Hans-CN');
+  eq('normalizeLanguageTag: plain code', normalizeLanguageTag('DE'), 'de');
+
+  // ---- 5. file-as, which is a guess and must decline to make a bad one ----
+  eq('file-as inverts a two-part latin name', getFileAs('Jane Smith', []), 'Smith, Jane');
+  eq('file-as keeps accents', getFileAs('José Müller', []), 'Müller, José');
+  eq('file-as handles a middle initial as a first name', getFileAs('J. Smith', []), 'Smith, J.');
+  eq('no file-as for a mononym', getFileAs('Prince', []), '');
+  eq('no file-as for three or more parts', getFileAs('Ursula K. Le Guin', []), '');
+  eq('no file-as for an organisation', getFileAs('BBC News', []), '');
+  eq('no file-as for a non-latin name', getFileAs('李 雷', []), '');
+  eq('no file-as for a name already inverted', getFileAs('Smith, Jane', []), '');
+  eq('no file-as when the author is the site', getFileAs('Example Daily', ['Example Daily']), '');
+
+  // ---- 6. the live page must be as it was ----
+  report('document lang restored after the scenarios',
+         document.documentElement.getAttribute('lang') === null,
+         'lang=' + document.documentElement.getAttribute('lang'));
+
+  // the runner's proof that the fixture got this far - see run-dom-tests.sh
+  document.title = 'DONE';
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+<head>
+<script>
+window.chrome = {
+  runtime: {onMessage: {addListener: function(){}}, sendMessage: function(){}},
+  i18n: {getMessage: function(){ return ''; }}
+};
+</script>
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/extractHtml.js"></script>
+<base href="https://example.com/blog/">
+</head>
+<body>
+
+<!-- Unlike the other fixtures this one asserts about functions rather than a
+     page: the type of a downloaded image is decided from its first bytes, and
+     there is no way to make a fixture serve bytes of a chosen shape. What the
+     page below is for is the one part that does need a document - a data uri
+     naming a type the book cannot declare, which has to be dropped whole. -->
+<article>
+  <img id="ok" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" alt="a png data uri">
+  <img id="bad" src="data:image/x-icon;base64,AAABAAEAEBAAAAEAIABoBAAAFgAAAA==" alt="an icon, which epub has no core type for">
+</article>
+
+<script>
+function report(name, ok, detail) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' -- ' + detail : '');
+  document.getElementById('results').appendChild(li);
+}
+
+function eq(name, actual, expected) {
+  report(name, actual === expected,
+         actual === expected ? '' : 'got [' + actual + '] wanted [' + expected + ']');
+}
+
+// bytes as a buffer, the way fetchBinaryContent hands them over
+function bytes() {
+  var arr = [];
+  for (var i = 0; i < arguments.length; i++) {
+    arr.push(arguments[i]);
+  }
+  return (new Uint8Array(arr)).buffer;
+}
+
+window.addEventListener('load', function () {
+  var out = document.createElement('ul');
+  out.id = 'results';
+  document.body.appendChild(out);
+
+  allImages = []; extractedImages = []; imageFileNames.clear();
+
+  // ---- the epub 3.3 core image types --------------------------------------
+
+  eq('png is a core type', getFileExtension('a.png'), 'png');
+  eq('gif is a core type', getFileExtension('a.gif'), 'gif');
+  eq('jpg is normalized to the jpeg media type', getFileExtension('a.jpg'), 'jpeg');
+  eq('svg is a core type', getFileExtension('a.svg'), 'svg');
+  eq('webp is a core type as of epub 3.3', getFileExtension('a.webp'), 'webp');
+  eq('webp survives a query string', getFileExtension('a.webp?w=640'), 'webp');
+  eq('webp gets the image/webp media type', getImageType('img-1.webp'), 'webp');
+  // avif was left out of 3.3 on purpose: it is a foreign resource, and
+  // embedding one with no fallback is not a book a reader has to render
+  eq('avif is not a core type', getFileExtension('a.avif'), '');
+  eq('an unresolved placeholder has no media type',
+     getImageType('img-1.TODO-EXTRACT'), '');
+
+  // ---- typing an image from its bytes -------------------------------------
+
+  eq('png is recognized', sniffImageExtension(bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)), 'png');
+  eq('gif is recognized', sniffImageExtension(bytes(0x47, 0x49, 0x46, 0x38, 0x39, 0x61)), 'gif');
+  eq('jpeg is recognized', sniffImageExtension(bytes(0xff, 0xd8, 0xff, 0xe0)), 'jpg');
+  // RIFF, four bytes of length, WEBP. The length is what makes this the one
+  // signature that cannot be read as a single run from the start of the file.
+  eq('webp is recognized',
+     sniffImageExtension(bytes(0x52, 0x49, 0x46, 0x46, 0x1c, 0x00, 0x00, 0x00,
+                               0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x4c)), 'webp');
+  // a RIFF container that is not webp - wav opens exactly the same way
+  eq('a non-webp RIFF file is not taken for one',
+     sniffImageExtension(bytes(0x52, 0x49, 0x46, 0x46, 0x1c, 0x00, 0x00, 0x00,
+                               0x57, 0x41, 0x56, 0x45)), '');
+  eq('avif is not accepted from its bytes either',
+     sniffImageExtension(bytes(0x00, 0x00, 0x00, 0x1c, 0x66, 0x74, 0x79, 0x70,
+                               0x61, 0x76, 0x69, 0x66)), '');
+  eq('an empty response types as nothing', sniffImageExtension(bytes()), '');
+  // The reason the hex is padded. Unpadded, a byte under 0x10 becomes one
+  // character instead of two and everything after it reads a position early:
+  // these four bytes spell "ff" "d" "8" "ff", which is the jpeg signature to a
+  // reader that does not pad, and nothing at all to one that does.
+  eq('a low byte does not shift the signature into a false match',
+     sniffImageExtension(bytes(0xff, 0x0d, 0x08, 0xff)), '');
+
+  // ---- dropping an image the archive will not contain ---------------------
+
+  var content = '<p>a <img src="../images/img-1.png" alt="kept" /> b ' +
+                '<img src="../images/img-2.TODO-EXTRACT" alt="dropped" /> c ' +
+                '<img alt="also dropped" src="../images/img-2.TODO-EXTRACT" /></p>';
+  var stripped = removeImgTags(content, 'img-2.TODO-EXTRACT');
+  eq('every <img> for a dropped image goes, whatever the attribute order',
+     (stripped.match(/<img/g) || []).length, 1);
+  report('the surviving image is untouched', stripped.indexOf('img-1.png') > -1, stripped);
+  report('the text around a dropped image stays', stripped.indexOf('a ') > -1 &&
+         stripped.indexOf(' b ') > -1 && stripped.indexOf(' c ') > -1, stripped);
+  // filenames are generated, but a '.' in one must not match any character
+  eq('the filename is matched literally',
+     removeImgTags('<img src="../images/imgX1.png" />', 'img-1.png'),
+     '<img src="../images/imgX1.png" />');
+
+  // ---- a data uri whose type the book cannot declare ----------------------
+
+  eq('a png data uri is kept', getFileExtension(document.getElementById('ok').src), 'png');
+  // it is dropped here rather than left for the sniffing above, which only runs
+  // for images that get downloaded - a data uri never is
+  eq('an undeclarable data uri yields no source',
+     getImageSrc(document.getElementById('bad').src), '');
+  eq('...and contributes no image to the book', extractedImages.length, 0);
+
+  document.title = 'DONE';
+});
+</script>
+</body>
+</html>
