@@ -174,6 +174,8 @@ function getPageMetadata(page) {
     let metadata = page.metadata || {};
     return {
         lang: normalizeLanguageTag(metadata.lang),
+        // '' or 'rtl', never 'ltr' - see extractDirection() in extractHtml.js
+        dir: metadata.dir === 'rtl' ? 'rtl' : '',
         authors: Array.isArray(metadata.authors) ? metadata.authors : [],
         publisher: metadata.publisher || '',
         description: metadata.description || '',
@@ -193,6 +195,26 @@ function getBookLanguage(allPages) {
         }
     }
     return 'en';
+}
+
+// Which way the book reads, as opposed to which way one chapter does. Any right
+// to left chapter makes the whole book one, because the page-progression-direction
+// this decides is a property of the spine: a book turns its pages one way, and a
+// right to left book with an english chapter in it is still a right to left book.
+function getBookDirection(allPages) {
+    for (let i = 0; i < allPages.length; i++) {
+        if (getPageMetadata(allPages[i]).dir === 'rtl') {
+            return 'rtl';
+        }
+    }
+    return '';
+}
+
+// Written only when it is rtl, which is the only value ever recorded - so a
+// chapter that says nothing about direction gets no attribute rather than one
+// asserting the default.
+function dirAttribute(direction) {
+    return direction === 'rtl' ? ' dir="rtl"' : '';
 }
 
 function collectDistinct(allPages, pick) {
@@ -533,6 +555,94 @@ function resolveInternalLinks(content, usedIds) {
         });
 }
 
+// ---- links between chapters -------------------------------------------------
+//
+// A link from one saved page to another was written as the absolute url it had
+// on the web. Extraction has no choice about that - it resolves every href that
+// is not a same-document fragment against the page it came from, and while a
+// chapter is being extracted the rest of the book does not exist yet. The result
+// is that following a cross reference between two chapters of one book leaves
+// the book and opens the website it was made from.
+//
+// Both ends are known here, so the link can point at the file the other chapter
+// was written to instead.
+
+// An href as it stands in the chapter content. Everything has been through
+// parseHTML(), so an attribute is always double quoted and its value always
+// xml-escaped.
+var HREF_ATTR_REGEX = /(<a\s[^>]*?href=")([^"]*)(")/gi;
+
+// The comparable form of a page address: what has to collapse is the spellings a
+// browser treats as one document, which are a trailing slash and a fragment.
+// "example.com/a", "example.com/a/" and "example.com/a#top" are one page, and
+// which of them a chapter recorded depends on what was in the address bar.
+//
+// The query string is kept. It is decoration on some sites and the only thing
+// naming the page on others, and dropping it would merge chapters that are
+// genuinely different pages - a worse failure than missing a link.
+function chapterUrlKey(url) {
+    if (!url) {
+        return '';
+    }
+    try {
+        let parsed = new URL(String(url));
+        parsed.hash = '';
+        return parsed.href.replace(/#$/, '').replace(/\/$/, '');
+    } catch (e) {
+        // not an absolute url: an href extraction could not resolve, or a chapter
+        // stored before sourceUrl existed
+        return '';
+    }
+}
+
+function chaptersByUrl(allPages) {
+    let byUrl = Object.create(null);
+    allPages.forEach(function(page, index) {
+        let key = chapterUrlKey(getSourceUrl(page));
+        // The first chapter with an address wins it. The same page saved twice
+        // is one link target, and sending every link to whichever copy was added
+        // last is a coin toss dressed up as a decision.
+        if (key && !(key in byUrl)) {
+            byUrl[key] = index;
+        }
+    });
+    return byUrl;
+}
+
+// Points links between chapters at the files those chapters are written to.
+//
+// This runs on the finished outline content, after buildChapterOutline(), for
+// the same reason resolveInternalLinks() runs last inside it: a link may address
+// a heading whose id is only minted while the outline is built, and one whose
+// target never survived extraction at all must not keep its fragment - epubcheck
+// reports an unresolved fragment as an error rather than as a broken link.
+function linkChapters(allPages, outlines) {
+    let byUrl = chaptersByUrl(allPages);
+    let idsPerChapter = outlines.map(function(outline) {
+        return collectIds(outline.content);
+    });
+    outlines.forEach(function(outline) {
+        outline.content = String(outline.content).replace(HREF_ATTR_REGEX,
+            function(all, before, href, after) {
+                let value = decodeBasicEntities(href);
+                let hash = value.indexOf('#');
+                let fragment = hash > -1 ? value.substring(hash + 1) : '';
+                let key = chapterUrlKey(hash > -1 ? value.substring(0, hash) : value);
+                if (!key || !(key in byUrl)) {
+                    return all;
+                }
+                let target = byUrl[key];
+                // Every chapter is written into the same folder, so the other
+                // chapter's file name is the whole of the relative link.
+                let rewritten = escapeXMLChars(allPages[target].url);
+                if (fragment && idsPerChapter[target][fragment]) {
+                    rewritten += '#' + escapeXMLChars(fragment);
+                }
+                return before + rewritten + after;
+            });
+    });
+}
+
 // Gives every heading in a chapter an id and reports what was found, in document
 // order. This runs on the content string exactly as it will be written to the
 // archive: the ids in the file and the ids the nav points at have to be the same
@@ -750,6 +860,7 @@ function _buildEbook(allPages, fromMenu=false) {
     var buildDate = new Date().toISOString().replace(/\.[0-9]+Z/i, 'Z');
     var bookId = getBookId();
     var bookLanguage = getBookLanguage(allPages);
+    var bookDirection = getBookDirection(allPages);
     var publishers = collectDistinct(allPages, function(m) { return m.publisher; });
     var authors = collectDistinct(allPages, function(m) { return m.authors; }).slice(0, 12);
     // dc:date is the date of publication of this file. For a single saved page
@@ -768,6 +879,9 @@ function _buildEbook(allPages, fromMenu=false) {
     var outlines = allPages.map(function(page, index) {
         return buildChapterOutline(page, index);
     });
+    // once every chapter's ids are final, so a link between two of them can be
+    // checked against the ids the archive will really contain
+    linkChapters(allPages, outlines);
     var navTree = buildNavTree(allPages, outlines);
 
     var zip = new JSZip();
@@ -792,7 +906,8 @@ function _buildEbook(allPages, fromMenu=false) {
         // xml:lang is what counts in xhtml, lang is what an epub reader that
         // treats the file as html reads - epub wants both, and both must agree
         '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"' +
-        ' xml:lang="' + bookLanguage + '" lang="' + bookLanguage + '">' +
+        ' xml:lang="' + bookLanguage + '" lang="' + bookLanguage + '"' +
+        dirAttribute(bookDirection) + '>' +
         '<head>' +
         // was the literal string "toc.xhtml", which is what a reader shows in
         // its own table of contents view and in the page's title bar
@@ -862,10 +977,16 @@ function _buildEbook(allPages, fromMenu=false) {
         // the chapter's own language when its page stated one, so a book mixing
         // languages hyphenates and speaks each chapter correctly
         var pageLanguage = getPageMetadata(page).lang || bookLanguage;
+        // The chapter's own direction, with no fall back to the book's: unlike a
+        // language, which every chapter states, direction is only ever recorded
+        // when it is rtl. Taking the book's would turn the one english chapter of
+        // an arabic book right to left as well.
+        var pageDirection = getPageMetadata(page).dir;
         pagesFolder.file(page.url,
             '<?xml version="1.0" encoding="utf-8"?>' +
             '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"' +
-            ' xml:lang="' + pageLanguage + '" lang="' + pageLanguage + '">' +
+            ' xml:lang="' + pageLanguage + '" lang="' + pageLanguage + '"' +
+            dirAttribute(pageDirection) + '>' +
             '<head>' +
             '<title>' + tmpPageTitle+ '</title>' +
             '<link href="../style/' + page.styleFileName + '" rel="stylesheet" type="text/css" />' +
@@ -938,7 +1059,12 @@ function _buildEbook(allPages, fromMenu=false) {
         }, '') +
         getImagesIndex(allImages) +
         '</manifest>' +
-        '<spine toc="ncx">' +
+        // dir on the chapters is what makes the text of a right to left book read
+        // the right way; this is what makes the book itself do it - which way the
+        // pages turn, and which end of the progress bar is the start. A reader has
+        // no other way to know, and defaults to ltr without it.
+        '<spine toc="ncx"' +
+        (bookDirection === 'rtl' ? ' page-progression-direction="rtl"' : '') + '>' +
         allPages.reduce(function(prev, page, index) {
             return prev + '\n' + '<itemref idref="ebook' + index + '" />';
         }, '') +

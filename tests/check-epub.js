@@ -344,6 +344,66 @@ JSZip.loadAsync(raw).then(async (zip) => {
           brokenLinks.length ? brokenLinks.slice(0, 5).join(', ')
                              : internalLinkCount + ' internal links');
 
+    // A link from one chapter to another is written by the same pass, against the
+    // ids as they finally stand, and it fails the same way: a relative href
+    // naming a file the archive does not hold, or a fragment that chapter does
+    // not have, is an EPUBCheck error rather than a dead link. Only relative
+    // hrefs are examined - an absolute one addresses the web, which is where a
+    // link to a page nobody saved belongs.
+    const brokenCrossLinks = [];
+    let crossLinkCount = 0;
+    for (const name of names.filter((n) => n.endsWith('.xhtml'))) {
+        const xhtml = await zip.file(name).async('string');
+        for (const match of xhtml.matchAll(/<a\b[^>]*\shref="([^"#][^"]*)"/g)) {
+            const href = match[1];
+            if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.indexOf('//') === 0) {
+                continue;
+            }
+            crossLinkCount++;
+            const [file, fragment] = href.split('#');
+            const resolved = path.posix.normalize(
+                path.posix.join(path.posix.dirname(name), file));
+            if (names.indexOf(resolved) < 0) {
+                brokenCrossLinks.push(name + ' -> ' + href + ' (no such file)');
+                continue;
+            }
+            const target = await zip.file(resolved).async('string');
+            if (fragment && target.indexOf('id="' + fragment + '"') < 0) {
+                brokenCrossLinks.push(name + ' -> ' + href + ' (no such id)');
+            }
+        }
+    }
+    check('every link between chapters resolves to a file in the book and an id in it',
+          brokenCrossLinks.length === 0,
+          brokenCrossLinks.length ? brokenCrossLinks.slice(0, 5).join(', ')
+                                  : crossLinkCount + ' links between chapters');
+
+    // Which way the book reads has to be stated in both places or neither. dir on
+    // a chapter is what makes its text run right to left; page-progression-direction
+    // is what makes the reader turn the pages that way, and a book that says one
+    // without the other reads correctly while paging backwards.
+    const rtlChapters = [];
+    for (const name of names.filter((n) => n.endsWith('.xhtml') && n !== navName)) {
+        const xhtml = await zip.file(name).async('string');
+        if (/<html[^>]*\sdir="rtl"/.test(xhtml)) {
+            rtlChapters.push(name);
+        }
+    }
+    check('page progression direction agrees with the chapters that read right to left',
+          /page-progression-direction="rtl"/.test(opf) === (rtlChapters.length > 0),
+          rtlChapters.length + ' rtl chapter(s)');
+    // ltr is the default everywhere, so writing it would put an attribute on
+    // every chapter of every book to say what was already true
+    const statedLtr = [];
+    for (const name of names.filter((n) => n.endsWith('.xhtml'))) {
+        const xhtml = await zip.file(name).async('string');
+        if (/<html[^>]*\sdir="(?!rtl)/.test(xhtml)) {
+            statedLtr.push(name);
+        }
+    }
+    check('no document states a direction other than rtl', statedLtr.length === 0,
+          statedLtr.join(', '));
+
     // The chapter documents themselves: bodymatter is how a reading system knows
     // where the book proper starts, doc-chapter is what a screen reader
     // announces, and the title has to be in the chapter rather than only in the

@@ -180,6 +180,27 @@ async function runCase(tempDir, raw, test) {
                 replace(xhtml, 'href="#results"', 'href="#missing-fragment"'))
         },
         {
+            name: 'a link to a chapter the book does not hold is rejected',
+            slug: 'dangling-chapter-link',
+            expected: 'every link between chapters resolves to a file in the book and an id in it',
+            mutate: (zip) => rewrite(zip, 'OEBPS/pages/chapter0.xhtml', (xhtml) =>
+                replace(xhtml, 'href="chapter1.xhtml"', 'href="missing.xhtml"'))
+        },
+        {
+            name: 'a link to a chapter naming an id it does not have is rejected',
+            slug: 'dangling-chapter-fragment',
+            expected: 'every link between chapters resolves to a file in the book and an id in it',
+            mutate: (zip) => rewrite(zip, 'OEBPS/pages/chapter0.xhtml', (xhtml) =>
+                replace(xhtml, 'href="chapter2.xhtml#summary"', 'href="chapter2.xhtml#missing"'))
+        },
+        {
+            name: 'a right to left book that pages left to right is rejected',
+            slug: 'direction-disagrees',
+            expected: 'page progression direction agrees with the chapters that read right to left',
+            mutate: (zip) => rewrite(zip, 'OEBPS/content.opf', (opf) =>
+                replace(opf, ' page-progression-direction="rtl"', ''))
+        },
+        {
             name: 'an incorrect manifest media type is rejected',
             slug: 'incorrect-media-type',
             expected: 'manifest media types match their files',

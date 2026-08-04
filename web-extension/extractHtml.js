@@ -121,13 +121,72 @@ var cssToClassName = new Map();
 var supportedCss = [
     'background-color',
     'border',
-    'color', 
+    'color',
     'font',
     'line-height',
     'list-style',
     'padding',
-    'text-align', 
+    'text-align',
 ];
+
+// getComputedStyle answers a shorthand with the empty string whenever it cannot
+// serialize one, and two of the shorthands above hit that constantly:
+//
+//   font    empty as soon as font-feature-settings or font-variation-settings
+//           are anything but initial - which is every page using a variable font
+//           or turning a ligature off. The element then loses family, size,
+//           style and weight in one go, and a paragraph that has quietly lost
+//           its italics looks exactly like one that never had any.
+//   border  empty whenever the four sides are not identical, so the single rule
+//           under a heading - the most common border on the web - is dropped,
+//           while the "0px none" of an element with no border at all serializes
+//           perfectly well and is kept.
+//
+// Where the shorthand cannot answer, its longhands are asked instead. The
+// shorthand is still asked first, so a page that never hits this gets the css it
+// always got.
+var cssShorthandLonghands = {
+    // In shorthand order, and complete rather than filtered down to what is not
+    // initial: these properties inherit, and an element leaving out font-weight
+    // because it computes to the initial value would inherit the 700 of an
+    // ancestor's generated class instead.
+    //
+    // font-stretch is deliberately absent. It computes to a percentage, which is
+    // css3 syntax an older reading system may not parse, and a page that sets it
+    // is rare enough not to be worth that.
+    'font': ['font-style', 'font-variant', 'font-weight', 'font-size', 'font-family'],
+    'border': ['border-top', 'border-right', 'border-bottom', 'border-left']
+};
+
+// A side that computes to the initial value is not a border. Borders do not
+// inherit, so unlike the font longhands these can be left out - which is what
+// keeps one underlined heading from being written as three declarations saying
+// "no border here" and one saying where the border is.
+var INITIAL_BORDER_REGEX = /^0(?:px)?\s+none\b/;
+
+function isInitialBorderSide(name, value) {
+    return name.indexOf('border-') === 0 && INITIAL_BORDER_REGEX.test(value);
+}
+
+// Adds everything this property contributes to the element's generated class.
+function addComputedDeclarations(declarations, computedStyle, name) {
+    let value = getComputedCssValue(computedStyle, name);
+    if (value && value.length > 0) {
+        declarations[name] = value;
+        return;
+    }
+    let longhands = cssShorthandLonghands[name];
+    if (!longhands) {
+        return;
+    }
+    for (let longhand of longhands) {
+        let longhandValue = getComputedCssValue(computedStyle, longhand);
+        if (longhandValue && longhandValue.length > 0 &&
+            !isInitialBorderSide(longhand, longhandValue)) {
+            declarations[longhand] = longhandValue;
+        }
+    }
+}
 //////
 
 function getImageSrc(srcTxt) {
@@ -359,10 +418,7 @@ function readMathMl(state) {
 function classNameForComputedStyle(computedStyle) {
     let declarations = {};
     for (let cssTagName of supportedCss) {
-        let cssValue = getComputedCssValue(computedStyle, cssTagName);
-        if (cssValue && cssValue.length > 0) {
-            declarations[cssTagName] = cssValue;
-        }
+        addComputedDeclarations(declarations, computedStyle, cssTagName);
     }
 
     // Keyed on the declarations, not on the element's class attribute: two
@@ -1361,6 +1417,35 @@ function extractLanguage() {
     return lang;
 }
 
+// A page states which way it reads on <html>, either as a dir attribute or in
+// css, and neither reached the chapter on its own: extraction starts at
+// document.body, so the attribute is never in the content, and `direction` is not
+// one of the properties in supportedCss. An Arabic or Hebrew page therefore came
+// out as a left to right book by both routes.
+//
+// The computed style is what is read, because it is the one answer that covers
+// both spellings - and dir="auto" as well, which resolves to whichever direction
+// the text turned out to be.
+//
+// Only rtl is reported. Left to right is the default in every reading system, so
+// recording it would put an attribute on every chapter of every book to say what
+// was already true.
+function extractDirection() {
+    let element = document.body || document.documentElement;
+    if (!element) {
+        return '';
+    }
+    let direction = '';
+    try {
+        direction = window.getComputedStyle(element).direction || '';
+    } catch (e) {
+        // no layout to read - fall back to what the document says about itself
+        direction = (document.documentElement &&
+                     document.documentElement.getAttribute('dir')) || '';
+    }
+    return direction.toLowerCase() === 'rtl' ? 'rtl' : '';
+}
+
 // One source wins outright instead of the sources being merged: the same person
 // spelled two ways across json-ld and a meta tag is a much more common outcome
 // than a second author only one of them knows about.
@@ -1449,6 +1534,7 @@ function readPageMetadata() {
         let schema = findArticleSchema();
         return {
             lang: extractLanguage(),
+            dir: extractDirection(),
             authors: extractAuthors(schema),
             publisher: extractPublisher(schema),
             description: extractDescription(schema),
@@ -1457,7 +1543,7 @@ function readPageMetadata() {
     } catch (e) {
         // metadata is a bonus - a page that breaks this must still be saveable
         console.log('Error:', e);
-        return {lang: '', authors: [], publisher: '', description: '', date: ''};
+        return {lang: '', dir: '', authors: [], publisher: '', description: '', date: ''};
     }
 }
 

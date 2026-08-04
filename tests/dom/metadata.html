@@ -134,6 +134,48 @@ window.addEventListener('load', function () {
   eq('normalizeLanguageTag: script and region cased', normalizeLanguageTag('zh-hans-cn'), 'zh-Hans-CN');
   eq('normalizeLanguageTag: plain code', normalizeLanguageTag('DE'), 'de');
 
+  // ---- 4b. direction ----
+  //
+  // A page says which way it reads on <html>, and neither spelling reached the
+  // chapter before: extraction starts at document.body, so the dir attribute is
+  // never in the content, and `direction` is not one of the properties in
+  // supportedCss. The computed style is read because it is the one answer that
+  // covers both - and dir="auto" as well, which has no fixed answer of its own.
+  function withDirection(attribute, css, fn) {
+    var root = document.documentElement;
+    var previous = root.getAttribute('dir');
+    var previousStyle = document.body.style.direction;
+    if (attribute === null) {
+      root.removeAttribute('dir');
+    } else {
+      root.setAttribute('dir', attribute);
+    }
+    document.body.style.direction = css || '';
+    try {
+      return fn();
+    } finally {
+      if (previous === null) {
+        root.removeAttribute('dir');
+      } else {
+        root.setAttribute('dir', previous);
+      }
+      document.body.style.direction = previousStyle;
+    }
+  }
+
+  eq('dir="rtl" on the html element is read',
+     withDirection('rtl', '', function () { return extractDirection(); }), 'rtl');
+  eq('a direction set only in css is read too',
+     withDirection(null, 'rtl', function () { return extractDirection(); }), 'rtl');
+  // ltr is the default in every reading system, so recording it would put an
+  // attribute on every chapter of every book to say what was already true
+  eq('an explicitly left to right page reports nothing',
+     withDirection('ltr', '', function () { return extractDirection(); }), '');
+  eq('a page that says nothing reports nothing',
+     withDirection(null, '', function () { return extractDirection(); }), '');
+  eq('the direction is part of the page metadata',
+     withDirection('rtl', '', function () { return readPageMetadata().dir; }), 'rtl');
+
   // ---- 5. file-as, which is a guess and must decline to make a bad one ----
   eq('file-as inverts a two-part latin name', getFileAs('Jane Smith', []), 'Smith, Jane');
   eq('file-as keeps accents', getFileAs('José Müller', []), 'Müller, José');
@@ -149,6 +191,11 @@ window.addEventListener('load', function () {
   report('document lang restored after the scenarios',
          document.documentElement.getAttribute('lang') === null,
          'lang=' + document.documentElement.getAttribute('lang'));
+  report('document direction restored after the scenarios',
+         document.documentElement.getAttribute('dir') === null &&
+         document.body.style.direction === '',
+         'dir=' + document.documentElement.getAttribute('dir') +
+         ' style=' + document.body.style.direction);
 
   // the runner's proof that the fixture got this far - see run-dom-tests.sh
   document.title = 'DONE';

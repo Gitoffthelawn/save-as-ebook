@@ -74,6 +74,17 @@ const chapters = [
                  // is an epubcheck error rather than a dead link
                  '<p class="a1"><a href="#results">back to the results</a> and ' +
                  '<a href="#never-extracted">a target that did not survive</a></p>' +
+                 // Links to other pages of the same site, as extraction leaves
+                 // them - absolute, because while this chapter was extracted the
+                 // rest of the book did not exist. Two of them are chapters here
+                 // and have to end up pointing at those files; the third is a
+                 // page nobody saved and has to be left addressing the web.
+                 // The second chapter is addressed by the url its baseUrl names,
+                 // since it predates sourceUrl entirely.
+                 '<p class="a1"><a href="https://example.com/three/article#summary">the third chapter</a>, ' +
+                 '<a href="https://example.com/two/">the second chapter</a>, ' +
+                 '<a href="https://example.com/three/article#not-extracted">a heading it does not have</a> ' +
+                 'and <a href="https://example.com/elsewhere">a page nobody saved</a></p>' +
                  '<h3>  </h3><p class="a1">four</p></div>'
     },
     {
@@ -128,6 +139,34 @@ const chapters = [
                  '<mo>=</mo><mfrac><msqrt><mi>π</mi></msqrt><mn>2</mn></mfrac></mrow>' +
                  '</math></p>' +
                  '<img src="../images/img-2.svg" /></div>'
+    },
+    {
+        title: 'الفصل الثالث',
+        url: 'chapter2.xhtml',
+        baseUrl: 'https://example.com/three/',
+        sourceUrl: 'https://example.com/three/article',
+        metadata: {
+            lang: 'ar',
+            // What the page said about which way it reads. Whether it said it
+            // with <html dir> or in css, extraction reports it the same way -
+            // and this is the only value it ever reports, so the book turns its
+            // pages right to left and this chapter's <html> carries dir.
+            dir: 'rtl',
+            authors: [],
+            publisher: '',
+            description: '',
+            date: ''
+        },
+        styleFileName: 'style2.css',
+        styleFileContent: '.c3 {color:rgb(0, 0, 0);}',
+        // no images and no formulas: this chapter is here for direction and for
+        // being a link target, and it must not move the book's accessibility
+        // claims while it is
+        images: [],
+        content: '<div><h1>الفصل الثالث</h1>' +
+                 '<p class="c3">فقرة عربية بها نص.</p>' +
+                 '<h2 id="summary">ملخص</h2>' +
+                 '<p class="c3">نص الملخص.</p></div>'
     }
 ];
 
@@ -145,7 +184,12 @@ const sandbox = {
     JSON: JSON,
     Promise: Promise,
     Blob: Blob,
-    URL: {createObjectURL: () => 'blob:stub', revokeObjectURL: () => {}},
+    // the real constructor, which chapterUrlKey() parses addresses with, plus
+    // the two statics the download path calls
+    URL: Object.assign(class extends URL {}, {
+        createObjectURL: () => 'blob:stub',
+        revokeObjectURL: () => {}
+    }),
     Uint8Array: Uint8Array,
     ArrayBuffer: ArrayBuffer,
     String: String,

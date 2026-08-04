@@ -25,7 +25,12 @@ function makeSandbox() {
         JSON,
         Promise,
         Blob,
-        URL: {createObjectURL: () => 'blob:test', revokeObjectURL: () => {}},
+        // the real constructor, because chapterUrlKey() parses addresses with it,
+        // plus the two statics the download path calls
+        URL: Object.assign(class extends URL {}, {
+            createObjectURL: () => 'blob:test',
+            revokeObjectURL: () => {}
+        }),
         Uint8Array,
         ArrayBuffer,
         String,
@@ -381,6 +386,39 @@ function equal(actual, expected, message) {
         equal((headingToc.match(/<ol\b/g) || []).length, 2,
               'same-level headings should be siblings under the chapter, not nested in each other');
         ok(epub.ncx.includes('name="dtb:depth" content="2"'), 'chapter plus flat headings should have depth two');
+    });
+
+    await scenario('a right to left chapter turns the book without turning the other chapters', async () => {
+        const rtl = (overrides) => chapter(Object.assign({
+            metadata: {lang: 'ar', dir: 'rtl', authors: [], publisher: '', description: '', date: ''}
+        }, overrides));
+
+        let env = makeSandbox();
+        let epub = await inspect(env, await build(env, [
+            rtl({url: 'ar.xhtml'}),
+            chapter({title: 'English', url: 'en.xhtml', styleFileName: 'en.css'})
+        ]));
+        ok(epub.opf.includes('page-progression-direction="rtl"'),
+           'a book with a right to left chapter has to turn its pages that way');
+        ok((await epub.read('OEBPS/pages/ar.xhtml')).includes(' dir="rtl"'),
+           'the right to left chapter should state its direction');
+        // direction is only ever recorded when it is rtl, so taking the book's
+        // for a chapter that recorded nothing would reverse this one
+        ok(!(await epub.read('OEBPS/pages/en.xhtml')).includes(' dir='),
+           'a chapter that said nothing about direction must not inherit the book\'s');
+
+        env = makeSandbox();
+        epub = await inspect(env, await build(env, [chapter()]));
+        ok(!epub.opf.includes('page-progression-direction'),
+           'a book with no right to left chapter should not state a progression direction');
+        ok(!(await epub.read('OEBPS/pages/chapter.xhtml')).includes(' dir='),
+           'left to right is the default and does not need saying');
+
+        // chapters buffered before extraction read the direction at all
+        env = makeSandbox();
+        epub = await inspect(env, await build(env, [chapter({metadata: undefined})]));
+        ok(!epub.opf.includes('page-progression-direction'),
+           'a chapter with no metadata at all should build as left to right');
     });
 
     console.log(failures === 0 ? '\nepub builder scenarios OK' : '\n' + failures + ' scenario failure(s)');
