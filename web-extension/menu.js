@@ -2,16 +2,17 @@ var allStyles = [];
 var currentStyle = null;
 var appliedStyles = [];
 
-// create menu labels
-document.getElementById('menuTitle').innerHTML = chrome.i18n.getMessage('extName');
-document.getElementById('includeStyle').innerHTML = chrome.i18n.getMessage('includeStyle');
-document.getElementById('editStyles').innerHTML = chrome.i18n.getMessage('editStyles');
-document.getElementById('savePageLabel').innerHTML = chrome.i18n.getMessage('savePage');
-document.getElementById('saveSelectionLabel').innerHTML = chrome.i18n.getMessage('saveSelection');
-document.getElementById('pageChapterLabel').innerHTML = chrome.i18n.getMessage('pageChapter');
-document.getElementById('selectionChapterLabel').innerHTML = chrome.i18n.getMessage('selectionChapter');
-document.getElementById('editChapters').innerHTML = chrome.i18n.getMessage('editChapters');
-document.getElementById('waitMessage').innerHTML = chrome.i18n.getMessage('waitMessage');
+// create menu labels - the translations are plain text, so textContent both
+// renders them correctly and keeps the store's "unsafe innerHTML" check quiet
+document.getElementById('menuTitle').textContent = chrome.i18n.getMessage('extName');
+document.getElementById('includeStyle').textContent = chrome.i18n.getMessage('includeStyle');
+document.getElementById('editStyles').textContent = chrome.i18n.getMessage('editStyles');
+document.getElementById('savePageLabel').textContent = chrome.i18n.getMessage('savePage');
+document.getElementById('saveSelectionLabel').textContent = chrome.i18n.getMessage('saveSelection');
+document.getElementById('pageChapterLabel').textContent = chrome.i18n.getMessage('pageChapter');
+document.getElementById('selectionChapterLabel').textContent = chrome.i18n.getMessage('selectionChapter');
+document.getElementById('editChapters').textContent = chrome.i18n.getMessage('editChapters');
+document.getElementById('waitMessage').textContent = chrome.i18n.getMessage('waitMessage');
 
 // the service worker cannot close the popup directly, it asks for it
 chrome.runtime.onMessage.addListener((request) => {

@@ -368,7 +368,14 @@ function escapeXMLText(text) {
                    .replace(/</g, '&lt;');
 }
 
-var _htmlEntityDecoder = null;
+var _htmlParser = null;
+
+function getHtmlParser() {
+    if (!_htmlParser) {
+        _htmlParser = new DOMParser();
+    }
+    return _htmlParser;
+}
 
 // XHTML only predefines &amp; &lt; &gt; &quot; and &apos;, so every other named
 // entity (&nbsp;, &mdash;, ...) is a fatal error in an epub. Resolve them all to
@@ -379,18 +386,19 @@ function decodeHtmlEntities(text) {
         return text;
     }
     try {
-        if (typeof document !== 'undefined' && document.createElement) {
-            if (!_htmlEntityDecoder) {
-                _htmlEntityDecoder = document.createElement('textarea');
-            }
-            // A textarea holds raw text, so nothing in here can become an element
-            // or run - but "<" must be hidden to keep "</textarea>" from closing it.
-            // The second replace protects every "&" that does not start a complete
-            // entity, so that a url like "?a=1&sect=2" doesn't turn into "?a=1§=2".
-            _htmlEntityDecoder.innerHTML = text
+        if (typeof DOMParser !== 'undefined') {
+            // Every "<" is hidden first, so the parser sees one long run of text
+            // and the whole result is the decoded string - nothing in here can
+            // become an element or run. The second replace protects every "&"
+            // that does not start a complete entity, so that a url like
+            // "?a=1&sect=2" doesn't turn into "?a=1§=2".
+            let escaped = text
                 .replace(/</g, '&lt;')
                 .replace(/&(?![a-zA-Z][a-zA-Z0-9]*;|#[0-9]+;|#[xX][0-9a-fA-F]+;)/g, '&amp;');
-            return _htmlEntityDecoder.value;
+            // Wrapped in a <span> so that leading whitespace survives: the parser
+            // throws away whitespace that appears before it has opened <body>.
+            let doc = getHtmlParser().parseFromString('<span>' + escaped + '</span>', 'text/html');
+            return doc.body.textContent;
         }
     } catch (e) {
         console.log('Error:', e);
@@ -444,10 +452,12 @@ function replaceElementWithHTML(elem, html) {
         return;
     }
     let parent = elem.parentNode;
-    let holder = document.createElement('div');
-    holder.innerHTML = html;
-    while (holder.firstChild) {
-        parent.insertBefore(holder.firstChild, elem);
+    // Parsed in a separate inert document rather than by assigning innerHTML:
+    // same result, minus the "unsafe assignment to innerHTML" the add-on stores
+    // flag. Nothing loads or runs while it is parsed there.
+    let holder = getHtmlParser().parseFromString(html, 'text/html').body;
+    for (let node of Array.from(holder.childNodes)) {
+        parent.insertBefore(document.importNode(node, true), elem);
     }
     parent.removeChild(elem);
 }
@@ -481,15 +491,21 @@ function getComputedCssValue(computedStyle, name) {
 // that the browser's own HTML5 parser does the parsing, which gets malformed
 // markup and implied tags right where a regex parser guesses.
 //
-// A <template> is used because its content is parsed into an inert document:
-// no scripts run and, importantly here, no <img> is ever fetched - the images
-// are downloaded later from the rewritten urls instead.
+// The markup is wrapped in a <template> and handed to DOMParser rather than
+// assigned to innerHTML, which the add-on stores flag as an unsafe assignment.
+// Both parts matter:
+//   - DOMParser builds a document with no browsing context, so nothing runs and
+//     no <img> is ever fetched - the images are downloaded later from the
+//     rewritten urls instead.
+//   - the <template> wrapper puts the parser in "in template" mode, which is
+//     what keeps a stray <td> or <tr> - what a selection inside a table
+//     produces - from being dropped. Parsed straight into <body> they are.
 //
 // Every element reports an end event, including void ones, so callers can pair
 // start/end without tracking which tags can have children.
 function walkHtmlFragment(html, handler) {
-    let template = document.createElement('template');
-    template.innerHTML = html;
+    let doc = getHtmlParser().parseFromString('<template>' + html + '</template>', 'text/html');
+    let template = doc.querySelector('template');
 
     let walk = (parent) => {
         for (let node = parent.firstChild; node; node = node.nextSibling) {
@@ -514,7 +530,9 @@ function walkHtmlFragment(html, handler) {
         }
     };
 
-    walk(template.content);
+    if (template) {
+        walk(template.content);
+    }
 }
 
 /////

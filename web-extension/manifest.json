@@ -5,6 +5,18 @@
     "default_locale": "en",
     "author": "Alex Adam",
     "homepage_url": "https://github.com/alexadam/save-as-ebook",
+    "browser_specific_settings": {
+        "gecko": {
+            "id": "{087005dc-849e-419b-acf6-32da1f83691d}",
+            "strict_min_version": "140.0",
+            "data_collection_permissions": {
+                "required": ["none"]
+            }
+        },
+        "gecko_android": {
+            "strict_min_version": "142.0"
+        }
+    },
     "description": "Save a web page or selection as eBook (.epub)",
     "icons": {
         "48": "icons/book48.png",
