@@ -90,7 +90,9 @@
       }
     }
 
-    #includeStyle {
+    #includeStyle,
+    #readerMode,
+    #reviewBeforeSaving {
       font-family: sans-serif;
       font-size: 14px;
       padding: 0;
@@ -111,7 +113,9 @@
         font-family: sans-serif;
         font-size: 14px;
     }
-    #includeStyle {
+    #includeStyle,
+    #readerMode,
+    #reviewBeforeSaving {
         outline: none;
         font-family: sans-serif;
         font-size: 14px;
@@ -129,6 +133,12 @@
     <hr/>
     <div class="optionContainer">
         <input type="checkbox" name="button" id="includeStyleCheck"></input><span id="includeStyle"></span>
+    </div>
+    <div class="optionContainer" id="readerModeOption">
+        <input type="checkbox" name="button" id="readerModeCheck"></input><span id="readerMode"></span>
+    </div>
+    <div class="optionContainer" id="reviewBeforeSavingOption">
+        <input type="checkbox" name="button" id="reviewBeforeSavingCheck"></input><span id="reviewBeforeSaving"></span>
     </div>
     <button id="editStyles" type="button" name="button"></button>
     <hr/>

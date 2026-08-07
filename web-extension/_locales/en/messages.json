@@ -6,8 +6,21 @@
     "includeStyle": {
         "message": "Include (Custom) Style"
     },
+    "readerMode": {
+        "message": "Apply Readability.js"
+    },
+    "readerModeHint": {
+        "message": "Keep only the article, dropping navigation, sidebars and comments. Applies to Save Page and Add Page as Chapter only. Pages that are not articles are saved whole."
+    },
+    "reviewBeforeSaving": {
+        "message": "Review Before Saving"
+    },
+    "reviewBeforeSavingHint": {
+        "message": "Open Save Page and Save Selection in the chapter editor instead of downloading straight away, so the book can be previewed, edited and described first. The editor's Generate button saves the file."
+    },
     "editStyles": {
-        "message": "Edit Custom Styles ..."
+        "message": "Edit Site Styles ...",
+        "description": "Per-site CSS applied to a page while it is captured - not the stylesheet of the book that comes out, which lives in the chapter editor"
     },
     "savePage": {
         "message": "Save Page"
@@ -33,11 +46,137 @@
     "ebookTitleLabel": {
         "message": "eBook Title:"
     },
-    "rawPreview": {
-        "message": "Raw Preview"
+    "preview": {
+        "message": "Preview"
+    },
+    "previewNote": {
+        "message": "This shows how the chapter renders. Pagination, fonts and margins are the reading system's and differ between devices."
+    },
+    "previewEmpty": {
+        "message": "This chapter has no content to preview."
+    },
+    "editModeView": {
+        "message": "View"
+    },
+    "editModeRemove": {
+        "message": "Remove elements"
+    },
+    "editModeText": {
+        "message": "Edit text"
+    },
+    "viewModeHint": {
+        "message": "Reading view. Switch mode to edit this chapter."
+    },
+    "removeModeHint": {
+        "message": "Click an element to remove it. Select parent widens what a click takes."
+    },
+    "removeModeTarget": {
+        "message": "Click removes:"
+    },
+    "textModeHint": {
+        "message": "Click in the text to edit it. The chapter title is edited in the chapter list."
+    },
+    "selectParent": {
+        "message": "Select parent"
+    },
+    "selectChild": {
+        "message": "Select child"
+    },
+    "insertParagraphBefore": {
+        "message": "Add paragraph before"
+    },
+    "insertParagraphAfter": {
+        "message": "Add paragraph after"
+    },
+    "insertedParagraphText": {
+        "message": "New paragraph"
+    },
+    "undoEdit": {
+        "message": "Undo"
+    },
+    "saveChapter": {
+        "message": "Save chapter"
+    },
+    "chapterSaved": {
+        "message": "Chapter saved."
+    },
+    "bookCssLabel": {
+        "message": "eBook Stylesheet"
+    },
+    "bookCssHint": {
+        "message": "CSS for the whole saved book. Not the same as Site Styles, which change pages while they are captured."
+    },
+    "bookCssPlaceholder": {
+        "message": "body { font-family: serif; }"
+    },
+    "chapterCssLabel": {
+        "message": "Chapter CSS"
+    },
+    "chapterCssHint": {
+        "message": "CSS for this chapter only, applied after the styles captured from its page."
+    },
+    "chapterCssPlaceholder": {
+        "message": "p { text-align: justify; }"
+    },
+    "bookMetadataLabel": {
+        "message": "eBook Details"
+    },
+    "bookMetadataHint": {
+        "message": "What the eBook says about itself. A field left empty is taken from the chapters."
+    },
+    "chapterMetadataLabel": {
+        "message": "Chapter details"
+    },
+    "chapterMetadataHint": {
+        "message": "What this chapter says about itself. A field left empty is taken from the page it was saved from."
+    },
+    "metadataAuthors": {
+        "message": "Authors"
+    },
+    "metadataAuthorsHint": {
+        "message": "One per line"
+    },
+    "metadataLanguage": {
+        "message": "Language"
+    },
+    "metadataLanguageHint": {
+        "message": "A language tag, like en or pt-BR"
+    },
+    "metadataLanguageIgnored": {
+        "message": "Not a language tag - this will be ignored."
+    },
+    "metadataPublisher": {
+        "message": "Publisher"
+    },
+    "metadataDate": {
+        "message": "Date"
+    },
+    "metadataDateHint": {
+        "message": "YYYY-MM-DD"
+    },
+    "metadataDateIgnored": {
+        "message": "Not a date - this will be ignored."
+    },
+    "metadataDateGenerated": {
+        "message": "the day the eBook is generated"
+    },
+    "metadataDescription": {
+        "message": "Description"
+    },
+    "metadataFromChapters": {
+        "message": "from the chapters"
+    },
+    "metadataFromPage": {
+        "message": "from this chapter's page"
+    },
+    "discardEditsConfirm": {
+        "message": "This chapter has unsaved edits. Close without saving?"
     },
     "remove": {
         "message": "Remove"
+    },
+    "removeChapterConfirm": {
+        "message": "Do you want to remove this chapter?"
     },
     "removeChapters": {
         "message": "Remove Chapters"
@@ -54,6 +193,9 @@
     "saveChanges": {
         "message": "Save changes"
     },
+    "changesSaved": {
+        "message": "Changes saved."
+    },
     "emptyBookWarning": {
         "message": "Can't generate an empty eBook!"
     },
@@ -67,7 +209,7 @@
         "message": "Style saved!"
     },
     "styleEditor": {
-        "message": "Style Editor"
+        "message": "Site Style Editor"
     },
     "selectExistingCSS": {
         "message": "Select Existing CSS"

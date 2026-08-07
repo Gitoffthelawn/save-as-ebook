@@ -1,0 +1,360 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../../web-extension/chapterEditor.css">
+</head>
+<body>
+<script>
+// The metadata a user can state: about the book, and about one chapter of it.
+//
+// The claim being tested is a precedence rule - what was typed, else what the
+// page stated, else what the build always did - and that rule is only worth
+// anything if an empty box means the middle answer rather than an empty value.
+// So most of what is checked here is what happens when a box is left alone, or
+// emptied again, or filled with something that is not a language or a date.
+//
+// The second claim is that the boxes do not lie: what they show greyed as the
+// fallback is what the build would write, derived by the same functions, from
+// the chapters as this page is currently holding them.
+
+var FIXTURE_PAGES = [
+  {
+    title: 'Chapter One',
+    url: 'c1.xhtml',
+    content: '<p id="body-text">one</p>',
+    images: [],
+    styleFileName: 'style0.css',
+    styleFileContent: '',
+    metadata: {lang: 'fr', dir: '', authors: ['Scraped Byline'], publisher: 'Scraped Press',
+               description: 'the scraped blurb', date: '2020-01-01'},
+    // a chapter somebody has already described, so that reopening it shows what
+    // they wrote rather than an empty box
+    metadataOverride: {lang: 'ja', authors: ['Murasaki Shikibu'], publisher: 'Heian Press',
+                       description: '', date: ''}
+  },
+  {
+    title: 'Chapter Two',
+    url: 'c2.xhtml',
+    content: '<h1>Chapter Two</h1><p>two</p>',
+    images: [],
+    styleFileName: 'style1.css',
+    styleFileContent: '',
+    metadata: {lang: 'de', dir: '', authors: ['Alan Turing'], publisher: 'Other Press',
+               description: 'not the book', date: '2021-02-02'}
+  }
+];
+
+var STORED_BOOK_METADATA = {lang: 'pt-BR', authors: ['Ada Lovelace'], publisher: '',
+                            description: '', date: ''};
+
+var written = {pages: null, bookMetadata: undefined};
+var builds = [];
+window.close = function(){};
+window.confirm = function(){ return true; };
+
+window.chrome = {
+  runtime: {
+    onMessage: {addListener: function(){}},
+    lastError: null,
+    getURL: function(p){ return 'chrome-extension://fake/' + p; },
+    sendMessage: function(msg, cb) {
+      var reply = {};
+      if (msg.type === 'set') written.pages = msg.pages;
+      if (msg.type === 'set book metadata') written.bookMetadata = msg.metadata;
+      if (msg.type === 'get') reply = {allPages: FIXTURE_PAGES};
+      if (msg.type === 'get title') reply = {title: 'My Book'};
+      if (msg.type === 'get uuid') reply = {uuid: 'fixture-uuid'};
+      if (msg.type === 'get book css') reply = {css: ''};
+      if (msg.type === 'get book metadata') reply = {metadata: STORED_BOOK_METADATA};
+      if (cb) setTimeout(function(){ cb(reply); }, 0);
+    }
+  },
+  // the key back, so an assertion can tell a label from a value the editor
+  // derived - the placeholders below are checked against both
+  i18n: {getMessage: function(k){ return k; }},
+  tabs: {query: function(q, cb){ cb([{id: 1, url: 'https://example.com'}]); },
+         create: function(){}, update: function(){}},
+  commands: {getAll: function(cb){ cb([]); }}
+};
+
+var errors = [];
+window.addEventListener('error', function(e){ errors.push(e.message); });
+</script>
+
+<!-- the script set chapters.html loads, in the same order -->
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/libs/jszip.js"></script>
+<script src="../../web-extension/sanitizeHtml.js"></script>
+<script src="../../web-extension/saveEbook.js"></script>
+<script src="../../web-extension/chapterPreview.js"></script>
+<script src="../../web-extension/chapterContentEditor.js"></script>
+<script src="../../web-extension/chapterEditor.js"></script>
+
+<script>
+// The build is the last step and downloads a file; what this fixture needs from
+// it is the book metadata the editor hands it.
+window.buildEbook = function(pages, bookMeta) {
+  builds.push({pages: pages, meta: bookMeta});
+};
+
+var results = document.createElement('ul');
+results.id = 'results';
+document.body.appendChild(results);
+
+function detail(text) {
+  var line = String(text).replace(/\s+/g, ' ').trim();
+  return line.length > 200 ? line.substring(0, 200) + '...' : line;
+}
+
+function report(name, ok, why) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (why ? ' -- ' + detail(why) : '');
+  results.appendChild(li);
+}
+
+function done(message) {
+  if (message) {
+    report(message, false);
+  }
+  document.title = 'DONE';
+}
+
+function waitFor(what, predicate, next) {
+  var tries = 0;
+  (function poll() {
+    var ready = false;
+    try { ready = predicate(); } catch (e) { ready = false; }
+    if (ready) { next(); return; }
+    if (++tries > 100) { done('timed out waiting for ' + what); return; }
+    setTimeout(poll, 20);
+  })();
+}
+
+function element(id) {
+  return document.getElementById(id);
+}
+
+// Setting .value is not typing, and the boxes are wired to oninput
+function type(box, text) {
+  box.value = text;
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+}
+
+function book(name) {
+  return element('chapterEditor-bookMeta-' + name);
+}
+
+function chapterField(name) {
+  return element('chapterEditor-chapterMeta-' + name);
+}
+
+function values(fieldPrefix) {
+  return ['authors', 'lang', 'publisher', 'date', 'description'].map(function(name) {
+    return element(fieldPrefix + '-' + name).value;
+  }).join(' | ');
+}
+
+function placeholders(fieldPrefix) {
+  return ['authors', 'lang', 'publisher', 'date', 'description'].map(function(name) {
+    return element(fieldPrefix + '-' + name).placeholder;
+  }).join(' | ');
+}
+
+setTimeout(function () {
+  report('scripts ran without throwing', errors.length === 0, errors.join(' | '));
+
+  // ---- the precedence rule, where it is decided ------------------------------
+  //
+  // Everything the panel does comes back to this. The values are checked in the
+  // package document by the builder scenarios; what is checked here is the shape
+  // of the rule itself, because it is what the boxes are built on.
+  var page = {metadata: {lang: 'fr', authors: ['Scraped'], publisher: 'Scraped Press',
+                         description: 'scraped', date: '2020-01-01'}};
+  report('nothing stated leaves what the page said',
+         getPageMetadata(page).publisher === 'Scraped Press' &&
+         getPageMetadata(page, {}).lang === 'fr' &&
+         getPageMetadata(page, {publisher: ''}).publisher === 'Scraped Press',
+         JSON.stringify(getPageMetadata(page, {publisher: ''})));
+  report('what was stated wins, field by field',
+         getPageMetadata(page, {publisher: 'Stated Press'}).publisher === 'Stated Press' &&
+         getPageMetadata(page, {publisher: 'Stated Press'}).lang === 'fr',
+         JSON.stringify(getPageMetadata(page, {publisher: 'Stated Press'})));
+  report('a language tag no reader could use is not one',
+         getPageMetadata(page, {lang: '{{locale}}'}).lang === 'fr' &&
+         getPageMetadata(page, {lang: 'pt_br'}).lang === 'pt-BR',
+         getPageMetadata(page, {lang: '{{locale}}'}).lang);
+  report('and neither is a date that is not a date',
+         getPageMetadata(page, {date: 'last spring'}).date === '2020-01-01' &&
+         getPageMetadata(page, {date: '2024-06-01'}).date === '2024-06-01');
+  report('an override of nothing is the page, whatever shape the nothing has',
+         [undefined, null, {}, {lang: '', authors: [], publisher: '', description: '', date: ''}]
+             .every(function(nothing) {
+               return getPageMetadata(page, nothing).publisher === 'Scraped Press';
+             }));
+
+  // ---- the book panel --------------------------------------------------------
+  var fields = element('chapterEditor-bookMetaFields');
+  report('the book metadata panel is folded away to begin with',
+         fields.style.display === 'none');
+  report('...and opens when it is asked for',
+         (element('chapterEditor-bookMetaToggle').click(), fields.style.display === 'block'));
+  report('it holds what this book was already described with',
+         values('chapterEditor-bookMeta') === 'Ada Lovelace | pt-BR |  |  | ',
+         values('chapterEditor-bookMeta'));
+
+  // The boxes nobody filled in show what the build would derive from the
+  // chapters, which is the whole of what an empty box means. Chapter one has
+  // been described by hand, so what shows here is that description and not the
+  // byline its page carried - a chapter override is part of what the chapter
+  // says, here as everywhere else.
+  report('an empty box shows the value the build would use instead',
+         placeholders('chapterEditor-bookMeta') ===
+             'Murasaki Shikibu\nAlan Turing | ja | Heian Press, Other Press | ' +
+             'metadataDateGenerated | metadataFromChapters',
+         placeholders('chapterEditor-bookMeta'));
+  report('and those are the values the build really derives',
+         deriveBookMetadata(FIXTURE_PAGES).authors.join('|') === 'Murasaki Shikibu|Alan Turing' &&
+         deriveBookMetadata(FIXTURE_PAGES).publisher.join('|') === 'Heian Press|Other Press',
+         JSON.stringify(deriveBookMetadata(FIXTURE_PAGES)));
+  // a two-chapter book has neither a description nor a date of its own, and the
+  // box says where one would come from rather than showing a blank
+  report('a fallback that does not exist says where it would come from',
+         book('description').placeholder === 'metadataFromChapters' &&
+         book('date').placeholder === 'metadataDateGenerated');
+
+  // A publisher two chapters disagree about is two publishers, and the box has
+  // to show both, joined so that they read as two.
+  report('the publisher box shows every publisher the chapters name',
+         book('publisher').placeholder === 'Heian Press, Other Press',
+         book('publisher').placeholder);
+
+  // ---- what is typed, and what is not usable ---------------------------------
+  type(book('lang'), 'not a language');
+  report('a language tag that is not one is called out rather than dropped',
+         element('chapterEditor-bookMeta-langWarning').innerText === 'metadataLanguageIgnored' &&
+         book('lang').value === 'not a language' &&
+         book('lang').classList.contains('chapterEditor-metaInvalid'),
+         element('chapterEditor-bookMeta-langWarning').innerText);
+  type(book('lang'), 'pt-BR');
+  report('...and the complaint goes when it becomes one',
+         element('chapterEditor-bookMeta-langWarning').innerText === '' &&
+         !book('lang').classList.contains('chapterEditor-metaInvalid'));
+
+  type(book('date'), 'sometime last spring');
+  report('the same for a date',
+         element('chapterEditor-bookMeta-dateWarning').innerText === 'metadataDateIgnored' &&
+         book('date').value === 'sometime last spring');
+  type(book('date'), '2024-06-01');
+  report('...which a date it can use clears',
+         element('chapterEditor-bookMeta-dateWarning').innerText === '');
+
+  // ---- the chapter panel -----------------------------------------------------
+  element('li0').getElementsByTagName('button')[0].click();
+  var frame = element('chapterEditor-previewFrame');
+
+  report('opening a chapter that was already described opens the panel holding it',
+         element('chapterEditor-chapterMetaHolder').style.display === 'block' &&
+         values('chapterEditor-chapterMeta') ===
+             'Murasaki Shikibu | ja | Heian Press |  | ',
+         values('chapterEditor-chapterMeta'));
+  report('and behind it, what its own page stated',
+         placeholders('chapterEditor-chapterMeta') ===
+             'Scraped Byline | fr | Scraped Press | 2020-01-01 | the scraped blurb',
+         placeholders('chapterEditor-chapterMeta'));
+  report('nothing is dirty in a panel that has only just been filled',
+         element('chapterEditor-saveChapter').disabled);
+
+  waitFor('the frame to load', function() {
+    var doc = frame.contentDocument;
+    return doc && doc.getElementById('body-text');
+  }, function() {
+    var frameDoc = frame.contentDocument;
+    // the one field of the five the frame can show: it is written onto the
+    // chapter's own <html> element, and is what hyphenates and speaks it
+    report('the chapter renders in the language stated for it',
+           frameDoc.documentElement.lang === 'ja', frameDoc.documentElement.lang);
+
+    type(chapterField('lang'), 'nl');
+    report('a language typed for the chapter takes effect as it is typed',
+           frameDoc.documentElement.lang === 'nl', frameDoc.documentElement.lang);
+    report('and there is now something to save',
+           !element('chapterEditor-saveChapter').disabled);
+
+    type(chapterField('date'), '1925');
+    type(chapterField('description'), 'A chapter blurb');
+    element('chapterEditor-saveChapter').click();
+
+    waitFor('the chapter to be saved', function() { return written.pages !== null; },
+    function() {
+      report('what was stated about this chapter is stored on its record',
+             JSON.stringify(written.pages[0].metadataOverride) ===
+                 JSON.stringify({lang: 'nl', authors: ['Murasaki Shikibu'],
+                                 publisher: 'Heian Press', description: 'A chapter blurb',
+                                 date: '1925'}),
+             JSON.stringify(written.pages[0].metadataOverride));
+      report('the chapter beside it was not described by saving this one',
+             !written.pages[1].metadataOverride,
+             String(written.pages[1].metadataOverride));
+      report('what its page stated is untouched - the override stands beside it',
+             written.pages[0].metadata.lang === 'fr' &&
+             written.pages[0].metadata.publisher === 'Scraped Press');
+      report('and saving left nothing more to save',
+             element('chapterEditor-saveChapter').disabled);
+
+      // ---- emptying the boxes again --------------------------------------------
+      //
+      // A chapter somebody opened, described, and then thought better of has to
+      // end up the record it was, not one carrying five empty strings.
+      written.pages = null;
+      ['authors', 'lang', 'publisher', 'date', 'description'].forEach(function(name) {
+        type(chapterField(name), '');
+      });
+      report('emptying every box is a change like any other',
+             !element('chapterEditor-saveChapter').disabled);
+      report('and the chapter reads in the language its page stated again',
+             frameDoc.documentElement.lang === 'fr', frameDoc.documentElement.lang);
+      element('chapterEditor-saveChapter').click();
+
+      waitFor('the emptied chapter to be saved', function() { return written.pages !== null; },
+      function() {
+        report('a chapter that states nothing stores nothing',
+               written.pages[0].metadataOverride === null,
+               JSON.stringify(written.pages[0].metadataOverride));
+
+        // ---- a chapter nobody has described ---------------------------------------
+        element('li1').getElementsByTagName('button')[0].click();
+        report('opening one shows empty boxes, folded away',
+               element('chapterEditor-chapterMetaHolder').style.display === 'none' &&
+               values('chapterEditor-chapterMeta') === ' |  |  |  | ',
+               values('chapterEditor-chapterMeta'));
+        report('with that chapter\'s own page behind them',
+               placeholders('chapterEditor-chapterMeta') ===
+                   'Alan Turing | de | Other Press | 2021-02-02 | not the book',
+               placeholders('chapterEditor-chapterMeta'));
+
+        // ---- and what the build is handed ------------------------------------------
+        document.getElementsByClassName('chapterEditor-generate-button')[0].click();
+        waitFor('the build to be started', function() { return builds.length > 0; },
+        function() {
+          report('the build is handed what the book states, from the boxes and not from storage',
+                 JSON.stringify(builds[0].meta.metadata) ===
+                     JSON.stringify({lang: 'pt-BR', authors: ['Ada Lovelace'], publisher: '',
+                                     description: '', date: '2024-06-01'}),
+                 JSON.stringify(builds[0].meta.metadata));
+          report('and it was stored beside the title, not on a chapter',
+                 JSON.stringify(written.bookMetadata) ===
+                     JSON.stringify(builds[0].meta.metadata),
+                 JSON.stringify(written.bookMetadata));
+          report('the chapters carry what was stated about them into it',
+                 builds[0].pages[0].metadataOverride === null &&
+                 !builds[0].pages[1].metadataOverride);
+          done('');
+        });
+      });
+    });
+  });
+}, 300);
+</script>
+</body>
+</html>

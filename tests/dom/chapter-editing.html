@@ -1,0 +1,469 @@
+<!doctype html>
+<html>
+<head>
+<!-- a file:// document with no charset is read as windows-1252, and this
+     fixture's content is deliberately not all ascii -->
+<meta charset="utf-8">
+<link rel="stylesheet" href="../../web-extension/chapterEditor.css">
+</head>
+<body>
+<script>
+// Editing a chapter in the frame that previews it. The assertions that matter
+// are the last group: whatever is done to the live DOM, what reaches storage has
+// to be a chapter the build stage would accept - well formed, sanitized, and
+// carrying no image record nothing points at.
+var PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+var FIXTURE_PAGES = [
+  {
+    title: 'Chapter One',
+    url: 'c1.xhtml',
+    // An aside standing in for the thing a reader wants gone - a wrapper whose
+    // own children are what the pointer lands on, carrying an image of its own.
+    //
+    // The rest is here to be carried through the round trip rather than to be
+    // edited: a table, a list with counters, a formula, links into the chapter
+    // and out of it, escaped text. All of it is written into a live DOM,
+    // serialized back out of one, and then validated by EPUBCheck - the
+    // structures where an editing round trip could plausibly emit something a
+    // reading system cannot parse.
+    content: '<p id="keep">kept text</p>' +
+             '<aside class="ad"><p>advert</p>' +
+             '<img src="../images/img-2.png" alt="ad" /></aside>' +
+             '<p><img src="../images/img-1.png" alt="figure" /></p>' +
+             '<h2 id="sec">A section &amp; its heading</h2>' +
+             '<table><caption>A table</caption>' +
+             '<colgroup><col span="2" /></colgroup>' +
+             '<thead><tr><th scope="col">a</th><th scope="col">b</th></tr></thead>' +
+             '<tbody><tr><td colspan="2">spans two</td></tr></tbody></table>' +
+             '<ol start="7" reversed="reversed"><li>seven</li>' +
+             '<li value="42">forty two</li></ol>' +
+             '<blockquote cite="https://example.com/source"><p>quoted</p></blockquote>' +
+             '<p lang="fr" dir="ltr">un paragraphe, ' +
+             '<abbr title="s\'il vous plaît">svp</abbr>, le ' +
+             '<time datetime="2024-03-01">1 mars</time></p>' +
+             '<p>A formula <math xmlns="http://www.w3.org/1998/Math/MathML" ' +
+             'display="block" alttext="x^2"><mrow><msup><mi>x</mi><mn>2</mn></msup>' +
+             '</mrow></math></p>' +
+             '<p><a href="#sec">into the chapter</a> and ' +
+             '<a href="https://example.com/elsewhere">out of it</a></p>',
+    images: [
+      {filename: 'img-1.png', data: PNG_1X1},
+      {filename: 'img-2.png', data: PNG_1X1}
+    ],
+    styleFileName: 'style0.css',
+    styleFileContent: ''
+  },
+  {
+    title: 'Chapter Two',
+    url: 'c2.xhtml',
+    content: '<h1>Chapter Two</h1><p>two</p>',
+    images: [],
+    styleFileName: 'style1.css',
+    styleFileContent: ''
+  }
+];
+
+var written = {pages: null};
+var closedTab = false;
+window.close = function(){ closedTab = true; };
+
+// The editor asks before discarding edits; the answer is the fixture's to give
+var confirmCalls = 0;
+var confirmAnswer = true;
+window.confirm = function(){ confirmCalls++; return confirmAnswer; };
+
+window.chrome = {
+  runtime: {
+    onMessage: {addListener: function(){}},
+    lastError: null,
+    getURL: function(p){ return 'chrome-extension://fake/' + p; },
+    sendMessage: function(msg, cb) {
+      var reply = {};
+      if (msg.type === 'set') written.pages = msg.pages;
+      if (msg.type === 'get') reply = {allPages: FIXTURE_PAGES};
+      if (msg.type === 'get title') reply = {title: 'My Book'};
+      if (msg.type === 'get uuid') reply = {uuid: 'fixture-uuid'};
+      if (cb) setTimeout(function(){ cb(reply); }, 0);
+    }
+  },
+  i18n: {getMessage: function(k){ return k; }},
+  tabs: {query: function(q, cb){ cb([{id: 1, url: 'https://example.com'}]); },
+         create: function(){}, update: function(){}},
+  commands: {getAll: function(cb){ cb([]); }}
+};
+
+var errors = [];
+window.addEventListener('error', function(e){ errors.push(e.message); });
+</script>
+
+<!-- the script set chapters.html loads, in the same order -->
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/libs/jszip.js"></script>
+<script src="../../web-extension/sanitizeHtml.js"></script>
+<script src="../../web-extension/saveEbook.js"></script>
+<script src="../../web-extension/chapterPreview.js"></script>
+<script src="../../web-extension/chapterContentEditor.js"></script>
+<script src="../../web-extension/chapterEditor.js"></script>
+
+<script>
+var results = document.createElement('ul');
+results.id = 'results';
+document.body.appendChild(results);
+
+function detail(text) {
+  var line = String(text).replace(/\s+/g, ' ').trim();
+  return line.length > 200 ? line.substring(0, 200) + '...' : line;
+}
+
+function report(name, ok, why) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (why ? ' -- ' + detail(why) : '');
+  results.appendChild(li);
+}
+
+function done(message) {
+  if (message) {
+    report(message, false);
+  }
+  document.title = 'DONE';
+}
+
+// The chapters as they were saved, for build-edited-epub.sh to lift out of the
+// dumped dom and build a real book from. Asserting that edited content is well
+// formed is this fixture's job; whether a book made of it is valid is EPUBCheck's,
+// and nothing here can answer that on its own.
+function exportSavedChapters(pages) {
+  var out = document.createElement('pre');
+  out.id = 'edited-chapters';
+  // one line, because the runner reads the dumped dom a line at a time
+  out.textContent = JSON.stringify(pages);
+  document.body.appendChild(out);
+}
+
+// The fixture drives a real frame, so every step after the first waits for one
+function waitFor(what, predicate, next) {
+  var tries = 0;
+  (function poll() {
+    var ready = false;
+    try { ready = predicate(); } catch (e) { ready = false; }
+    if (ready) { next(); return; }
+    if (++tries > 100) { done('timed out waiting for ' + what); return; }
+    setTimeout(poll, 20);
+  })();
+}
+
+function button(id) {
+  return document.getElementById(id);
+}
+
+var frame = null;
+var frameDoc = null;
+var editRoot = null;
+var savedChapters = null;
+
+// Events raised the way a browser raises them: on the element, bubbling up to
+// the document listeners the session installs there.
+function fire(node, type, init) {
+  var win = frame.contentWindow;
+  var Constructor = (type === 'mousemove' || type === 'click') ? win.MouseEvent :
+                    (type === 'beforeinput' ? win.InputEvent : win.Event);
+  node.dispatchEvent(new Constructor(type,
+      Object.assign({bubbles: true, cancelable: true}, init || {})));
+}
+
+function hovered() {
+  return frameDoc.querySelector('.sae-edit-hover');
+}
+
+function hint() {
+  return document.getElementById('chapterEditor-previewHint').innerText;
+}
+
+// Where the caret is decides where an inserted paragraph lands
+function caretIn(element) {
+  var range = frameDoc.createRange();
+  range.selectNodeContents(element);
+  range.collapse(true);
+  var selection = frameDoc.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+setTimeout(function () {
+  report('scripts ran without throwing', errors.length === 0, errors.join(' | '));
+
+  document.getElementById('li0').getElementsByTagName('button')[0].click();
+  frame = document.getElementById('chapterEditor-previewFrame');
+
+  waitFor('the frame to load and the session to start',
+          function() { return !button('chapterEditor-modeRemove').disabled; },
+          afterLoad);
+}, 300);
+
+function afterLoad() {
+  frameDoc = frame.contentDocument;
+  editRoot = frameDoc.querySelector('[data-sae-edit-root]');
+
+  // ---- what is editable, and what is the build's ----------------------------
+  report('the editing session reaches into the sandboxed frame', !!frameDoc);
+  report('the chapter content is wrapped in an editable container', !!editRoot);
+  report('the content is all of it',
+         !!editRoot && editRoot.querySelectorAll('aside').length === 1 &&
+         editRoot.querySelectorAll('table, ol, blockquote, math').length === 4,
+         editRoot ? String(editRoot.children.length) + ' top level elements' : '');
+  // the heading the build adds is regenerated from the chapter title on every
+  // build, so it is left outside the part the user may change
+  var generatedHeading = frameDoc.querySelector('h1');
+  report('the heading the build adds is outside the editable container',
+         !!generatedHeading && generatedHeading.textContent === 'Chapter One' &&
+         !editRoot.contains(generatedHeading));
+  report('the toolbar starts in view mode',
+         button('chapterEditor-modeView').classList.contains('chapterEditor-mode-active'));
+  report('nothing to save before anything is edited',
+         button('chapterEditor-saveChapter').disabled &&
+         button('chapterEditor-undo').disabled);
+
+  // ---- remove mode -----------------------------------------------------------
+  button('chapterEditor-modeRemove').click();
+  report('remove mode is what the toolbar says it is',
+         button('chapterEditor-modeRemove').classList.contains('chapterEditor-mode-active') &&
+         !button('chapterEditor-modeView').classList.contains('chapterEditor-mode-active'));
+
+  var advert = editRoot.querySelector('aside > p');
+  fire(advert, 'mousemove');
+  report('hovering highlights the element under the pointer', hovered() === advert,
+         hovered() ? hovered().tagName : 'nothing highlighted');
+  report('the toolbar names what a click would take', hint().indexOf('<p>') > -1, hint());
+
+  // what a reader wants gone is the wrapper, not the paragraph the pointer
+  // happens to be over - the widening selector.js does on a live page
+  button('chapterEditor-widen').click();
+  report('select parent widens the target to the block around it',
+         hovered() === editRoot.querySelector('aside'),
+         hovered() ? hovered().tagName : 'nothing highlighted');
+  report('the widened target is what the toolbar names',
+         hint().indexOf('<aside.ad>') > -1, hint());
+
+  button('chapterEditor-narrow').click();
+  fire(advert, 'mousemove');
+  report('select child walks back down', hovered() === advert,
+         hovered() ? hovered().tagName : 'nothing highlighted');
+
+  button('chapterEditor-widen').click();
+  var paragraphsBefore = editRoot.querySelectorAll('p').length;
+  fire(editRoot.querySelector('aside'), 'click');
+  report('clicking removes the highlighted element, and what was inside it',
+         editRoot.querySelectorAll('aside').length === 0 &&
+         editRoot.querySelectorAll('p').length === paragraphsBefore - 1,
+         editRoot.querySelectorAll('p').length + ' paragraphs left of ' + paragraphsBefore);
+  report('the removal is undoable and savable',
+         !button('chapterEditor-undo').disabled &&
+         !button('chapterEditor-saveChapter').disabled);
+  report('nothing was written to storage by the removal itself',
+         written.pages === null);
+
+  // ---- undo ------------------------------------------------------------------
+  button('chapterEditor-undo').click();
+  report('undo brings the removed element back',
+         editRoot.querySelectorAll('aside').length === 1 &&
+         editRoot.querySelectorAll('p').length === paragraphsBefore,
+         editRoot.querySelectorAll('p').length + ' paragraphs');
+  report('and the rest of the chapter with it, unchanged',
+         editRoot.querySelectorAll('table, ol, blockquote, math').length === 4 &&
+         !!editRoot.querySelector('a[href="#sec"]'));
+  report('the image inside it is rendered again, not left as a reference',
+         (editRoot.querySelector('aside img') || {src: ''}).src.indexOf('data:image/png;base64,') === 0,
+         (editRoot.querySelector('aside img') || {src: 'no image'}).src.substring(0, 30));
+  report('there is nothing left to undo', button('chapterEditor-undo').disabled);
+
+  // ...and away again, which is the state the save below is of
+  fire(editRoot.querySelector('aside > p'), 'mousemove');
+  button('chapterEditor-widen').click();
+  fire(editRoot.querySelector('aside'), 'click');
+  report('the element goes again', editRoot.querySelectorAll('aside').length === 0);
+
+  // the heading the build writes is not the user's to remove
+  button('chapterEditor-modeView').click();
+  button('chapterEditor-modeRemove').click();
+  fire(frameDoc.querySelector('h1'), 'mousemove');
+  report('the generated heading cannot be hovered', hovered() === null);
+  fire(frameDoc.querySelector('h1'), 'click');
+  report('and cannot be clicked away', !!frameDoc.querySelector('h1'));
+
+  // ---- text mode -------------------------------------------------------------
+  button('chapterEditor-modeText').click();
+  report('text mode makes the chapter editable',
+         editRoot.getAttribute('contenteditable') === 'true');
+  report('the generated heading is still not editable',
+         frameDoc.querySelector('h1').isContentEditable === false);
+
+  // An inserted paragraph goes beside the block the caret is in, not at the end
+  // of the chapter - "add a note here" is the whole point of it.
+  caretIn(editRoot.querySelector('#keep'));
+  button('chapterEditor-insertAfter').click();
+  var added = editRoot.querySelector('#keep').nextElementSibling;
+  report('a paragraph is added after the block the caret is in',
+         added.tagName === 'P' && added.textContent === 'insertedParagraphText',
+         added.tagName + ' "' + added.textContent + '"');
+  report('and the caret moves into it, with its placeholder selected so that '
+         + 'typing replaces it',
+         String(frameDoc.getSelection()).trim() === 'insertedParagraphText',
+         '"' + String(frameDoc.getSelection()) + '"');
+
+  var figure = editRoot.lastElementChild;
+  caretIn(figure);
+  button('chapterEditor-insertBefore').click();
+  report('and before it when that is what was asked for',
+         figure.previousElementSibling.textContent === 'insertedParagraphText',
+         figure.previousElementSibling.outerHTML);
+  // the one that was just inserted goes again, so that the chapter saved below
+  // holds exactly one added paragraph
+  figure.previousElementSibling.remove();
+
+  // typing, as the browser raises it: the event first, then the change
+  var kept = editRoot.querySelector('#keep');
+  fire(kept, 'beforeinput', {inputType: 'insertText', data: 'x'});
+  kept.textContent = 'edited text';
+  report('typing is one undo step, snapshotted before the run',
+         !button('chapterEditor-undo').disabled);
+
+  // ---- saving ----------------------------------------------------------------
+  button('chapterEditor-saveChapter').click();
+  waitFor('the chapter to be written', function() { return written.pages !== null; },
+          afterSave);
+}
+
+function afterSave() {
+  savedChapters = written.pages;
+  var saved = written.pages[0];
+  report('the edited chapter is what was written', !!saved && saved.title === 'Chapter One');
+
+  // The whole risk of this feature is emitting content the build stage cannot
+  // read back, so this is the assertion the others exist to support.
+  var xml = new DOMParser().parseFromString(
+      '<html xmlns="http://www.w3.org/1999/xhtml"><body>' + saved.content + '</body></html>',
+      'application/xhtml+xml');
+  var parseError = xml.querySelector('parsererror');
+  report('what was stored is well formed xml', !parseError,
+         parseError ? parseError.textContent : '');
+  report('and is a fixed point of the sanitizer, so it round trips',
+         sanitizeChapterContent(saved.content) === saved.content,
+         saved.content);
+
+  report('the removed element is gone from the stored chapter',
+         saved.content.indexOf('advert') < 0 && saved.content.indexOf('<aside') < 0,
+         saved.content);
+  report('the edited text is in it', saved.content.indexOf('edited text') > -1, saved.content);
+  report('so is the inserted paragraph',
+         saved.content.indexOf('<p>insertedParagraphText</p>') > -1, saved.content);
+
+  // what the frame renders is not what a chapter holds
+  report('no data url reached storage', saved.content.indexOf('data:image') < 0);
+  report('the surviving image points into the archive again',
+         saved.content.indexOf('src="../images/img-1.png"') > -1, saved.content);
+  report('no editor class was left on the content',
+         saved.content.indexOf('sae-edit') < 0 && saved.content.indexOf('class=""') < 0,
+         saved.content);
+  report('and neither was the editable container',
+         saved.content.indexOf('contenteditable') < 0 &&
+         saved.content.indexOf('data-sae-edit-root') < 0);
+
+  // an image nothing points at is a manifest item for a file no reader draws
+  report('the image removed with its element is pruned from the chapter',
+         saved.images.length === 1 && saved.images[0].filename === 'img-1.png',
+         saved.images.map(function(i){ return i.filename; }).join(','));
+  report('the other chapter was written beside it, unchanged',
+         written.pages.length === 2 && written.pages[1].content === '<h1>Chapter Two</h1><p>two</p>');
+
+  report('there is nothing left to save', button('chapterEditor-saveChapter').disabled);
+
+  // ---- closing ---------------------------------------------------------------
+  confirmCalls = 0;
+  document.getElementById('chapterEditor-previewHeader')
+          .getElementsByTagName('button')[0].click();
+  report('a saved chapter closes without asking',
+         confirmCalls === 0 && document.getElementById('chapterEditor-previewPanel')
+                                       .style.display === 'none');
+  report('the frame goes with the panel',
+         document.getElementsByTagName('iframe').length === 0);
+
+  // ...and an unsaved one does ask
+  document.getElementById('li1').getElementsByTagName('button')[0].click();
+  frame = document.getElementById('chapterEditor-previewFrame');
+  waitFor('the second chapter to load',
+          function() { return !button('chapterEditor-modeRemove').disabled; },
+          afterReopen);
+}
+
+function afterReopen() {
+  frameDoc = frame.contentDocument;
+  editRoot = frameDoc.querySelector('[data-sae-edit-root]');
+  // this chapter opens with a heading naming itself, so the build adds none and
+  // the page's own <h1> is the user's to edit
+  report('a chapter that names itself has its heading inside the editable part',
+         !!editRoot && editRoot.querySelectorAll('h1').length === 1,
+         editRoot ? editRoot.innerHTML : '');
+
+  button('chapterEditor-modeRemove').click();
+  fire(editRoot.querySelector('p'), 'mousemove');
+  fire(editRoot.querySelector('p'), 'click');
+  report('the second chapter has an unsaved edit',
+         editRoot.querySelectorAll('p').length === 0 &&
+         !button('chapterEditor-saveChapter').disabled);
+
+  confirmCalls = 0;
+  confirmAnswer = false;
+  document.getElementById('chapterEditor-previewHeader')
+          .getElementsByTagName('button')[0].click();
+  report('closing with unsaved edits asks first', confirmCalls === 1);
+  report('and answering no keeps the panel open',
+         document.getElementById('chapterEditor-previewPanel').style.display === 'block' &&
+         !!document.getElementById('chapterEditor-previewFrame'));
+
+  confirmAnswer = true;
+  document.getElementById('chapterEditor-previewHeader')
+          .getElementsByTagName('button')[0].click();
+  report('answering yes discards them',
+         document.getElementById('chapterEditor-previewPanel').style.display === 'none');
+  report('and storage still holds what was saved before',
+         written.pages[1].content === '<h1>Chapter Two</h1><p>two</p>',
+         written.pages[1].content);
+
+  // ---- the pruning rule on its own -------------------------------------------
+  //
+  // Pairing by filename, the key dropUntypedImages() and dropMissingImages()
+  // pair on. A remote url that happens to end in "/images/..." names no file
+  // this archive ever contained.
+  var images = [{filename: 'a.png', data: PNG_1X1}, {filename: 'b.png', data: PNG_1X1}];
+  report('only referenced images are kept',
+         keepReferencedImages('<img src="../images/b.png"/>', images).length === 1 &&
+         keepReferencedImages('<img src="../images/b.png"/>', images)[0].filename === 'b.png');
+  report('a remote url ending in an archive-shaped path keeps nothing',
+         keepReferencedImages('<img src="https://cdn.example.com/images/a.png"/>', images)
+             .length === 0);
+  report('a chapter with no images left keeps none',
+         keepReferencedImages('<p>text</p>', images).length === 0);
+
+  // ---- the image rewrite is reversible ---------------------------------------
+  var chapterForm = '<img src="../images/a.png" alt="x"/>';
+  var frameForm = inlineArchiveImages(chapterForm, images);
+  report('the preview decodes the image', frameForm.indexOf('data:image/png;base64,') > -1);
+  report('and restoring it gives the chapter back',
+         restoreArchiveImageSrc(frameForm, images) === chapterForm,
+         restoreArchiveImageSrc(frameForm, images));
+  // an old chapter may spell the reference from the wrong place; it resolves
+  // from pages/ either way once it has been through the frame
+  report('a reference that would not resolve is restored to one that does',
+         restoreArchiveImageSrc(inlineArchiveImages('<img src="images/a.png"/>', images), images)
+             .indexOf('src="../images/a.png"') > -1);
+  report('an image the editor never decoded is left alone',
+         restoreArchiveImageSrc('<img src="https://example.com/x.png"/>', images) ===
+             '<img src="https://example.com/x.png"/>');
+
+  exportSavedChapters(savedChapters);
+  done('');
+}
+</script>
+</body>
+</html>

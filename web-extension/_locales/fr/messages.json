@@ -6,6 +6,18 @@
     "includeStyle": {
         "message": "Inclure le style"
     },
+    "readerMode": {
+        "message": "Appliquer Readability.js"
+    },
+    "readerModeHint": {
+        "message": "Ne garder que l'article, sans la navigation, les barres latérales ni les commentaires. Ne s'applique qu'à « Enregistrer la page » et « Ajouter la page comme chapitre ». Les pages qui ne sont pas des articles sont enregistrées en entier."
+    },
+    "reviewBeforeSaving": {
+        "message": "Vérifier avant d'enregistrer"
+    },
+    "reviewBeforeSavingHint": {
+        "message": "Ouvrir « Enregistrer la page » et « Enregistrer la sélection » dans l'éditeur de chapitre au lieu de télécharger aussitôt, afin de prévisualiser, modifier et décrire le livre d'abord. C'est le bouton « Générer l'eBook » de l'éditeur qui enregistre le fichier."
+    },
     "styleLabel": {
         "message": "Style personnalisé :"
     },
@@ -13,7 +25,7 @@
         "message": "Appliquer"
     },
     "editStyles": {
-        "message": "Éditer les styles..."
+        "message": "Éditer les styles de site..."
     },
     "savePage": {
         "message": "Enregistrer la page"
@@ -39,11 +51,137 @@
     "ebookTitleLabel": {
         "message": "Titre de l'eBook :"
     },
-    "rawPreview": {
-        "message": "Aperçu brut"
+    "preview": {
+        "message": "Aperçu"
+    },
+    "previewNote": {
+        "message": "Ceci montre le rendu du chapitre. La pagination, les polices et les marges appartiennent à la liseuse et varient selon les appareils."
+    },
+    "previewEmpty": {
+        "message": "Ce chapitre n'a aucun contenu à prévisualiser."
+    },
+    "editModeView": {
+        "message": "Lecture"
+    },
+    "editModeRemove": {
+        "message": "Supprimer des éléments"
+    },
+    "editModeText": {
+        "message": "Modifier le texte"
+    },
+    "viewModeHint": {
+        "message": "Mode lecture. Changez de mode pour modifier ce chapitre."
+    },
+    "removeModeHint": {
+        "message": "Cliquez sur un élément pour le supprimer. « Sélectionner le parent » élargit ce que le clic supprime."
+    },
+    "removeModeTarget": {
+        "message": "Le clic supprime :"
+    },
+    "textModeHint": {
+        "message": "Cliquez dans le texte pour le modifier. Le titre du chapitre se modifie dans la liste des chapitres."
+    },
+    "selectParent": {
+        "message": "Sélectionner le parent"
+    },
+    "selectChild": {
+        "message": "Sélectionner l'enfant"
+    },
+    "insertParagraphBefore": {
+        "message": "Ajouter un paragraphe avant"
+    },
+    "insertParagraphAfter": {
+        "message": "Ajouter un paragraphe après"
+    },
+    "insertedParagraphText": {
+        "message": "Nouveau paragraphe"
+    },
+    "undoEdit": {
+        "message": "Annuler"
+    },
+    "saveChapter": {
+        "message": "Enregistrer le chapitre"
+    },
+    "chapterSaved": {
+        "message": "Chapitre enregistré."
+    },
+    "bookCssLabel": {
+        "message": "Feuille de style du livre"
+    },
+    "bookCssHint": {
+        "message": "CSS appliqué à tout le livre enregistré. À ne pas confondre avec les styles de site, qui modifient les pages lors de leur capture."
+    },
+    "bookCssPlaceholder": {
+        "message": "body { font-family: serif; }"
+    },
+    "chapterCssLabel": {
+        "message": "CSS du chapitre"
+    },
+    "chapterCssHint": {
+        "message": "CSS appliqué à ce seul chapitre, après les styles capturés depuis sa page."
+    },
+    "chapterCssPlaceholder": {
+        "message": "p { text-align: justify; }"
+    },
+    "bookMetadataLabel": {
+        "message": "Détails de l'eBook"
+    },
+    "bookMetadataHint": {
+        "message": "Ce que le livre dit de lui-même. Un champ laissé vide est repris des chapitres."
+    },
+    "chapterMetadataLabel": {
+        "message": "Détails du chapitre"
+    },
+    "chapterMetadataHint": {
+        "message": "Ce que ce chapitre dit de lui-même. Un champ laissé vide est repris de la page dont il provient."
+    },
+    "metadataAuthors": {
+        "message": "Auteurs"
+    },
+    "metadataAuthorsHint": {
+        "message": "Un par ligne"
+    },
+    "metadataLanguage": {
+        "message": "Langue"
+    },
+    "metadataLanguageHint": {
+        "message": "Une étiquette de langue, comme fr ou pt-BR"
+    },
+    "metadataLanguageIgnored": {
+        "message": "Ce n'est pas une étiquette de langue - elle sera ignorée."
+    },
+    "metadataPublisher": {
+        "message": "Éditeur"
+    },
+    "metadataDate": {
+        "message": "Date"
+    },
+    "metadataDateHint": {
+        "message": "AAAA-MM-JJ"
+    },
+    "metadataDateIgnored": {
+        "message": "Ce n'est pas une date - elle sera ignorée."
+    },
+    "metadataDateGenerated": {
+        "message": "le jour où l'eBook est généré"
+    },
+    "metadataDescription": {
+        "message": "Description"
+    },
+    "metadataFromChapters": {
+        "message": "repris des chapitres"
+    },
+    "metadataFromPage": {
+        "message": "repris de la page de ce chapitre"
+    },
+    "discardEditsConfirm": {
+        "message": "Ce chapitre a des modifications non enregistrées. Fermer sans enregistrer ?"
     },
     "remove": {
         "message": "Retirer"
+    },
+    "removeChapterConfirm": {
+        "message": "Voulez-vous supprimer ce chapitre ?"
     },
     "removeChapters": {
         "message": "Supprimer les chapitres"
@@ -60,6 +198,9 @@
     "saveChanges": {
         "message": "Enregistrer les modifications"
     },
+    "changesSaved": {
+        "message": "Modifications enregistrées."
+    },
     "emptyBookWarning": {
         "message": "Impossible de générer un eBook vide !"
     },
@@ -73,7 +214,7 @@
         "message": "Style enregistré !"
     },
     "styleEditor": {
-        "message": "Éditeur de style"
+        "message": "Éditeur de styles de site"
     },
     "selectExistingCSS": {
         "message": "Sélectionner un style existant"

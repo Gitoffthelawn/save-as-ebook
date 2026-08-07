@@ -2,12 +2,17 @@
 // saveEbook.js, so what EPUBCheck validates is the file the extension ships -
 // not a reimplementation of it.
 //
-//   node build-epub.js [out.epub] [--single]
+//   node build-epub.js [out.epub] [--single] [--chapters file.json]
 //
 // --single builds a one-chapter book. That is the dominant real case ("save this
 // page"), and the package metadata takes different branches for it: dc:date and
 // dc:description come from the article itself, which would be a guess to assert
 // for a book assembled from several pages.
+//
+// --chapters builds from a chapter list on disk instead of the fixture below.
+// build-edited-epub.sh writes one out of the chapter editor - chapters that were
+// edited in a live DOM and serialized back - so that EPUBCheck sees the content
+// an edit produces and not only the content extraction produces.
 //
 // saveEbook.js expects a browser: the handful of globals it touches are stubbed
 // below, and downloadBlob() is swapped for a write to disk.
@@ -19,7 +24,11 @@ const vm = require('vm');
 const EXT = path.join(__dirname, '..', 'web-extension');
 const args = process.argv.slice(2);
 const single = args.indexOf('--single') > -1;
-const outFile = args.filter((a) => a !== '--single')[0] ||
+const chaptersFlag = args.indexOf('--chapters');
+const chaptersFile = chaptersFlag > -1 ? args[chaptersFlag + 1] : null;
+// the first argument that is not a flag, and not the file name belonging to one
+const outFile = args.filter((a, i) => a !== '--single' && a !== '--chapters' &&
+                                      !(chaptersFlag > -1 && i === chaptersFlag + 1))[0] ||
                 path.join(__dirname, 'out', 'fixture.epub');
 
 // 1x1 png
@@ -45,6 +54,16 @@ const chapters = [
         },
         styleFileName: 'style0.css',
         styleFileContent: '.a1 {color:rgb(0, 0, 0);font-size:12px;}',
+        // Css the user wrote for this one chapter, alongside the book-wide
+        // stylesheet passed to buildEbook() below. Both are here so that
+        // EPUBCheck sees them: user-authored css is deliberately not held to the
+        // allowlist extraction uses, and this is what says that a book carrying
+        // some is still a valid book.
+        customCss: '.a1 {text-align: justify;}\n' +
+                   // and that what does escape a stylesheet is taken out before
+                   // it can contradict a manifest that claims no remote resources
+                   '.a1 {background-image: url("https://cdn.example.com/paper.png");}\n' +
+                   '@import url("https://cdn.example.com/more.css");',
         // img-3 is the chapter a version that could not type a webp left in
         // storage: an image with no resolvable media type, which cannot be
         // declared in the manifest. It and the <img> below pointing at it must
@@ -157,6 +176,18 @@ const chapters = [
             description: '',
             date: ''
         },
+        // What a user typed about this chapter in the editor, over a page that
+        // said nothing: a creator and a date that reach the package document
+        // from the panel rather than from any <head>. The name is one getFileAs()
+        // must decline to invert, so the refinement it does get is a role and
+        // nothing more.
+        metadataOverride: {
+            lang: '',
+            authors: ['أحمد الشيخ'],
+            publisher: '',
+            description: '',
+            date: '1998-05-04'
+        },
         styleFileName: 'style2.css',
         styleFileContent: '.c3 {color:rgb(0, 0, 0);}',
         // no images and no formulas: this chapter is here for direction and for
@@ -239,11 +270,32 @@ sandbox.downloadBlob = function (blob, fileName) {
     built = {blob: blob, fileName: fileName};
 };
 
-sandbox.ebookTitle = 'Fixture Book';
-vm.runInContext('_buildEbook(FIXTURE)',
-                Object.assign(sandbox, {FIXTURE: single ? chapters.slice(0, 1) : chapters}));
+let toBuild = chapters;
+if (chaptersFile) {
+    toBuild = JSON.parse(fs.readFileSync(chaptersFile, 'utf8'));
+    if (!Array.isArray(toBuild) || toBuild.length === 0) {
+        console.error('FAILED: ' + chaptersFile + ' holds no chapters');
+        process.exit(1);
+    }
+    console.log('building from ' + chaptersFile + ' (' + toBuild.length + ' chapters)');
+}
 
-// _buildEbook finishes asynchronously in generateAsync
+// The book metadata a user stated in the editor. Only the publisher: the fields
+// beside it are what the fixture chapters are here to exercise - dc:date and
+// dc:description branch on how many chapters there are, dc:language is read off
+// the pages, and dc:creator is where getFileAs() has to decide what it can
+// invert. Overriding those would replace the cases with a constant. The
+// publisher is stated with characters that have to be escaped, which is the one
+// thing a stated value can do to a package that a derived one cannot.
+vm.runInContext('buildEbook(FIXTURE, {title: "Fixture Book", css: BOOK_CSS, metadata: BOOK_META})',
+                Object.assign(sandbox, {
+                    FIXTURE: single ? toBuild.slice(0, 1) : toBuild,
+                    BOOK_CSS: 'body {\n    font-family: serif;\n    line-height: 1.5;\n}\n' +
+                              'blockquote {\n    font-style: italic;\n}\n',
+                    BOOK_META: {publisher: 'A & B Books <Ltd>'}
+                }));
+
+// buildEbook finishes asynchronously in generateAsync
 const deadline = Date.now() + 30000;
 (function wait() {
     if (built) {
@@ -255,7 +307,7 @@ const deadline = Date.now() + 30000;
         return;
     }
     if (Date.now() > deadline) {
-        console.error('FAILED: _buildEbook never produced a file');
+        console.error('FAILED: buildEbook never produced a file');
         process.exit(1);
     }
     setTimeout(wait, 50);

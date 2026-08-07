@@ -1,0 +1,233 @@
+<!doctype html>
+<html>
+<head>
+<link rel="stylesheet" href="../../web-extension/chapterEditor.css">
+</head>
+<body>
+<script>
+// A 1x1 png, so the data url the preview builds is one a browser would actually
+// decode rather than a placeholder string that only looks like one.
+var PNG_1X1 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+// Chapters as the extraction pipeline buffers them: content already sanitized,
+// images as base64 beside it, one stylesheet per chapter.
+var FIXTURE_PAGES = [
+  {
+    title: 'Chapter One',
+    url: 'c1.xhtml',
+    // in order: an image the archive has, one whose bytes never arrived, one
+    // that was never in the archive to begin with, and a heading that does not
+    // repeat the chapter title
+    content: '<p>one</p>' +
+             '<img src="../images/img-1.png" alt="kept" />' +
+             '<img src="../images/img-gone.png" alt="dangling" />' +
+             '<img src="https://example.com/remote.png" alt="remote" />' +
+             '<h2>A section</h2>',
+    images: [
+      {filename: 'img-1.png', data: PNG_1X1},
+      // no media type can be declared for this one, so the build drops it
+      {filename: 'img-untyped.bin', data: PNG_1X1}
+    ],
+    styleFileName: 'style0.css',
+    styleFileContent: '.sae-one{color:rgb(1, 2, 3)}',
+    metadata: {lang: 'fr'}
+  },
+  {
+    // opens with a heading naming the chapter, so the build adds no <h1> of
+    // its own and neither should the preview
+    title: 'Chapter Two',
+    url: 'c2.xhtml',
+    content: '<h1>Chapter Two</h1><p>two</p>',
+    images: [],
+    styleFileName: 'style1.css',
+    styleFileContent: ''
+  }
+];
+
+var closedTab = false;
+window.close = function(){ closedTab = true; };
+
+window.chrome = {
+  runtime: {
+    onMessage: {addListener: function(){}},
+    lastError: null,
+    getURL: function(p){ return 'chrome-extension://fake/' + p; },
+    sendMessage: function(msg, cb) {
+      var reply = {};
+      if (msg.type === 'get') reply = {allPages: FIXTURE_PAGES};
+      if (msg.type === 'get title') reply = {title: 'My Book'};
+      if (msg.type === 'get uuid') reply = {uuid: 'fixture-uuid'};
+      if (cb) setTimeout(function(){ cb(reply); }, 0);
+    }
+  },
+  i18n: {getMessage: function(k){ return k; }},
+  tabs: {query: function(q, cb){ cb([{id: 1, url: 'https://example.com'}]); },
+         create: function(){}, update: function(){}},
+  commands: {getAll: function(cb){ cb([]); }}
+};
+
+var errors = [];
+window.addEventListener('error', function(e){ errors.push(e.message); });
+</script>
+
+<!-- the script set chapters.html loads, in the same order -->
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/libs/jszip.js"></script>
+<script src="../../web-extension/sanitizeHtml.js"></script>
+<script src="../../web-extension/saveEbook.js"></script>
+<script src="../../web-extension/chapterPreview.js"></script>
+<script src="../../web-extension/chapterContentEditor.js"></script>
+<script src="../../web-extension/chapterEditor.js"></script>
+
+<script>
+function report(name, ok, detail) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' -- ' + detail : '');
+  document.getElementById('results').appendChild(li);
+}
+
+function parsePreview(html) {
+  return new DOMParser().parseFromString(html, 'text/html');
+}
+
+setTimeout(function () {
+  var out = document.createElement('ul');
+  out.id = 'results';
+  document.body.appendChild(out);
+
+  report('scripts ran without throwing', errors.length === 0, errors.join(' | '));
+
+  // ---- the document the preview renders -------------------------------------
+  var html = buildChapterPreviewDocument(FIXTURE_PAGES[0], {bookCss: 'body{margin:2em}'});
+  var doc = parsePreview(html);
+  var imgs = doc.querySelectorAll('img');
+
+  report('archive images become data urls',
+         imgs.length > 0 && imgs[0].getAttribute('src') ===
+             'data:image/png;base64,' + PNG_1X1,
+         imgs.length ? imgs[0].getAttribute('src').substring(0, 40) : 'no images');
+  report('nothing is left pointing into the archive',
+         html.indexOf('images/img-1.png') < 0 && doc.querySelectorAll('img[src^="../"]').length === 0);
+  report('a reference with no bytes behind it is dropped, as in the build',
+         html.indexOf('img-gone.png') < 0);
+  // it is not the archive's to resolve, so the preview leaves it to be fetched
+  report('a remote image is left as it stands',
+         doc.querySelectorAll('img[src="https://example.com/remote.png"]').length === 1);
+  report('the alt text survives the rewrite',
+         imgs.length > 0 && imgs[0].getAttribute('alt') === 'kept');
+
+  var styles = doc.querySelectorAll('style');
+  report('both stylesheets are inlined, book css first',
+         styles.length === 2 &&
+         styles[0].textContent === 'body{margin:2em}' &&
+         styles[1].textContent === '.sae-one{color:rgb(1, 2, 3)}',
+         styles.length + ' style elements');
+
+  report('the chapter language reaches the preview',
+         doc.documentElement.getAttribute('lang') === 'fr',
+         String(doc.documentElement.getAttribute('lang')));
+
+  // the same body the build writes: heading added because the chapter has none
+  // naming itself, wrapped in the chapter section
+  report('the title becomes a heading when the chapter has none',
+         (doc.querySelector('h1') || {}).textContent === 'Chapter One');
+  report('the chapter section is the one the build writes',
+         doc.querySelectorAll('section[role="doc-chapter"]').length === 1);
+  report('nothing executable is in the preview document',
+         doc.querySelectorAll('script').length === 0 && html.indexOf('javascript:') < 0);
+
+  var second = parsePreview(buildChapterPreviewDocument(FIXTURE_PAGES[1], {bookCss: ''}));
+  report('a chapter that names itself is not given a second heading',
+         second.querySelectorAll('h1').length === 1,
+         second.querySelectorAll('h1').length + ' h1 elements');
+
+  // css is a file in the archive, where nothing can end it early; inlined, a
+  // "</style" in it would close the element and print the rest as markup
+  var hostile = parsePreview(buildChapterPreviewDocument(
+      FIXTURE_PAGES[1], {bookCss: 'p{color:red}</style><b id="escaped">x</b>'}));
+  report('css cannot break out of the style element it is inlined into',
+         hostile.querySelectorAll('#escaped').length === 0);
+
+  // ---- the panel it is rendered in ------------------------------------------
+  var previewButton = document.getElementById('li0').getElementsByTagName('button')[0];
+  var panel = document.getElementById('chapterEditor-previewPanel');
+  report('the preview panel starts closed', panel.style.display === 'none');
+
+  // an unsaved rename is what the chapter heading has to show
+  document.getElementById('text0').value = 'Renamed One';
+  previewButton.click();
+
+  var frame = document.getElementById('chapterEditor-previewFrame');
+  report('previewing renders a frame instead of alerting', !!frame);
+  report('the panel is open', panel.style.display === 'block');
+  // allow-scripts is the flag that matters and it is not there: the content is
+  // script-free by construction and the sandbox is what keeps it that way if it
+  // stops being. allow-same-origin grants the content nothing - nothing in it
+  // can run - and is what lets the editor reach into the document.
+  report('the frame is sandboxed, and not for scripts',
+         !!frame && frame.getAttribute('sandbox') === 'allow-same-origin',
+         frame ? '"' + frame.getAttribute('sandbox') + '"' : 'no frame');
+  report('the frame is fed by srcdoc, not a url',
+         !!frame && !frame.getAttribute('src') && frame.srcdoc.indexOf('<!DOCTYPE html>') === 0);
+  report('the preview shows the rename that has not been saved yet',
+         !!frame && frame.srcdoc.indexOf('<h1>Renamed One</h1>') > -1);
+  report('the images are decoded into this frame',
+         !!frame && frame.srcdoc.indexOf('data:image/png;base64,') > -1);
+
+  // one chapter at a time: the frame holding the previous chapter's decoded
+  // images goes before the next one is built
+  document.getElementById('li1').getElementsByTagName('button')[0].click();
+  var frames = document.getElementsByTagName('iframe');
+  report('only one chapter is rendered at a time', frames.length === 1,
+         frames.length + ' frames');
+  report('the second chapter replaced the first',
+         frames.length === 1 && frames[0].srcdoc.indexOf('two') > -1);
+
+  // escape belongs to the preview while it is open - it used to close the tab
+  var escapeKey = new KeyboardEvent('keydown', {keyCode: 27, which: 27});
+  document.onkeydown(escapeKey);
+  report('escape closes the preview',
+         document.getElementById('chapterEditor-previewPanel').style.display === 'none');
+  report('escape did not close the tab behind it', closedTab === false);
+  report('the closed panel holds no frame', document.getElementsByTagName('iframe').length === 0);
+
+  // ...and once it is closed, escape means what it meant before
+  document.onkeydown(escapeKey);
+  report('escape closes the editor once the preview is gone', closedTab === true);
+
+  // ---- and it renders ---------------------------------------------------------
+  //
+  // Everything above reads the document as a string. This one loads it, which is
+  // the only way to know that the data urls decode and the inlined css applies -
+  // the whole point of the preview. Not sandboxed, only because a sandboxed
+  // frame has an opaque origin and nothing here could read into it; the frame
+  // the editor builds is the sandboxed one, and it is checked above.
+  var probe = document.createElement('iframe');
+  probe.srcdoc = buildChapterPreviewDocument({
+    title: 'Rendered',
+    url: 'r.xhtml',
+    content: '<p class="sae-one">text</p><img src="../images/img-1.png" alt="kept" />',
+    images: [{filename: 'img-1.png', data: PNG_1X1}],
+    styleFileName: 'style0.css',
+    styleFileContent: '.sae-one{color:rgb(1, 2, 3)}'
+  }, {bookCss: 'p{margin:7px}'});
+  probe.onload = function () {
+    var inner = probe.contentDocument;
+    var image = inner.querySelector('img');
+    var paragraph = inner.querySelector('.sae-one');
+    report('the image decodes in the frame',
+           image.complete && image.naturalWidth === 1,
+           'naturalWidth=' + image.naturalWidth);
+    report('the chapter stylesheet applies',
+           inner.defaultView.getComputedStyle(paragraph).color === 'rgb(1, 2, 3)',
+           inner.defaultView.getComputedStyle(paragraph).color);
+    report('the book stylesheet applies too',
+           inner.defaultView.getComputedStyle(paragraph).marginTop === '7px',
+           inner.defaultView.getComputedStyle(paragraph).marginTop);
+    document.title = 'DONE';
+  };
+  document.body.appendChild(probe);
+}, 300);
+</script>
+</body>
+</html>

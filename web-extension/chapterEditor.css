@@ -38,6 +38,159 @@ ul.chapterEditor-chapters-list li.placeholder {
     font-family: sans-serif;
     width: 85%;
 }
+/* The book-wide stylesheet, folded away until it is wanted: most books never
+   have one, and an open textarea here would push the chapter list off screen. */
+#chapterEditor-bookCssHolder {
+    background-color: #f5f5f5;
+    padding: 8px 20px;
+    margin-bottom: 10px;
+}
+#chapterEditor-bookCssToggle {
+    font-weight: bold;
+    font-size: 15px;
+    padding: 3px 5px;
+    margin: 0;
+}
+#chapterEditor-bookCssHint {
+    font-size: 12px;
+    font-family: sans-serif;
+    color: #666;
+    margin-left: 10px;
+}
+#chapterEditor-bookCss {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 8px;
+    padding: 8px;
+    height: 140px;
+    /* css is written in columns; a proportional font makes a rule harder to
+       read than the terminal it would be written in */
+    font-family: monospace;
+    font-size: 13px;
+    border: solid 1px #ccc;
+    resize: vertical;
+}
+
+/* What the book says about itself. Folded away beside the stylesheet, for the
+   same reason: most books need none of it, and five empty boxes here would push
+   the chapter list off the first screen. */
+#chapterEditor-bookMetaHolder {
+    background-color: #f5f5f5;
+    padding: 8px 20px;
+    margin-bottom: 10px;
+}
+#chapterEditor-bookMetaToggle {
+    font-weight: bold;
+    font-size: 15px;
+    padding: 3px 5px;
+    margin: 0;
+}
+#chapterEditor-bookMetaHint {
+    font-size: 12px;
+    font-family: sans-serif;
+    color: #666;
+    margin-left: 10px;
+}
+
+/* The same fields for one chapter, inside the preview panel - written about a
+   chapter you are looking at, which a row in a list is not. */
+#chapterEditor-chapterMetaHolder {
+    padding: 0 20px 5px 20px;
+    border-bottom: solid 1px #eee;
+}
+#chapterEditor-chapterMetaHint {
+    font-size: 12px;
+    font-family: sans-serif;
+    color: #666;
+    padding: 5px 0;
+}
+
+/* One label beside one field, per row. The label column is fixed so the fields
+   line up in a column of their own, which is what makes five of them readable
+   as one form rather than as five unrelated boxes. */
+.chapterEditor-metaFields {
+    margin-top: 8px;
+}
+.chapterEditor-metaRow {
+    display: flex;
+    align-items: baseline;
+    margin-bottom: 6px;
+}
+.chapterEditor-metaLabel {
+    flex: 0 0 130px;
+    font-family: sans-serif;
+    font-size: 13px;
+    font-weight: bold;
+    padding-top: 4px;
+}
+.chapterEditor-metaValue {
+    flex: 1 1 auto;
+    /* a flex item will not shrink below the width of its content otherwise, and
+       a long placeholder would push the row past the panel */
+    min-width: 0;
+}
+.chapterEditor-metaInput {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 5px;
+    font-family: sans-serif;
+    font-size: 13px;
+    border: solid 1px #ccc;
+    resize: vertical;
+}
+/* the placeholder is the value the build would use, so it has to read as a
+   value rather than as an instruction */
+.chapterEditor-metaInput::placeholder {
+    color: #999;
+    font-style: italic;
+}
+/* Typed, but not something the build can use. The text stays where it is - it
+   is what the user wrote - and the box says it will be ignored rather than
+   silently dropping it. */
+.chapterEditor-metaInput.chapterEditor-metaInvalid {
+    border-color: #c00;
+}
+.chapterEditor-metaNote,
+.chapterEditor-metaWarning {
+    display: inline-block;
+    font-family: sans-serif;
+    font-size: 11px;
+    padding-top: 2px;
+}
+.chapterEditor-metaNote {
+    color: #888;
+    margin-right: 8px;
+}
+.chapterEditor-metaWarning {
+    color: #c00;
+}
+
+/* The same box for one chapter, inside the preview panel - the only place it can
+   be written, because it is written against what that chapter looks like. */
+#chapterEditor-chapterCssHolder {
+    padding: 0 20px 5px 20px;
+    border-bottom: solid 1px #eee;
+}
+#chapterEditor-chapterCssHint {
+    font-size: 12px;
+    font-family: sans-serif;
+    color: #666;
+    padding: 5px 0;
+}
+#chapterEditor-chapterCss {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px;
+    height: 110px;
+    font-family: monospace;
+    font-size: 13px;
+    border: solid 1px #ccc;
+    resize: vertical;
+}
+
 ul, ul.chapterEditor-chapters-list {
     width: 100%;
     display: block;
@@ -169,6 +322,108 @@ ul, ul.chapterEditor-chapters-list {
 }
 .chapterEditor-footer-button.chapterEditor-cancel-button {
     /*background-color: black;*/
+}
+
+/* The chapter preview, which covers the editor rather than sitting in it: the
+   chapter needs the width, and only one is ever rendered at a time. */
+#chapterEditor-previewPanel {
+    position: fixed;
+    z-index: 3;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0, 0, 0, 0.5);
+}
+#chapterEditor-previewContent {
+    background-color: #fff;
+    width: 70%;
+    height: 90%;
+    margin: 2% auto;
+    display: flex;
+    flex-direction: column;
+}
+#chapterEditor-previewHeader {
+    display: block;
+    overflow: hidden;
+    padding: 15px 20px 0 20px;
+}
+#chapterEditor-previewTitle {
+    font-size: 18px;
+    font-weight: bold;
+    font-family: sans-serif;
+}
+#chapterEditor-previewNote {
+    padding: 5px 20px 0 20px;
+    font-size: 12px;
+    font-family: sans-serif;
+    color: #666;
+}
+
+/* The editing toolbar. The modes are exclusive and the active one is stated
+   rather than implied, because which one is on decides what a click in the
+   frame below does. */
+#chapterEditor-previewToolbar {
+    padding: 5px 20px;
+    border-bottom: solid 1px #eee;
+    display: block;
+    overflow: hidden;
+}
+.chapterEditor-toolbar-group {
+    display: inline;
+    margin-right: 15px;
+}
+.chapterEditor-toolbar-button {
+    border: solid 1px #ddd;
+    border-radius: 3px;
+    margin: 0 3px;
+}
+.chapterEditor-toolbar-button:disabled {
+    color: #aaa;
+    border-color: #eee;
+    cursor: default;
+}
+.chapterEditor-toolbar-button:disabled:hover {
+    background-color: rgba(0, 0, 0, 0);
+    color: #aaa;
+}
+.chapterEditor-toolbar-button.chapterEditor-mode-active {
+    background-color: #000;
+    color: #fff;
+    border-color: #000;
+}
+.chapterEditor-toolbar-button.chapterEditor-toolbar-save {
+    background-color: yellow;
+}
+.chapterEditor-toolbar-button.chapterEditor-toolbar-save:disabled {
+    background-color: rgba(0, 0, 0, 0);
+}
+#chapterEditor-previewHint {
+    padding: 5px 20px 10px 20px;
+    font-size: 12px;
+    font-family: monospace;
+    color: #333;
+    /* the hint appears and disappears with the mode; without a reserved line the
+       frame below it would jump every time it changed */
+    min-height: 16px;
+}
+#chapterEditor-previewBody {
+    flex: 1;
+    /* a flex item refuses to shrink below its content without this, and the
+       frame would grow the panel past the bottom of the window */
+    min-height: 0;
+    padding: 0 20px 20px 20px;
+}
+#chapterEditor-previewFrame {
+    width: 100%;
+    height: 100%;
+    border: solid 1px #ddd;
+    background-color: #fff;
+}
+#chapterEditor-previewEmpty {
+    font-family: sans-serif;
+    color: #666;
 }
 
 @media (max-width: 1700px) {

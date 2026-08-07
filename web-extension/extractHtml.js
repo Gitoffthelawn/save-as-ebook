@@ -13,82 +13,11 @@ var extractedImages = [];
 // in every list row - would otherwise download, store and index it once per
 // <img>, at full size each time.
 var imageFileNames = new Map();
-var MATHML_NS = 'http://www.w3.org/1998/Math/MathML';
 
-// MathML Core is what every WebKit and Chromium reading system implements -
-// Apple Books, Thorium, Kobo, anything built on either engine - and it dropped a
-// large part of what MathML 3 allowed. Everything Core removed is deliberately
-// missing from this list and rewritten by normalizeMathMl() instead, because
-// passing one of them through means a reader draws nothing where the element
-// was:
-//
-//   mfenced      expanded into the mrow of <mo> fences the MathML 3 spec defines
-//                it to be equivalent to. A Core reader lays out an mfenced's
-//                children with no brackets at all, so "f(x)" comes out as "fx" -
-//                and older MathJax output is full of it.
-//   mlabeledtr   renamed to <mtr>, keeping the label as its first cell.
-//                Unwrapping it would put <mtd>s straight into the <mtable>.
-//   menclose     unwrapped: the box or strikethrough it draws is lost either
-//                way, and its content is the part worth keeping.
-//   mstack, msgroup, mlongdiv
-//                unwrapped. These lay digits out in a grid for long division;
-//                without the layout the digits are all that is left, but they
-//                are at least still in reading order.
-//   mscarries, mscarry
-//                dropped with their content - a carried digit annotates a
-//                position in that grid, and outside it it is a stray number in
-//                the middle of another number.
-//
-// mprescripts and none are the other direction: both are required by
-// mmultiscripts and neither was ever allowed, so a prescripted symbol lost the
-// marker saying where its prescripts begin.
-var mathMLTags = [
-    'math', 'maction', 'merror', 'mfrac', 'mglyph', 'mi', 'mmultiscripts', 'mn', 'mo',
-    'mover', 'mpadded', 'mphantom', 'mprescripts', 'mroot', 'mrow', 'ms', 'mspace',
-    'msqrt', 'mstyle', 'msub', 'msup', 'msubsup', 'mtable', 'mtd', 'mtext', 'mtr',
-    'munder', 'munderover', 'none', 'semantics'
-];
-// blockquote was missing rather than excluded, and it is not a tag whose absence
-// shows up as a gap: it is not in strippedContentTags either, so a quotation was
-// unwrapped - the tag went, the words stayed - and ran into the paragraph before
-// it with nothing to say where the quote started or ended.
-var allowedTags = [
-    'address', 'article', 'aside', 'blockquote', 'footer', 'header', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-    'hgroup', 'nav', 'section', 'dd', 'div', 'dl', 'dt', 'figcaption', 'figure', 'hr', 'li',
-    'main', 'ol', 'p', 'pre', 'ul', 'a', 'abbr', 'b', 'bdi', 'bdo', 'br', 'cite', 'code', 'data',
-    'dfn', 'em', 'i', 'img', 'kbd', 'mark', 'q', 'rb', 'rp', 'rt', 'rtc', 'ruby', 's', 'samp', 'small', 'span',
-    'strong', 'sub', 'sup', 'time', 'u', 'var', 'wbr', 'del', 'ins', 'caption', 'col', 'colgroup',
-    'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr'
-    // TODO ?
-    // ,'form', 'button'
+// The tag allowlists, the attribute filters and parseHTML() itself live in
+// sanitizeHtml.js, which this file requires: the chapter editor writes content
+// through the same sanitizer, and it cannot load a content script.
 
-    // TODO svg support ?
-    // , 'svg', 'g', 'path', 'line', 'circle', 'text'
-].concat(mathMLTags);
-// const svgTags = ['svg', 'g', 'path', 'line', 'circle', 'text']
-// Allowed tags that have no content and must be written self-closed, otherwise
-// the generated page is not well formed XML
-var voidTags = ['br', 'col', 'hr', 'img', 'wbr'];
-// Tags that are dropped together with everything inside them. Any other tag
-// that is not in allowedTags is unwrapped instead - the tag goes, its text stays.
-var strippedContentTags = [
-    'script', 'style', 'noscript', 'template', 'iframe', 'object', 'embed', 'applet',
-    'head', 'title', 'meta', 'link', 'base',
-    'textarea', 'select', 'option', 'optgroup', 'input',
-    'audio', 'video', 'canvas', 'svg', 'map', 'area',
-    // <semantics> keeps its presentation MathML and loses its annotations. An
-    // annotation is an alternative encoding of the same formula - almost always
-    // the TeX it was typeset from - and a conforming reader renders only the
-    // first child of <semantics>, so it is never meant to be seen. But
-    // <annotation> was in neither list, so it was unwrapped instead and its raw
-    // TeX printed as visible text right beside the rendered formula. That is the
-    // single most visible MathML bug on a KaTeX page.
-    //
-    // The TeX itself is not thrown away: normalizeMathMl() lifts it into the
-    // <math alttext> first, where it is a fallback rather than a duplicate.
-    'annotation', 'annotation-xml',
-    'mscarries', 'mscarry'
-];
 // Extraction runs in three phases, and the split matters:
 //
 //   read  - walk the LIVE dom, measure and compute everything that only exists
@@ -514,6 +443,105 @@ function clearLiveMarks(state) {
     state.markedElements = [];
 }
 
+///// Reader mode - an optional step between the clone and the write phase
+
+// Applies to the clone the verdicts that change the shape of the tree, in the
+// same precedence applyReadState() uses. Only reader mode needs this: it is the
+// write phase running early, on the nodes Readability is about to score.
+//
+// It has to happen first because every element the read phase promised to
+// replace scores badly on its own. A rendered MathJax formula is an
+// <mjx-container> holding an svg and no text, a chart is a <canvas> holding
+// nothing at all, and Readability deletes an <iframe> outright unless it looks
+// like a video. Substituting them first means what gets scored is the content
+// they stand for - a <math>, an <img>, the frame's own markup - instead of an
+// empty wrapper.
+//
+// A substituted element takes its marker with it, and a hidden one is gone, so
+// applyReadState() finds nothing here to apply a second time.
+function applyStructuralMarks(cloneRoot, state) {
+    cloneRoot.querySelectorAll('[' + SAE_MARK_ATTR + ']').forEach(function (elem) {
+        let mark = state.marks.get(elem.getAttribute(SAE_MARK_ATTR));
+        if (!mark) {
+            return;
+        }
+        if (mark.hidden) {
+            elem.remove();
+            return;
+        }
+        if (mark.replaceWithHtml) {
+            elem.removeAttribute(SAE_MARK_ATTR);
+            replaceElementWithHTML(elem, mark.replaceWithHtml);
+        }
+    });
+}
+
+// Distills the page down to its article, the way Firefox's Reader View does.
+// Returns the article's root element, or null when there was nothing to find.
+//
+// Null is rarer than it sounds, and that is the useful part: when the best
+// candidate comes out under Readability's character threshold - a forum thread,
+// a search results page, an api reference, anything that is not prose - it
+// retries with its heuristics progressively disabled and finally returns the
+// longest attempt, which on such a page is close to the whole body. So the
+// failure mode of pointing reader mode at the wrong page is a save that looks
+// like a normal one, not a gutted chapter. Only a page it can find no text in at
+// all comes back null.
+//
+// The marks are still on the live page when this runs, so it must be called
+// before clearLiveMarks(), exactly like the plain clone it stands in for.
+function extractReadableContent(state) {
+    // the library is bundled, so this only fails if the injection did
+    if (typeof Readability === 'undefined') {
+        console.log('Error: Readability is not available');
+        return null;
+    }
+    try {
+        // Readability rewrites, unwraps and deletes as it scores, so it must only
+        // ever see a clone. Handing it the live document would reintroduce
+        // exactly the damage the read/clone/write split was built to eliminate.
+        //
+        // The whole document is cloned rather than <body> alone because the
+        // constructor wants a Document: it reads <head> for the metadata and
+        // resolves the article's urls against the document's base.
+        let docClone = document.cloneNode(true);
+
+        // Every relative url in the article is resolved against that base, and an
+        // image whose src resolved against the wrong origin is one that never
+        // downloads. A cloned document is specified to keep the original's url,
+        // but stating the base outright costs one element and does not depend on
+        // that. A page with a <base> of its own already answers correctly.
+        let head = docClone.head || docClone.documentElement;
+        if (head && !docClone.querySelector('base[href]')) {
+            let base = docClone.createElement('base');
+            base.setAttribute('href', document.baseURI);
+            head.insertBefore(base, head.firstChild);
+        }
+
+        applyStructuralMarks(docClone, state);
+
+        let article = new Readability(docClone, {
+            // Without this parse() hands back a string, which would have to be
+            // parsed again to reach getContent(). getContent() wants a node, and
+            // this is the node it wants.
+            serializer: (elem) => elem
+        }).parse();
+
+        if (!article || !article.content) {
+            return null;
+        }
+        // A page with a plausible-looking container and nothing in it gets an
+        // empty shell rather than the null above.
+        if (!article.content.textContent || article.content.textContent.trim() === '') {
+            return null;
+        }
+        return article.content;
+    } catch (e) {
+        console.log('Error:', e);
+        return null;
+    }
+}
+
 ///// Write phase - operates only on the cloned tree
 
 // Anything past this and the alttext is no longer a text alternative, it is a
@@ -671,167 +699,6 @@ function applyReadState(cloneRoot, state) {
     normalizeMathMl(cloneRoot);
 }
 
-// MathML carries its meaning in its attributes at least as much as in its tags.
-// display="block" alone is the difference between a centred display equation and
-// something jammed into the middle of a sentence; stretchy and largeop size the
-// brackets and the integral signs; columnalign is what makes a matrix line up;
-// linethickness="0" is how a binomial coefficient is written. Only alttext used
-// to survive, so all of that was lost on every formula.
-//
-// The vocabulary is allowed wholesale rather than enumerated, which is the
-// opposite of how the HTML attributes above are handled and deliberately so:
-// MathML's is a closed vocabulary defined by a spec, an attribute this extension
-// has not heard of is far more likely to be one MathML has than one an attacker
-// invented, and a list of thirty names would go out of date silently. What is
-// excluded is what is dangerous, or what would break the file:
-//
-//   on*             event handlers
-//   href, src       MathML's own link and image attributes. href can hold a
-//                   javascript: url, and src would point at a file that is not
-//                   in the archive.
-//   style, class    the chapter stylesheet is generated from computed styles,
-//                   never copied from the page
-//   id, data-*      an html id is carried over - it is what a link inside the
-//                   page points at - but nothing ever links into a formula, and
-//                   an id here would only be one more name the ids minted while
-//                   the chapter is written have to avoid colliding with
-//   anything with a colon, or that is not a plain lowercase name. An xmlns: or
-//   xlink: attribute needs a namespace declaration the chapter documents do not
-//   make, and an undeclared prefix does not make one formula wrong, it makes the
-//   whole xhtml file unparseable.
-var deniedMathMLAttributes = ['href', 'src', 'style', 'class', 'id', 'xmlns'];
-
-function isAllowedMathMLAttribute(name) {
-    return /^[a-z][a-z0-9-]*$/.test(name) &&
-           name.indexOf('on') !== 0 &&
-           name.indexOf('data-') !== 0 &&
-           deniedMathMLAttributes.indexOf(name) < 0;
-}
-
-// HTML attributes are enumerated, where MathML's are allowed wholesale. The
-// vocabularies differ in the way that matters: HTML's is huge, mostly about
-// behaviour rather than meaning, and full of names that either do nothing in a
-// reader (onclick, target, srcset) or actively break the file (style and class,
-// which the generated stylesheet owns).
-//
-// What is here is the subset that changes what the chapter says. Everything on
-// this list was previously dropped, and dropping it was not a loss of polish:
-//
-//   colspan, rowspan   a merged cell renders as an unmerged one, so every row
-//                      after it is short and the columns stop lining up. This
-//                      is a wrong table, not a less navigable one.
-//   span               same, for a column group
-//   start, reversed    a list that should read 7, 8, 9 renders 1, 2, 3
-//   value              same, for one item in it
-//   scope              the only cheap way to say which cells a header heads
-//   lang               a chapter is tagged with one language; a quotation in
-//                      another is what a nested lang is for, and a speech
-//                      synthesiser reads it in the wrong voice without it
-//   dir                bdo is on the allowed tag list and does nothing at all
-//                      without dir, so an RTL run inside an LTR paragraph came
-//                      out reversed
-//   datetime, value    what <time> and <data> are for - without them both tags
-//                      are a span
-//   cite, title        the source of a quotation, the expansion of an
-//                      abbreviation
-//
-// Deliberately still absent: the ARIA attributes and headers. role has to be
-// valid against the vocabulary epubcheck knows or the file fails to validate,
-// and a page's roles are written for a browser, not a reading system; headers
-// and aria-labelledby name other ids, and an id whose element extraction
-// dropped turns a helpful attribute into an unresolved reference, which is an
-// error rather than a missing nicety.
-//
-// A value that does not check out is dropped rather than corrected. The chapter
-// is XHTML read by a validator: colspan="two" is not a small blemish there.
-function attrEnum(allowed) {
-    return function(value) {
-        var normalized = value.trim().toLowerCase();
-        return allowed.indexOf(normalized) > -1 ? normalized : '';
-    };
-}
-
-// Bounded on purpose: colspan="100000" is a page bug or an attack on the
-// reader's layout engine, never a table.
-function attrCount(min) {
-    return function(value) {
-        var normalized = value.trim();
-        if (!/^[0-9]{1,4}$/.test(normalized)) {
-            return '';
-        }
-        var number = parseInt(normalized, 10);
-        return number >= min ? String(number) : '';
-    };
-}
-
-// <ol start> and <li value> are the two that may be negative or zero
-function attrInteger(value) {
-    var normalized = value.trim();
-    return /^-?[0-9]{1,9}$/.test(normalized) ? String(parseInt(normalized, 10)) : '';
-}
-
-function attrText(value) {
-    return value.replace(/\s+/g, ' ').trim();
-}
-
-// datetime is a format, not free text, and epubcheck validates it: letting a
-// page's junk through would turn a tag that carries a date into an error in the
-// file. The subset here - a year, a month, a date, any of them with a time and
-// an offset, or a bare time - is what pages actually write. The exotic
-// remainder of the html grammar (weeks, durations, yearless dates) is dropped
-// rather than guessed at, which costs the attribute and keeps the element.
-var DATETIME_REGEX = new RegExp(
-    '^(' +
-        '[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?' +
-        '([T ][0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]{1,3})?)?' +
-            '(Z|[+-][0-9]{2}:?[0-9]{2})?)?' +
-    '|' +
-        '[0-9]{2}:[0-9]{2}(:[0-9]{2}(\\.[0-9]{1,3})?)?' +
-    ')$');
-
-function attrDateTime(value) {
-    var normalized = value.trim();
-    return DATETIME_REGEX.test(normalized) ? normalized : '';
-}
-
-// A url attribute that is not the one being followed for content - <blockquote
-// cite> and <del cite> point at a source, and nothing in the archive depends on
-// them resolving, but they are still urls a reader may open.
-function attrUrl(value) {
-    var normalized = value.trim();
-    if (normalized === '' || !isSafeLinkUrl(normalized)) {
-        return '';
-    }
-    return getHref(normalized);
-}
-
-// Valid on every element, so they are checked before the per-tag table
-var globalHtmlAttributes = {
-    lang: normalizeLanguageTag,
-    dir: attrEnum(['ltr', 'rtl', 'auto'])
-};
-
-var htmlAttributes = {
-    a: {},
-    abbr: {title: attrText},
-    blockquote: {cite: attrUrl},
-    q: {cite: attrUrl},
-    del: {cite: attrUrl, datetime: attrDateTime},
-    ins: {cite: attrUrl, datetime: attrDateTime},
-    time: {datetime: attrDateTime},
-    data: {value: attrText},
-    // A boolean attribute is true because it is there, whatever it says - and
-    // XHTML has no bare form, so it is written back out in the long one
-    ol: {start: attrInteger, reversed: function() { return 'reversed'; }},
-    li: {value: attrInteger},
-    col: {span: attrCount(1)},
-    colgroup: {span: attrCount(1)},
-    // rowspan="0" is legal and means "to the end of the section"; colspan="0" is
-    // not, which is why the two have different floors
-    td: {colspan: attrCount(1), rowspan: attrCount(0)},
-    th: {colspan: attrCount(1), rowspan: attrCount(0), scope: attrEnum(['row', 'col', 'rowgroup', 'colgroup'])}
-};
-
 // Ids already written into this chapter. An id is only addressable if it is
 // unique in the file it lives in, and a page that repeats one - which is invalid
 // html but common - would otherwise repeat it here too.
@@ -840,56 +707,6 @@ var htmlAttributes = {
 // selection spanning several ranges is one chapter, and the second range must
 // not hand out an id the first already used.
 var usedElementIds = new Set();
-
-// walkHtmlFragment hands over values the HTML parser has already decoded, so
-// they only need escaping - decoding here as well would turn a literal
-// "&amp;lt;" on the page into a "<" in the epub
-function attrValue(value) {
-    return escapeXMLChars(value == null ? '' : String(value));
-}
-
-// The id, the globals and whatever the tag itself allows. Attributes the caller
-// has already written - src, alt, href, class and the img dimensions - are not
-// in any of these tables and cannot be duplicated from here.
-function extraHtmlAttributes(tag, attrs) {
-    let result = '';
-    let perTag = htmlAttributes[tag] || {};
-    // A page is free to write the same attribute twice. The parser hands both
-    // over, and writing both would make the chapter unparseable.
-    let written = new Set();
-
-    for (let i = 0; i < attrs.length; i++) {
-        let name = String(attrs[i].name).toLowerCase();
-        let rawValue = attrs[i].value == null ? '' : String(attrs[i].value);
-
-        if (written.has(name)) {
-            continue;
-        }
-
-        if (name === 'id') {
-            if (!isUsableId(rawValue) || usedElementIds.has(rawValue)) {
-                continue;
-            }
-            usedElementIds.add(rawValue);
-            written.add(name);
-            result += ' id="' + attrValue(rawValue) + '"';
-            continue;
-        }
-
-        let filter = globalHtmlAttributes[name] || perTag[name];
-        if (!filter) {
-            continue;
-        }
-        let value = filter(rawValue);
-        if (value === '') {
-            continue;
-        }
-        written.add(name);
-        result += ' ' + name + '="' + attrValue(value) + '"';
-    }
-
-    return result;
-}
 
 // Where an <a href> ends up. A link the page made to a position inside itself
 // stays a link to a position inside the chapter, and everything else is
@@ -912,6 +729,20 @@ function linkHref(rawHref) {
         return isUsableId(fragment) ? '#' + fragment : '';
     }
 
+    return getHref(value);
+}
+
+// Where a url-valued attribute that is not an <a href> ends up - <blockquote
+// cite>, <del cite>. Nothing in the archive depends on these resolving and none
+// of them addresses a position in the chapter, so unlike linkHref() a fragment
+// is absolutised with everything else. What still matters is the scheme: a
+// javascript: cite is inert in most readers, but not all, and epubcheck rejects
+// it outright.
+function citeUrl(rawValue) {
+    let value = rawValue == null ? '' : String(rawValue).trim();
+    if (value === '' || !isSafeLinkUrl(value)) {
+        return '';
+    }
     return getHref(value);
 }
 
@@ -941,184 +772,24 @@ function sameDocumentFragment(href) {
     }
 }
 
-// Appends to allImages / extractedImages - the caller owns resetting them, so
-// that a multi-range selection accumulates the images of every range instead of
-// each range discarding the ones collected before it.
-function parseHTML(rawContentString) {
-    let results = '';
-    let lastFragment = '';
-    // Tags written to the output that still need a closing tag. Kept here rather
-    // than trusting the input to be balanced: a page can close tags it never
-    // opened, or leave tags open, and the epub still has to be valid XML.
-    let openTags = [];
-    // Tags whose content is being dropped, innermost last
-    let skippedTags = [];
-
-    let isVoidTag = (tag) => voidTags.indexOf(tag) > -1;
-
-    let closeTagsDownTo = (index) => {
-        for (let i = openTags.length - 1; i >= index; i--) {
-            results += '</' + openTags[i] + '>';
-        }
-        openTags.length = index;
-    };
-
-    try {
-        walkHtmlFragment(rawContentString, {
-            start: function(tag, attrs, unary) {
-                if (skippedTags.length > 0) {
-                    // Inside dropped content - track nesting so that the matching
-                    // end tag, and only it, ends the skip
-                    if (!unary && !isVoidTag(tag)) {
-                        skippedTags.push(tag);
-                    }
-                    return;
-                }
-
-                if (allowedTags.indexOf(tag) < 0) {
-                    if (strippedContentTags.indexOf(tag) > -1 && !unary && !isVoidTag(tag)) {
-                        skippedTags.push(tag);
-                    }
-                    return;
-                }
-
-                let tmpAttrsTxt = '';
-
-                if (tag === 'img') {
-                    let tmpSrc = ''
-                    // null and '' are different answers: null is a source that
-                    // never said anything about this image, '' is one that
-                    // deliberately marked it decorative. Collapsing them - which
-                    // is what writing alt="" on everything did - turns every
-                    // undescribed image into a false claim that it needs no
-                    // description, and the accessibility metadata is computed
-                    // from exactly this distinction.
-                    let tmpAlt = null;
-                    for (let i = 0; i < attrs.length; i++) {
-                        if (attrs[i].name === 'src') {
-                            tmpSrc = getImageSrc(attrs[i].value)
-                            tmpAttrsTxt += ' src="' + attrValue(tmpSrc) + '"';
-                        } else if (attrs[i].name === 'alt') {
-                            tmpAlt = attrs[i].value == null ? '' : String(attrs[i].value);
-                        } else if (attrs[i].name === 'data-class') {
-                            tmpAttrsTxt += ' class="' + attrValue(attrs[i].value) + '"';
-                        } else if (attrs[i].name === 'width') {
-                            // used when converting svg to img - the result image was too big
-                            tmpAttrsTxt += ' width="' + attrValue(attrs[i].value) + '"';
-                        } else if (attrs[i].name === 'height') {
-                            // used when converting svg to img - the result image was too big
-                            tmpAttrsTxt += ' height="' + attrValue(attrs[i].value) + '"';
-                        }
-                    }
-                    if (tmpSrc === '') {
-                        // ignore imgs without source
-                        return;
-                    }
-                    if (tmpAlt !== null) {
-                        tmpAttrsTxt += ' alt="' + attrValue(tmpAlt.replace(/\s+/g, ' ').trim()) + '"';
-                    }
-                } else if (tag === 'a') {
-                    for (let i = 0; i < attrs.length; i++) {
-                        if (attrs[i].name === 'href') {
-                            let href = linkHref(attrs[i].value);
-                            if (href !== '') {
-                                tmpAttrsTxt += ' href="' + attrValue(href) + '"';
-                            }
-                        } else if (attrs[i].name === 'data-class') {
-                            tmpAttrsTxt += ' class="' + attrValue(attrs[i].value) + '"';
-                        }
-                    }
-                } else if (mathMLTags.indexOf(tag) > -1) {
-                    if (tag === 'math') {
-                        // in xhtml, MathML is only MathML because of this
-                        tmpAttrsTxt += ' xmlns="' + MATHML_NS + '"';
-                    }
-                    for (let i = 0; i < attrs.length; i++) {
-                        if (isAllowedMathMLAttribute(attrs[i].name)) {
-                            tmpAttrsTxt += ' ' + attrs[i].name + '="' + attrValue(attrs[i].value) + '"';
-                        }
-                    }
-                } else {
-                    for (let i = 0; i < attrs.length; i++) {
-                        if (attrs[i].name === 'data-class') {
-                            tmpAttrsTxt += ' class="' + attrValue(attrs[i].value) + '"';
-                        }
-                    }
-                }
-
-                // MathML has been through its own allowlist just above, and the
-                // two vocabularies do not share attributes - lang and dir mean
-                // nothing on an <mrow>, and an id there is denied on purpose.
-                if (mathMLTags.indexOf(tag) < 0) {
-                    tmpAttrsTxt += extraHtmlAttributes(tag, attrs);
-                }
-
-                // A void tag, or a tag the page self-closed ("<span/>"), never gets
-                // an end callback - close it here or the output is unbalanced
-                if (isVoidTag(tag) || unary) {
-                    lastFragment = '<' + tag + tmpAttrsTxt + '/>';
-                } else {
-                    lastFragment = '<' + tag + tmpAttrsTxt + '>';
-                    openTags.push(tag);
-                }
-
-                results += lastFragment;
-                lastFragment = '';
-            },
-            end: function(tag) {
-                if (skippedTags.length > 0) {
-                    for (let i = skippedTags.length - 1; i >= 0; i--) {
-                        if (skippedTags[i] === tag) {
-                            skippedTags.length = i;
-                            return;
-                        }
-                    }
-                    // End tag for something never opened inside the dropped content
-                    return;
-                }
-
-                if (allowedTags.indexOf(tag) < 0 || isVoidTag(tag)) {
-                    return;
-                }
-
-                for (let i = openTags.length - 1; i >= 0; i--) {
-                    if (openTags[i] === tag) {
-                        // Anything still open inside it was never closed by the page
-                        closeTagsDownTo(i);
-                        return;
-                    }
-                }
-                // End tag without a matching start tag - dropped
-            },
-            chars: function(text) {
-                if (skippedTags.length > 0) {
-                    return;
-                }
-                // already decoded by the parser - see attrValue above
-                results += escapeXMLText(text);
-            },
-            comment: function(text) {
-                // results += "<!--" + text + "-->";
-            }
-        });
-
-        // Whatever the page left open
-        closeTagsDownTo(0);
-
-        return results;
-
-    } catch (e) {
-        console.log('Error:', e);
-        // Keep the part that was parsed before the error rather than losing the
-        // whole page, but close it first so the epub stays valid
-        try {
-            closeTagsDownTo(0);
-        } catch (e2) {
-            console.log('Error:', e2);
-        }
-        return results;
-    }
-
+// How the shared sanitizer resolves what only a live page can answer: where a
+// url points, and which images are being downloaded. What these read and append
+// to - imageFileNames, allImages, usedElementIds - is job-wide rather than
+// per fragment, which is what lets a selection spanning several ranges come out
+// as one chapter with one set of images and no id handed out twice.
+//
+// The editor answers the same questions without a page - see sanitizeOptions()
+// in sanitizeHtml.js, whose defaults are exactly that.
+function extractionSanitizeOptions() {
+    return sanitizeOptions({
+        resolveImageSrc: getImageSrc,
+        resolveLinkHref: linkHref,
+        resolveUrl: citeUrl,
+        // the class attribute on a clone is still the page's own; the generated
+        // name is what applyReadState() wrote into data-class
+        classAttribute: 'data-class',
+        usedIds: usedElementIds
+    });
 }
 
 // htmlContent is already detached: either a clone of the body or the contents of
@@ -1133,7 +804,7 @@ function getContent(htmlContent, state) {
         // where a stray <td> or <tr> - what a selection inside a table produces -
         // is dropped. Parsed on its own it is parsed "in template", which keeps
         // table cells intact.
-        return '<div>' + parseHTML(tmp.innerHTML) + '</div>';
+        return '<div>' + parseHTML(tmp.innerHTML, extractionSanitizeOptions()) + '</div>';
     } catch (e) {
         console.log('Error:', e);
         // Never hand back the node itself - it ends up spliced into the xhtml page
@@ -1377,33 +1048,9 @@ function cleanName(raw) {
     return name;
 }
 
-function yearIsPlausible(year) {
-    let value = parseInt(year, 10);
-    return value >= 1400 && value <= new Date().getFullYear() + 1;
-}
-
-// dc:date must be a W3C-DTF date, and pages supply everything from "2024-03-01"
-// to "Fri, 01 Mar 2024 09:00:00 GMT".
-function normalizeDate(raw) {
-    if (!raw || typeof raw !== 'string') {
-        return '';
-    }
-    let text = raw.trim();
-    // Already well formed: keep it verbatim rather than round-tripping through
-    // Date, which would shift a local timestamp into UTC and invent a time of
-    // day for a bare date.
-    if (/^\d{4}$/.test(text) ||
-        /^\d{4}-\d{2}$/.test(text) ||
-        /^\d{4}-\d{2}-\d{2}$/.test(text) ||
-        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(text)) {
-        return yearIsPlausible(text.substring(0, 4)) ? text : '';
-    }
-    let parsed = new Date(text);
-    if (isNaN(parsed.getTime()) || !yearIsPlausible(parsed.getUTCFullYear())) {
-        return '';
-    }
-    return parsed.toISOString().replace(/\.[0-9]+Z$/, 'Z');
-}
+// normalizeDate() and normalizeLanguageTag() live in utils.js: the chapter
+// editor validates what a user types into the metadata panel by the same rules
+// that decide what survives a page's <head>, and it never loads this file.
 
 function extractLanguage() {
     let lang = normalizeLanguageTag(document.documentElement ?
@@ -1566,6 +1213,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     let result = {};
     let tmpContent = '';
     let styleFile = null;
+    let readerModeFailed = false;
 
     // Reset once per job, not once per parsed fragment: a selection spanning
     // several ranges calls getContent() for each one.
@@ -1589,7 +1237,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         // clone while the markers are still on the live elements
         let clones = [];
         if (request.type === 'extract-page') {
-            clones.push(document.body.cloneNode(true));
+            // Reader mode never reaches a selection: the user picking the nodes
+            // has already said what the content is, and Range.cloneContents()
+            // yields a fragment rather than the document Readability needs.
+            // The background only ever sets the flag for an 'extract-page'.
+            let readable = request.readerMode ? extractReadableContent(state) : null;
+            // Falling back is right - refusing to save the page because it is not
+            // an article would be worse - but doing it silently would make the
+            // checkbox look like it does nothing.
+            readerModeFailed = !!request.readerMode && !readable;
+            clones.push(readable || document.body.cloneNode(true));
         } else {
             clones = getSelectedNodes();
         }
@@ -1626,6 +1283,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             images: extractedImages,
             content: tmpGlobalContent
         };
+        // Set only when it happened. This object is stored as the chapter record,
+        // and how a chapter was extracted is not part of what a chapter is.
+        if (readerModeFailed) {
+            result.readerModeFailed = true;
+        }
         sendResponse(result);
     }).catch((e) => {
         console.log('Error:', e);

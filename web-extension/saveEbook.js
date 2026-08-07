@@ -1,8 +1,83 @@
 var cssFileName = 'ebook.css';
-var ebookTitle = null;
-// Set by buildEbookFromChapters() from storage. Left null on the one-shot
-// "save this page" path, which has no stored identity - see getBookId().
-var ebookUuid = null;
+
+// ---- the stylesheets the archive carries -------------------------------------
+//
+// Two kinds of css reach a book, and only one of them is filtered by content.
+// What extraction captures is scraped off somebody else's page, and supportedCss
+// in extractHtml.js decides which of its declarations are worth carrying. What a
+// user writes in the chapter editor is not that: it is theirs, it is meant to
+// change how the book looks, and holding it to an allowlist would only mean most
+// of what they typed silently did nothing. Nothing they can write in it makes the
+// package invalid either - css a reading system does not understand is css it
+// ignores.
+//
+// What this removes is neither of those judgements. It is the two ways a
+// stylesheet reaches outside the archive, which both kinds can do:
+//
+//   @import       pulls in another stylesheet, which for a remote address is a
+//                 network fetch from inside a file that is supposed to read
+//                 offline, and for a local one names a file the archive has no
+//                 way to contain.
+//   remote url()  a background image or a font fetched off the network. EPUB
+//                 requires a manifest item referencing a remote resource to say
+//                 so (properties="remote-resources"), and this build makes no
+//                 such claim about any file it writes - so rather than have the
+//                 claim and the content disagree, the reference goes. Captured
+//                 css hits this as well: 'list-style' serializes an absolute
+//                 url whenever the page gave its bullets a picture.
+//
+// A url() that is not remote is left alone: "../images/photo.jpg" from a chapter
+// stylesheet resolves to a picture the book really does contain, and using one as
+// a background is a reasonable thing to want. data: urls stay for the same
+// reason - they are carried in the file rather than fetched.
+
+// A url() target that leaves the archive: anything with a scheme, plus the
+// scheme-relative "//host/path" form. data: is not one of these - it is the
+// resource itself, not an address to go and get it from.
+function isRemoteCssUrl(target) {
+    var value = String(target || '').trim();
+    if (/^data:/i.test(value)) {
+        return false;
+    }
+    return /^(?:[a-z][a-z0-9+.\-]*:|\/\/)/i.test(value);
+}
+
+// An @import rule runs to the first semicolon; a quoted string inside it may
+// contain one, so strings are matched rather than scanned through. A rule left
+// unterminated at the end of the file, or at the end of the block it sits in,
+// ends there.
+var CSS_IMPORT_REGEX = /@import\b(?:[^;{}'"]|'[^']*'|"[^"]*")*(?:;|(?=\})|$)/gi;
+var CSS_URL_REGEX = /\burl\(\s*(?:"([^"]*)"|'([^']*)'|([^)"'\s]*))\s*\)/gi;
+
+// What a removed url() becomes. Dropping the token outright would leave
+// "background-image: ;", which a parser discards along with any fallback beside
+// it; 'none' is a value the properties that take a url actually accept, and
+// where it is not one the declaration is dropped by css error recovery, which is
+// the same outcome.
+var REMOVED_CSS_URL = 'none';
+
+function sanitizeStylesheet(css) {
+    return String(css == null ? '' : css)
+        .replace(CSS_IMPORT_REGEX, '')
+        .replace(CSS_URL_REGEX, function(rule, quoted, single, bare) {
+            var target = quoted !== undefined ? quoted :
+                         single !== undefined ? single : bare;
+            return isRemoteCssUrl(target) ? REMOVED_CSS_URL : rule;
+        });
+}
+
+// The stylesheet a chapter is written with: what extraction captured from the
+// page, then what the user added in the editor. In that order, so that a rule
+// the user writes wins over the scraped one it collides with - which is the
+// whole point of being able to write one.
+function chapterStyleContent(page) {
+    var captured = typeof page.styleFileContent === 'string' ? page.styleFileContent : '';
+    var authored = typeof page.customCss === 'string' ? page.customCss : '';
+    if (authored.trim() === '') {
+        return sanitizeStylesheet(captured);
+    }
+    return sanitizeStylesheet(captured === '' ? authored : captured + '\n' + authored);
+}
 
 // Compression is set per file, never globally: OCF requires 'mimetype' to be
 // the first entry and STORE-d, so readers can sniff the magic bytes.
@@ -63,7 +138,12 @@ function normalizeChapters(allPages) {
             images: Array.isArray(page.images) ? page.images : [],
             styleFileName: typeof page.styleFileName === 'string' && page.styleFileName ?
                            page.styleFileName : 'style' + index + '.css',
-            styleFileContent: typeof page.styleFileContent === 'string' ? page.styleFileContent : ''
+            styleFileContent: typeof page.styleFileContent === 'string' ? page.styleFileContent : '',
+            // kept beside the captured stylesheet rather than merged into it, so
+            // that reopening the editor shows the user what they wrote and not
+            // the page's computed styles with their rules buried at the bottom.
+            // chapterStyleContent() is where the two become one file.
+            customCss: typeof page.customCss === 'string' ? page.customCss : ''
         }));
     }).map(dropMissingImages);
 }
@@ -156,8 +236,8 @@ function getImagesIndex(allImages) {
 // so that rebuilding after an edit updates the same book in a library instead of
 // adding a second copy. A single page saved straight to disk was never stored
 // and is a new book every time, so it gets a fresh id.
-function getBookId() {
-    return 'urn:uuid:' + (ebookUuid || generateUuid());
+function getBookId(uuid) {
+    return 'urn:uuid:' + (uuid || generateUuid());
 }
 
 // dc:source, one per chapter. sourceUrl was added after baseUrl already existed;
@@ -168,26 +248,75 @@ function getSourceUrl(page) {
     return page.sourceUrl || page.baseUrl || '';
 }
 
-// Chapters buffered before the <head> read existed have no metadata at all, and
-// a chapter whose page carried none has the key but empty values.
-function getPageMetadata(page) {
-    let metadata = page.metadata || {};
+// ---- what the user said, and what the pages said -----------------------------
+//
+// Every metadata field below has three possible answers, in this order: what the
+// user typed in the chapter editor, what the page it was extracted from stated,
+// and the fallback the build has always used. An override is stored as the user
+// typed it - so that reopening the editor shows what was written - which makes
+// this the place it becomes a value the package can carry, or nothing at all.
+//
+// An empty field is not an empty value. It is the absence of an override, and
+// what it means is "use what the page said": there is deliberately no way to
+// type a blank publisher over one a page stated, because an empty box is what
+// every field starts as and it has to mean the same thing then as later.
+function trimmedString(value) {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeMetadataOverride(raw) {
+    let stated = raw && typeof raw === 'object' ? raw : {};
     return {
-        lang: normalizeLanguageTag(metadata.lang),
-        // '' or 'rtl', never 'ltr' - see extractDirection() in extractHtml.js
-        dir: metadata.dir === 'rtl' ? 'rtl' : '',
-        authors: Array.isArray(metadata.authors) ? metadata.authors : [],
-        publisher: metadata.publisher || '',
-        description: metadata.description || '',
-        date: metadata.date || ''
+        // a tag no reader could use is no better than none - see
+        // normalizeLanguageTag(), which is what filtered the pages' own
+        lang: normalizeLanguageTag(stated.lang),
+        authors: (Array.isArray(stated.authors) ? stated.authors : [])
+            .map(trimmedString).filter(function(name) { return name !== ''; }),
+        publisher: trimmedString(stated.publisher),
+        description: trimmedString(stated.description),
+        // W3C-DTF or nothing, by the same rule that accepted the pages' dates
+        date: normalizeDate(stated.date)
     };
 }
 
-// dc:language is required, so there is always an answer: the first chapter that
-// stated a usable one, else the "en" this used to hardcode. A book whose chapters
-// disagree still gets a package language - each chapter overrides it on its own
-// <html> element, which is what a reader actually uses for hyphenation.
-function getBookLanguage(allPages) {
+// A chapter's metadata: what its page stated, with what the user overrode for
+// this chapter alone on top of it. Chapters buffered before the <head> read
+// existed have no metadata at all, and a chapter whose page carried none has the
+// key but empty values.
+//
+// The override is the chapter's own record unless a caller names another, which
+// is how the editor asks what a chapter would say under an override that is
+// still being typed and has not been stored yet.
+function getPageMetadata(page, override) {
+    let metadata = page.metadata || {};
+    let stated = normalizeMetadataOverride(
+        override === undefined ? page.metadataOverride : override);
+    return {
+        lang: stated.lang || normalizeLanguageTag(metadata.lang),
+        // '' or 'rtl', never 'ltr' - see extractDirection() in extractHtml.js.
+        // Not something the editor offers: a page states which way it reads and
+        // gets it right, and the field it would sit next to in the panel would
+        // be one nobody but a bidirectional reader could answer.
+        dir: metadata.dir === 'rtl' ? 'rtl' : '',
+        authors: stated.authors.length > 0 ? stated.authors :
+                 (Array.isArray(metadata.authors) ? metadata.authors : []),
+        publisher: stated.publisher || metadata.publisher || '',
+        description: stated.description || metadata.description || '',
+        date: stated.date || metadata.date || ''
+    };
+}
+
+// dc:language is required, so there is always an answer: what the user stated
+// about the book, else the first chapter that stated a usable one, else the "en"
+// this used to hardcode. A book whose chapters disagree still gets a package
+// language - each chapter overrides it on its own <html> element, which is what
+// a reader actually uses for hyphenation, and a book-level answer does not
+// silently reach down and restate every chapter.
+function getBookLanguage(allPages, override) {
+    let stated = normalizeMetadataOverride(override).lang;
+    if (stated) {
+        return stated;
+    }
     for (let i = 0; i < allPages.length; i++) {
         let lang = getPageMetadata(allPages[i]).lang;
         if (lang) {
@@ -217,17 +346,56 @@ function dirAttribute(direction) {
     return direction === 'rtl' ? ' dir="rtl"' : '';
 }
 
-function collectDistinct(allPages, pick) {
-    let values = [];
-    allPages.forEach(function(page) {
-        let picked = pick(getPageMetadata(page));
-        (Array.isArray(picked) ? picked : [picked]).forEach(function(value) {
-            if (value && values.indexOf(value) < 0) {
-                values.push(value);
-            }
-        });
+function addDistinct(values, picked) {
+    (Array.isArray(picked) ? picked : [picked]).forEach(function(value) {
+        if (value && values.indexOf(value) < 0) {
+            values.push(value);
+        }
     });
     return values;
+}
+
+// One field gathered across every chapter - the authors of a compilation are
+// the authors of its chapters, and so are its publishers.
+//
+// An override replaces that list rather than joining it. A user who names the
+// authors of the book means those authors: merging would leave every byline the
+// chapters were scraped from standing beside the ones they wrote, and there
+// would be no way to get rid of them.
+function collectDistinct(allPages, pick, override) {
+    let stated = addDistinct([], override === undefined ? [] : override);
+    if (stated.length > 0) {
+        return stated;
+    }
+    let values = [];
+    allPages.forEach(function(page) {
+        addDistinct(values, pick(getPageMetadata(page)));
+    });
+    return values;
+}
+
+// dc:creator is a list of people, not a wall of them: a compilation of fifty
+// articles has fifty bylines, and a package listing all of them is one no
+// library shows usefully.
+var MAX_BOOK_AUTHORS = 12;
+
+// What the book would say about itself if nobody overrode anything - the values
+// the build derives from the chapters in hand. Nothing in the build calls this:
+// it is what the editor puts in the metadata boxes as their placeholders, so
+// that an empty box visibly means "this is what you get" rather than "this is
+// blank". It has to be derived by the functions the build derives it with, or
+// the boxes promise something else than what is written.
+function deriveBookMetadata(allPages) {
+    let pages = normalizeChapters(allPages);
+    return {
+        lang: getBookLanguage(pages),
+        authors: collectDistinct(pages, function(m) { return m.authors; }).slice(0, MAX_BOOK_AUTHORS),
+        publisher: collectDistinct(pages, function(m) { return m.publisher; }),
+        // one page's blurb and date describe the book; several pages' do not -
+        // see where buildEbook() decides the same thing
+        description: pages.length === 1 ? getPageMetadata(pages[0]).description : '',
+        date: pages.length === 1 ? getPageMetadata(pages[0]).date : ''
+    };
 }
 
 // Two-word organisation names ("BBC News", "Associated Press") invert into
@@ -812,29 +980,46 @@ function getExternalLinksIndex() { // TODO
     }, '');
 }
 
-function buildEbookFromChapters() {
+// Reads the whole book out of storage and builds it. For a caller that has no
+// chapters in hand - everything else passes its own array to buildEbook(), which
+// is what keeps a build from racing the storage write that preceded it.
+function buildEbookFromStorage() {
     getEbookTitle(function (title) {
-        ebookTitle = title;
-        if (!ebookTitle || ebookTitle.trim().length === 0) {
-            ebookTitle = 'eBook';
-        }
         getEbookUuid(function (uuid) {
-            ebookUuid = uuid;
-            getEbookPages(_buildEbook);
+            getBookCss(function (css) {
+                getBookMetadata(function (metadata) {
+                    getEbookPages(function (allPages) {
+                        buildEbook(allPages,
+                                   {title: title, uuid: uuid, css: css, metadata: metadata});
+                    });
+                })
+            })
         })
     })
 }
 
-// FIXME remove  - keep one  function
-function buildEbook(allPages, fromMenu=false) {
-    // the one-shot "save this page" path: nothing about it was stored, so it is
-    // a new book every time and must not inherit an id from a chapter build
-    ebookUuid = null;
-    _buildEbook(allPages, fromMenu);
-}
-
+// The one way an ebook is built - the one-shot "save this page" and the editor's
+// "generate" differ only in what they pass here. Everything that is not
+// derivable from the chapters themselves arrives in bookMeta:
+//
+//   title  what the book is called. Absent, the first chapter names it, which is
+//          the right answer for a single saved page.
+//   uuid   dc:identifier. Absent, a fresh one is minted: the one-shot path
+//          stored nothing, so it is a new book every time and must not inherit
+//          an id from a chapter build - see getBookId().
+//   css    the book-wide stylesheet, written by the user in the chapter editor.
+//          Absent, ebook.css is written empty, which is what it was for every
+//          book built before there was anywhere to type one.
+//   metadata what the user stated about the book - authors, language, publisher,
+//          description, date. Absent, or absent a field, every one of them is
+//          derived from the chapters exactly as it was before there were boxes
+//          to state them in.
+//
 // http://ebooks.stackexchange.com/questions/1183/what-is-the-minimum-required-content-for-a-valid-epub
-function _buildEbook(allPages, fromMenu=false) {
+function buildEbook(allPages, bookMeta) {
+    bookMeta = bookMeta || {};
+    var ebookTitle = typeof bookMeta.title === 'string' && bookMeta.title.trim().length > 0 ?
+                     bookMeta.title : null;
     allPages = normalizeChapters(allPages);
     if (allPages.length === 0) {
         finishJob('There are no valid chapters to save.');
@@ -845,6 +1030,7 @@ function _buildEbook(allPages, fromMenu=false) {
     console.log('Prepare Content...');
 
     var ebookFileName = 'eBook.epub';
+    var ebookName = '';
 
     if (ebookTitle) {
         // ~TODO a pre-processing function to apply escapeXMLChars to all page.titles
@@ -858,20 +1044,31 @@ function _buildEbook(allPages, fromMenu=false) {
     // One instant for the whole package: dc:date (when this file was made) and
     // dcterms:modified disagreeing by a second reads as two separate events.
     var buildDate = new Date().toISOString().replace(/\.[0-9]+Z/i, 'Z');
-    var bookId = getBookId();
-    var bookLanguage = getBookLanguage(allPages);
+    var bookId = getBookId(bookMeta.uuid);
+    // What the user stated about the book, if anything. Each field below asks it
+    // first and falls back to the chapters, which is what every book built
+    // before the editor had a metadata panel did for all of them.
+    var bookOverride = normalizeMetadataOverride(bookMeta.metadata);
+    var bookLanguage = getBookLanguage(allPages, bookOverride);
     var bookDirection = getBookDirection(allPages);
-    var publishers = collectDistinct(allPages, function(m) { return m.publisher; });
-    var authors = collectDistinct(allPages, function(m) { return m.authors; }).slice(0, 12);
+    var publishers = collectDistinct(allPages, function(m) { return m.publisher; },
+                                     bookOverride.publisher);
+    var authors = collectDistinct(allPages, function(m) { return m.authors; },
+                                  bookOverride.authors).slice(0, MAX_BOOK_AUTHORS);
     // dc:date is the date of publication of this file. For a single saved page
     // that is the article's own date, which is what a library should sort on; a
     // book assembled from several pages was published when it was assembled, and
-    // picking one chapter's date to stand for the whole would be a guess. Every
-    // chapter keeps its own date below regardless.
-    var bookDate = (allPages.length === 1 && getPageMetadata(allPages[0]).date) || buildDate;
+    // picking one chapter's date to stand for the whole would be a guess - which
+    // is exactly the guess a user is entitled to make for their own book, and
+    // the only reason the field is offered. Every chapter keeps its own date
+    // below regardless.
+    var bookDate = bookOverride.date ||
+                   (allPages.length === 1 && getPageMetadata(allPages[0]).date) || buildDate;
     // Likewise: one page's blurb describes the book. Several pages' first blurb
-    // describes one chapter, and claiming otherwise is worse than saying nothing.
-    var bookDescription = allPages.length === 1 ? getPageMetadata(allPages[0]).description : '';
+    // describes one chapter, and claiming otherwise is worse than saying nothing
+    // - unless somebody has written the blurb themselves.
+    var bookDescription = bookOverride.description ||
+                          (allPages.length === 1 ? getPageMetadata(allPages[0]).description : '');
 
     // The content as it will be written, with an id on every heading, and the
     // one navigation tree that the nav document, the ncx and the chapter files
@@ -965,10 +1162,13 @@ function _buildEbook(allPages, fromMenu=false) {
         DEFLATED
     );
 
-    oebps.file(cssFileName, '', DEFLATED); //TODO
+    // The book-wide stylesheet: written by hand in the chapter editor, empty for
+    // every book whose author never opened that box. Every chapter links it, and
+    // so does the table of contents.
+    oebps.file(cssFileName, sanitizeStylesheet(bookMeta.css), DEFLATED);
     var styleFolder = oebps.folder('style');
     allPages.forEach(function(page) {
-        styleFolder.file(page.styleFileName, page.styleFileContent, DEFLATED);
+        styleFolder.file(page.styleFileName, chapterStyleContent(page), DEFLATED);
     });
 
     var pagesFolder = oebps.folder('pages');
@@ -989,6 +1189,12 @@ function _buildEbook(allPages, fromMenu=false) {
             dirAttribute(pageDirection) + '>' +
             '<head>' +
             '<title>' + tmpPageTitle+ '</title>' +
+            // In this order, and this is the cascade the preview reproduces: the
+            // book-wide stylesheet states what the book looks like, the chapter's
+            // own - the source page's computed styles, plus whatever the user
+            // added for this chapter alone - is the more specific answer and
+            // comes second.
+            '<link href="../' + cssFileName + '" rel="stylesheet" type="text/css" />' +
             '<link href="../style/' + page.styleFileName + '" rel="stylesheet" type="text/css" />' +
             '</head>' +
             getChapterBody(page, outlines[index]) +

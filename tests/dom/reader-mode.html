@@ -1,0 +1,168 @@
+<!doctype html>
+<html>
+<head>
+<title>The Distillation Of Web Pages</title>
+<script>
+window.chrome = {
+  runtime: {onMessage: {addListener: function(){}}, sendMessage: function(){}},
+  i18n: {getMessage: function(){ return ''; }}
+};
+</script>
+<script src="../../web-extension/libs/readability.js"></script>
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/sanitizeHtml.js"></script>
+<script src="../../web-extension/extractHtml.js"></script>
+<style>
+  .gone { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <nav><a href="/a">NAVJUNKONE</a> <a href="/b">NAVJUNKTWO</a> <a href="/c">NAVJUNKTHREE</a></nav>
+</header>
+
+<aside class="sidebar">
+  <h3>Related</h3>
+  <ul>
+    <li><a href="/1">SIDEBARJUNKONE</a></li>
+    <li><a href="/2">SIDEBARJUNKTWO</a></li>
+    <li><a href="/3">SIDEBARJUNKTHREE</a></li>
+  </ul>
+</aside>
+
+<!-- Long enough to win on text density, and long enough to clear Readability's
+     default character threshold - a distiller given three sentences returns
+     nothing at all, which would make every assertion below fail for a reason
+     that has nothing to do with what is being tested. -->
+<article>
+  <p>ARTICLEONE Distillation is the business of deciding which part of a page is the
+  part someone came to read. The heuristic is text density against link density: a
+  paragraph of prose scores well, a list of five links to other stories does not,
+  and the subtree with the best total score wins the page.</p>
+
+  <p>ARTICLETWO That heuristic is why furniture disappears. A navigation bar is almost
+  entirely links, a sidebar of related stories is entirely links, and a footer is
+  links and a copyright line. None of them can outscore four paragraphs of prose,
+  so none of them survive into the article that comes back.</p>
+
+  <p>ARTICLETHREE It is also why the heuristic cannot be trusted everywhere. A forum
+  thread is prose interleaved with links, an api reference is a wall of short
+  definitions, and a changelog is a list. On those pages a distiller either
+  returns nothing or returns something confidently wrong, and the caller has to
+  be ready for both.</p>
+
+  <div class="gone">HIDDENJUNK - display:none, dropped before scoring</div>
+
+  <p>ARTICLEFOUR What matters for this extension is narrower: everything the read
+  phase promised to replace has to still be there afterwards, because a formula,
+  a chart and a diagram are exactly the shapes a density heuristic is worst at
+  recognising as content worth keeping.</p>
+
+  <figure>
+    <canvas id="chart" width="40" height="30" aria-label="CANVASLABEL"></canvas>
+    <figcaption>FIGCAPTIONTEXT</figcaption>
+  </figure>
+
+  <p>ARTICLEFIVE The formula below is what a typesetter leaves behind: glyphs the
+  browser can draw, with the real MathML hidden beside them. Only the read phase
+  can tell the two apart, and only if the container survives long enough to be
+  replaced by what it stands for.</p>
+
+  <p>MathJax:
+  <mjx-container class="MathJax" jax="CHTML" display="true">
+    <mjx-math><mjx-msup><mjx-mi>CHTMLSOUP</mjx-mi></mjx-msup></mjx-math>
+    <mjx-assistive-mml unselectable="on" display="block">
+      <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
+        <msup><mi>x</mi><mn>2</mn></msup>
+      </math>
+    </mjx-assistive-mml>
+  </mjx-container>
+  </p>
+
+  <!-- No src at all, which is how a lazy loader ships an image. Today this
+       reaches getImageSrc() as '' and the tag is dropped; Readability promotes
+       data-src first, so the image is downloaded instead. -->
+  <img data-src="lazy-image.png" alt="LAZYALT">
+</article>
+
+<footer>
+  <p><a href="/tos">FOOTERJUNK</a></p>
+</footer>
+
+<script>
+// The runner reads results with a line-based grep, so a detail carrying a
+// newline - a slice of the extracted content is full of them - makes the whole
+// assertion disappear from the report instead of failing it.
+var results = document.createElement('ul');
+results.id = 'results';
+
+function report(name, ok, detail) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name +
+                   (detail ? ' -- ' + String(detail).replace(/\s+/g, ' ').trim() : '');
+  results.appendChild(li);
+}
+
+window.addEventListener('load', function () {
+  var ctx = document.getElementById('chart').getContext('2d');
+  ctx.fillStyle = '#4488cc';
+  ctx.fillRect(0, 0, 40, 30);
+
+  var beforeHtml = document.body.innerHTML;
+
+  allImages = []; extractedImages = []; imageFileNames.clear();
+  classNameToCss.clear(); cssToClassName.clear(); usedElementIds.clear();
+
+  var state = readLivePage(false, []);
+  var readable = extractReadableContent(state);
+  clearLiveMarks(state);
+
+  report('the page is recognised as an article', !!readable);
+  var content = readable ? getContent(readable, state) : '';
+
+  // The whole point of doing this on a clone: Readability rewrites, unwraps and
+  // deletes as it scores, and none of that may reach the page the user is on.
+  report('live dom unchanged', document.body.innerHTML === beforeHtml);
+
+  // ---- the article survives ----
+  var paragraphs = ['ARTICLEONE', 'ARTICLETWO', 'ARTICLETHREE', 'ARTICLEFOUR', 'ARTICLEFIVE'];
+  var lost = paragraphs.filter(function (p) { return content.indexOf(p) < 0; });
+  report('every article paragraph survives', lost.length === 0, 'lost ' + lost.join(', '));
+  report('a figcaption survives', content.indexOf('FIGCAPTIONTEXT') > -1);
+
+  // ---- the furniture does not ----
+  var furniture = ['NAVJUNKONE', 'NAVJUNKTWO', 'NAVJUNKTHREE',
+                   'SIDEBARJUNKONE', 'SIDEBARJUNKTWO', 'SIDEBARJUNKTHREE', 'FOOTERJUNK'];
+  var kept = furniture.filter(function (f) { return content.indexOf(f) > -1; });
+  report('nav, sidebar and footer are gone', kept.length === 0, 'kept ' + kept.join(', '));
+  report('a hidden element is dropped before scoring', content.indexOf('HIDDENJUNK') < 0);
+
+  // ---- the marks survive, which is what the write phase rides on ----
+  // Readability swaps tags and strips classes as it scores; data-sae-mark is an
+  // attribute, and _setNodeTag copies attributes across a swap. If that ever
+  // changes, every canvas, svg, iframe and formula in a reader-mode save is
+  // silently lost, and this is the assertion that says so.
+  report('the MathJax formula reaches the output as MathML',
+         content.indexOf('<msup><mi>x</mi><mn>2</mn></msup>') > -1, content.slice(0, 200));
+  report('the MathJax glyph output is dropped with its container',
+         content.indexOf('CHTMLSOUP') < 0);
+  report('the canvas is replaced by an image, not deleted as an empty element',
+         content.indexOf('alt="CANVASLABEL"') > -1);
+  report('no <canvas> reaches the output', content.indexOf('<canvas') < 0);
+
+  // ---- the free win ----
+  report('a data-src image is promoted and extracted',
+         content.indexOf('alt="LAZYALT"') > -1 &&
+         allImages.some(function (i) { return i.originalUrl.indexOf('lazy-image.png') > -1; }),
+         allImages.map(function (i) { return i.originalUrl; }).join(' '));
+  report('image urls are resolved against the page, not the extension',
+         allImages.every(function (i) { return /^[a-z]+:/i.test(i.originalUrl); }),
+         allImages.map(function (i) { return i.originalUrl; }).join(' '));
+
+  document.body.appendChild(results);
+  document.title = 'DONE';
+});
+</script>
+</body>
+</html>

@@ -62,6 +62,53 @@ function saveEbookTitle(title) {
     });
 }
 
+// The book-wide stylesheet, kept beside the title and the identifier because it
+// belongs to the book being assembled rather than to any one chapter - and is
+// discarded with them. Not to be confused with the per-site styles behind
+// getStyles(): those are applied to a page while it is being captured and
+// outlive any single book.
+function getBookCss(callback) {
+    chrome.runtime.sendMessage({
+        type: "get book css"
+    }, function(response) {
+        callback(response && typeof response.css === 'string' ? response.css : '');
+    });
+}
+
+function saveBookCss(css) {
+    chrome.runtime.sendMessage({
+        type: "set book css",
+        css: css
+    }, function(response) {
+    });
+}
+
+// What the user typed about the book in the chapter editor - authors, language,
+// publisher, description, date. Stored beside the title and the stylesheet, as
+// one object, because it belongs to the book being assembled and is discarded
+// with it. Every field is optional: an empty one is not an empty value, it is
+// the book falling back to what the chapters say - see getPageMetadata() and
+// getBookLanguage() in saveEbook.js.
+//
+// Held as the user typed it rather than normalized on the way in, so that
+// reopening the editor shows what was written even when it is not usable;
+// normalizeMetadataOverride() is where it becomes a value the package can carry.
+function getBookMetadata(callback) {
+    chrome.runtime.sendMessage({
+        type: "get book metadata"
+    }, function(response) {
+        callback(response && response.metadata ? response.metadata : null);
+    });
+}
+
+function saveBookMetadata(metadata) {
+    chrome.runtime.sendMessage({
+        type: "set book metadata",
+        metadata: metadata
+    }, function(response) {
+    });
+}
+
 // The identifier of the ebook being assembled from chapters. Minted once by the
 // background and kept next to the chapters, because dc:identifier is what a
 // library uses to decide whether a file is a new book or a newer copy of one it
@@ -169,6 +216,37 @@ function normalizeLanguageTag(raw) {
         }
         return subtag.toLowerCase();
     }).join('-');
+}
+
+function yearIsPlausible(year) {
+    let value = parseInt(year, 10);
+    return value >= 1400 && value <= new Date().getFullYear() + 1;
+}
+
+// dc:date must be a W3C-DTF date, and pages supply everything from "2024-03-01"
+// to "Fri, 01 Mar 2024 09:00:00 GMT". So does a user typing one into the editor,
+// which is the other reason this lives here rather than in extractHtml.js: the
+// editor page never loads the content script, and both ends have to agree on
+// what a date is.
+function normalizeDate(raw) {
+    if (!raw || typeof raw !== 'string') {
+        return '';
+    }
+    let text = raw.trim();
+    // Already well formed: keep it verbatim rather than round-tripping through
+    // Date, which would shift a local timestamp into UTC and invent a time of
+    // day for a bare date.
+    if (/^\d{4}$/.test(text) ||
+        /^\d{4}-\d{2}$/.test(text) ||
+        /^\d{4}-\d{2}-\d{2}$/.test(text) ||
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(text)) {
+        return yearIsPlausible(text.substring(0, 4)) ? text : '';
+    }
+    let parsed = new Date(text);
+    if (isNaN(parsed.getTime()) || !yearIsPlausible(parsed.getUTCFullYear())) {
+        return '';
+    }
+    return parsed.toISOString().replace(/\.[0-9]+Z$/, 'Z');
 }
 
 // An id has to be an XML name to be addressable at all. Ids only need to be

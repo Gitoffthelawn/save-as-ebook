@@ -6,8 +6,20 @@
     "includeStyle": {
         "message": "Incuir estilo (personalizado)"
     },
+    "readerMode": {
+        "message": "Aplicar Readability.js"
+    },
+    "readerModeHint": {
+        "message": "Manter apenas o artigo, removendo navegação, barras laterais e comentários. Aplica-se somente a «Salvar página» e «Adicionar página como capítulo». Páginas que não são artigos são salvas por inteiro."
+    },
+    "reviewBeforeSaving": {
+        "message": "Revisar antes de salvar"
+    },
+    "reviewBeforeSavingHint": {
+        "message": "Abrir «Salvar Página» e «Salvar Selecão» no editor de capítulos em vez de baixar imediatamente, para que o livro possa ser pré-visualizado, editado e descrito antes. O botão «Gerar eBook» do editor é que salva o arquivo."
+    },
     "editStyles": {
-        "message": "Editar estilos personalizados ..."
+        "message": "Editar estilos do site ..."
     },
     "savePage": {
         "message": "Salvar Página"
@@ -33,11 +45,137 @@
     "ebookTitleLabel": {
         "message": "Título do eBook:"
     },
-    "rawPreview": {
+    "preview": {
         "message": "Pré-visualização"
+    },
+    "previewNote": {
+        "message": "Isto mostra como o capítulo é renderizado. Paginação, fontes e margens são do leitor de eBooks e variam conforme o dispositivo."
+    },
+    "previewEmpty": {
+        "message": "Este capítulo não tem conteúdo para pré-visualizar."
+    },
+    "editModeView": {
+        "message": "Leitura"
+    },
+    "editModeRemove": {
+        "message": "Remover elementos"
+    },
+    "editModeText": {
+        "message": "Editar texto"
+    },
+    "viewModeHint": {
+        "message": "Modo de leitura. Mude de modo para editar este capítulo."
+    },
+    "removeModeHint": {
+        "message": "Clique em um elemento para removê-lo. \"Selecionar o pai\" amplia o que o clique remove."
+    },
+    "removeModeTarget": {
+        "message": "O clique remove:"
+    },
+    "textModeHint": {
+        "message": "Clique no texto para editá-lo. O título do capítulo é editado na lista de capítulos."
+    },
+    "selectParent": {
+        "message": "Selecionar o pai"
+    },
+    "selectChild": {
+        "message": "Selecionar o filho"
+    },
+    "insertParagraphBefore": {
+        "message": "Adicionar parágrafo antes"
+    },
+    "insertParagraphAfter": {
+        "message": "Adicionar parágrafo depois"
+    },
+    "insertedParagraphText": {
+        "message": "Novo parágrafo"
+    },
+    "undoEdit": {
+        "message": "Desfazer"
+    },
+    "saveChapter": {
+        "message": "Salvar capítulo"
+    },
+    "chapterSaved": {
+        "message": "Capítulo salvo."
+    },
+    "bookCssLabel": {
+        "message": "Folha de estilo do livro"
+    },
+    "bookCssHint": {
+        "message": "CSS aplicado a todo o livro salvo. Não confundir com os estilos do site, que alteram as páginas durante a captura."
+    },
+    "bookCssPlaceholder": {
+        "message": "body { font-family: serif; }"
+    },
+    "chapterCssLabel": {
+        "message": "CSS do capítulo"
+    },
+    "chapterCssHint": {
+        "message": "CSS aplicado apenas a este capítulo, após os estilos capturados da sua página."
+    },
+    "chapterCssPlaceholder": {
+        "message": "p { text-align: justify; }"
+    },
+    "bookMetadataLabel": {
+        "message": "Detalhes do eBook"
+    },
+    "bookMetadataHint": {
+        "message": "O que o livro diz sobre si mesmo. Um campo deixado vazio é obtido dos capítulos."
+    },
+    "chapterMetadataLabel": {
+        "message": "Detalhes do capítulo"
+    },
+    "chapterMetadataHint": {
+        "message": "O que este capítulo diz sobre si mesmo. Um campo deixado vazio é obtido da página de onde ele veio."
+    },
+    "metadataAuthors": {
+        "message": "Autores"
+    },
+    "metadataAuthorsHint": {
+        "message": "Um por linha"
+    },
+    "metadataLanguage": {
+        "message": "Idioma"
+    },
+    "metadataLanguageHint": {
+        "message": "Uma etiqueta de idioma, como pt-BR ou en"
+    },
+    "metadataLanguageIgnored": {
+        "message": "Não é uma etiqueta de idioma - será ignorada."
+    },
+    "metadataPublisher": {
+        "message": "Editora"
+    },
+    "metadataDate": {
+        "message": "Data"
+    },
+    "metadataDateHint": {
+        "message": "AAAA-MM-DD"
+    },
+    "metadataDateIgnored": {
+        "message": "Não é uma data - será ignorada."
+    },
+    "metadataDateGenerated": {
+        "message": "o dia em que o eBook for gerado"
+    },
+    "metadataDescription": {
+        "message": "Descrição"
+    },
+    "metadataFromChapters": {
+        "message": "dos capítulos"
+    },
+    "metadataFromPage": {
+        "message": "da página deste capítulo"
+    },
+    "discardEditsConfirm": {
+        "message": "Este capítulo tem alterações não salvas. Fechar sem salvar?"
     },
     "remove": {
         "message": "Remover"
+    },
+    "removeChapterConfirm": {
+        "message": "Você quer remover este capítulo?"
     },
     "removeChapters": {
         "message": "Remover capítulos"
@@ -54,6 +192,9 @@
     "saveChanges": {
         "message": "Salvar alterações"
     },
+    "changesSaved": {
+        "message": "Alterações salvas."
+    },
     "emptyBookWarning": {
         "message": "Não é possível gerar um eBook vazio!"
     },
@@ -67,7 +208,7 @@
         "message": "Estilo salvo!"
     },
     "styleEditor": {
-        "message": "Editor de estilo"
+        "message": "Editor de estilos do site"
     },
     "selectExistingCSS": {
         "message": "Selecionar CSS Existente"
