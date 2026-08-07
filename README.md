@@ -66,47 +66,13 @@ in Chrome:
 3. Click on Keyboard shortcuts
 ```
 
-## Added in 1.4.2
- - Added MIME type to the generated .epub file
+## Added in 2.1.0
+ - add support for EPUB 3
+ - add option to apply Readability.js on Save Page and Save Page as Chapter
 
-## Added in 1.4.1
- - Remove unnecessary permissions
- - Detect image type if the URL doesn't have a file extension (jpg, gif, png)
- - Reset the Busy indicator on errors
- - Remove hidden elements when style is not included
- - Replace iframes with divs
 
-## Added in 1.4
- - Smaller ebook file size
- - Fix for #37 - custom styles not applied 
- - Fix for #36 - br tag missing from pre blocks
- - Fix for #31 - hanging in Busy state
- - Other misc bug fixes 
-
-## Added in v1.3.4
- - Fix for MathML - the rendered expression is too large (Issue #26)
- - Add translation in Russian (thanks to @ Emil Khalikov) & Brazilian Portuguese (thanks to @welksonramos)
-
-## Added in v1.3
- - Keyboard shortcuts
- - Simplified tool bar menu
- - Misc bug fixes
-
-## Added in v1.2.2
- - fixed &  &amp; issue in title; Issue # 10
-
-## Added in v1.2.1
- - support for hr/br html tags
-
-## Added in v1.2
- - BETA: Support for CSS
- - BETA: Create / edit custom Styles
- - No errors from EPUB Validator (http://validator.idpf.org/) + this should fix the Google Play upload issue
-
-## Added in v1.1
- - Chapter Editor: option to save changes
- - Chapter Editor: option to remove all chapters
- - persist Chapter Editor changes & chapters after generating an eBook or after a browser restart
+## Added in 2.0.0
+ - Updated the manifest to v3
 
 ## To-Do
  - make the Custom Style Editor more user friendly
