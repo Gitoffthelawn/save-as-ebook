@@ -6,6 +6,12 @@
     "includeStyle": {
         "message": "Include (Custom) Style"
     },
+    "readerMode": {
+        "message": "Apply Readability.js"
+    },
+    "readerModeHint": {
+        "message": "Keep only the article, dropping navigation, sidebars and comments. Applies to Save Page and Add Page as Chapter only. Pages that are not articles are saved whole."
+    },
     "editStyles": {
         "message": "Edit Custom Styles ..."
     },

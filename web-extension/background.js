@@ -51,9 +51,15 @@ let jobClaimPending = false
 // Injected on demand instead of declared in the manifest. That keeps the
 // extension off every page the user visits, and lets it run with activeTab
 // alone - a <all_urls> host permission would show a "read and change all your
-// data on all websites" warning at install. Order matters: jszip before the
-// script that uses it.
-const CONTENT_SCRIPTS = ['libs/jszip.js', 'utils.js', 'extractHtml.js', 'saveEbook.js']
+// data on all websites" warning at install. Order matters: jszip and readability
+// before the scripts that use them.
+//
+// readability.js goes in unconditionally rather than only when the checkbox is
+// set. It is one more file the size of jszip, injected into the one tab the user
+// acted on, and the alternative - injecting it separately when the setting is on
+// - leaves a tab that was injected with the setting off unable to honour it when
+// the user turns it on without reloading.
+const CONTENT_SCRIPTS = ['libs/jszip.js', 'libs/readability.js', 'utils.js', 'extractHtml.js', 'saveEbook.js']
 
 var defaultStyles = [
     {
@@ -389,8 +395,11 @@ function dispatch(tab, action, justAddToBuffer, appliedStyles) {
 
     isIncludeStyles((result) => {
         let isIncludeStyle = result.includeStyle
-        prepareStyles(tab, isIncludeStyle, appliedStyles, (tmpAppliedStyles) => {
-            applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles)
+        isReaderMode((readerResult) => {
+            prepareStyles(tab, isIncludeStyle, appliedStyles, (tmpAppliedStyles) => {
+                applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles,
+                    readerResult.readerMode)
+            })
         })
     })
 }
@@ -401,6 +410,16 @@ function isIncludeStyles(callback) {
             callback({includeStyle: false});
         } else {
             callback({includeStyle: data.includeStyle});
+        }
+    });
+}
+
+function isReaderMode(callback) {
+    chrome.storage.local.get('readerMode', (data) => {
+        if (!data) {
+            callback({readerMode: false});
+        } else {
+            callback({readerMode: data.readerMode});
         }
     });
 }
@@ -498,11 +517,15 @@ function prepareStyles(tab, includeStyle, appliedStyles, callback) {
     });
 }
 
-function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles) {
+function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, readerMode) {
     chrome.tabs.sendMessage(tab[0].id, {
         type: action,
         includeStyle: includeStyle,
-        appliedStyles: appliedStyles
+        appliedStyles: appliedStyles,
+        // Save Page and Add Page as Chapter only. A selection is the user having
+        // already said what the content is, so there is nothing to distil and
+        // nothing the checkbox should quietly do to it.
+        readerMode: !!readerMode && action === 'extract-page'
     }, (response) => {
         // the content script can go away mid-extraction - a navigation tears it
         // down and the callback fires with no response and lastError set
@@ -524,6 +547,14 @@ function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles) 
                 chrome.tabs.sendMessage(tab[0].id, {'alert': 'Cannot generate the eBook from an empty selection!'}, (r) => {});
             }
             return;
+        }
+        // The page was still saved, in full - see the fallback in extractHtml.js.
+        // Reported rather than swallowed: a distiller is a heuristic, and a user
+        // who is not told will read a full page save as the checkbox being broken.
+        if (response.readerModeFailed) {
+            chrome.tabs.sendMessage(tab[0].id, {'alert': 'Readability.js found no article on this page - the whole page was saved instead.'}, (r) => {
+                void chrome.runtime.lastError;
+            });
         }
         if (!justAddToBuffer) {
             // the job stays open until the content script reports 'done' - it
@@ -632,6 +663,18 @@ function _execRequest(request, sender, sendResponse) {
     }
     if (request.type === 'set include style') {
         chrome.storage.local.set({'includeStyle': request.includeStyle});
+    }
+    if (request.type === 'get reader mode') {
+        chrome.storage.local.get('readerMode', function (data) {
+            if (!data) {
+                sendResponse({readerMode: false});
+            } else {
+                sendResponse({readerMode: data.readerMode});
+            }
+        });
+    }
+    if (request.type === 'set reader mode') {
+        chrome.storage.local.set({'readerMode': request.readerMode});
     }
     if (request.type === 'is busy?') {
         isBusy((busy) => {

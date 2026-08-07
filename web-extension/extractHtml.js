@@ -514,6 +514,105 @@ function clearLiveMarks(state) {
     state.markedElements = [];
 }
 
+///// Reader mode - an optional step between the clone and the write phase
+
+// Applies to the clone the verdicts that change the shape of the tree, in the
+// same precedence applyReadState() uses. Only reader mode needs this: it is the
+// write phase running early, on the nodes Readability is about to score.
+//
+// It has to happen first because every element the read phase promised to
+// replace scores badly on its own. A rendered MathJax formula is an
+// <mjx-container> holding an svg and no text, a chart is a <canvas> holding
+// nothing at all, and Readability deletes an <iframe> outright unless it looks
+// like a video. Substituting them first means what gets scored is the content
+// they stand for - a <math>, an <img>, the frame's own markup - instead of an
+// empty wrapper.
+//
+// A substituted element takes its marker with it, and a hidden one is gone, so
+// applyReadState() finds nothing here to apply a second time.
+function applyStructuralMarks(cloneRoot, state) {
+    cloneRoot.querySelectorAll('[' + SAE_MARK_ATTR + ']').forEach(function (elem) {
+        let mark = state.marks.get(elem.getAttribute(SAE_MARK_ATTR));
+        if (!mark) {
+            return;
+        }
+        if (mark.hidden) {
+            elem.remove();
+            return;
+        }
+        if (mark.replaceWithHtml) {
+            elem.removeAttribute(SAE_MARK_ATTR);
+            replaceElementWithHTML(elem, mark.replaceWithHtml);
+        }
+    });
+}
+
+// Distills the page down to its article, the way Firefox's Reader View does.
+// Returns the article's root element, or null when there was nothing to find.
+//
+// Null is rarer than it sounds, and that is the useful part: when the best
+// candidate comes out under Readability's character threshold - a forum thread,
+// a search results page, an api reference, anything that is not prose - it
+// retries with its heuristics progressively disabled and finally returns the
+// longest attempt, which on such a page is close to the whole body. So the
+// failure mode of pointing reader mode at the wrong page is a save that looks
+// like a normal one, not a gutted chapter. Only a page it can find no text in at
+// all comes back null.
+//
+// The marks are still on the live page when this runs, so it must be called
+// before clearLiveMarks(), exactly like the plain clone it stands in for.
+function extractReadableContent(state) {
+    // the library is bundled, so this only fails if the injection did
+    if (typeof Readability === 'undefined') {
+        console.log('Error: Readability is not available');
+        return null;
+    }
+    try {
+        // Readability rewrites, unwraps and deletes as it scores, so it must only
+        // ever see a clone. Handing it the live document would reintroduce
+        // exactly the damage the read/clone/write split was built to eliminate.
+        //
+        // The whole document is cloned rather than <body> alone because the
+        // constructor wants a Document: it reads <head> for the metadata and
+        // resolves the article's urls against the document's base.
+        let docClone = document.cloneNode(true);
+
+        // Every relative url in the article is resolved against that base, and an
+        // image whose src resolved against the wrong origin is one that never
+        // downloads. A cloned document is specified to keep the original's url,
+        // but stating the base outright costs one element and does not depend on
+        // that. A page with a <base> of its own already answers correctly.
+        let head = docClone.head || docClone.documentElement;
+        if (head && !docClone.querySelector('base[href]')) {
+            let base = docClone.createElement('base');
+            base.setAttribute('href', document.baseURI);
+            head.insertBefore(base, head.firstChild);
+        }
+
+        applyStructuralMarks(docClone, state);
+
+        let article = new Readability(docClone, {
+            // Without this parse() hands back a string, which would have to be
+            // parsed again to reach getContent(). getContent() wants a node, and
+            // this is the node it wants.
+            serializer: (elem) => elem
+        }).parse();
+
+        if (!article || !article.content) {
+            return null;
+        }
+        // A page with a plausible-looking container and nothing in it gets an
+        // empty shell rather than the null above.
+        if (!article.content.textContent || article.content.textContent.trim() === '') {
+            return null;
+        }
+        return article.content;
+    } catch (e) {
+        console.log('Error:', e);
+        return null;
+    }
+}
+
 ///// Write phase - operates only on the cloned tree
 
 // Anything past this and the alttext is no longer a text alternative, it is a
@@ -1566,6 +1665,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     let result = {};
     let tmpContent = '';
     let styleFile = null;
+    let readerModeFailed = false;
 
     // Reset once per job, not once per parsed fragment: a selection spanning
     // several ranges calls getContent() for each one.
@@ -1589,7 +1689,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         // clone while the markers are still on the live elements
         let clones = [];
         if (request.type === 'extract-page') {
-            clones.push(document.body.cloneNode(true));
+            // Reader mode never reaches a selection: the user picking the nodes
+            // has already said what the content is, and Range.cloneContents()
+            // yields a fragment rather than the document Readability needs.
+            // The background only ever sets the flag for an 'extract-page'.
+            let readable = request.readerMode ? extractReadableContent(state) : null;
+            // Falling back is right - refusing to save the page because it is not
+            // an article would be worse - but doing it silently would make the
+            // checkbox look like it does nothing.
+            readerModeFailed = !!request.readerMode && !readable;
+            clones.push(readable || document.body.cloneNode(true));
         } else {
             clones = getSelectedNodes();
         }
@@ -1626,6 +1735,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             images: extractedImages,
             content: tmpGlobalContent
         };
+        // Set only when it happened. This object is stored as the chapter record,
+        // and how a chapter was extracted is not part of what a chapter is.
+        if (readerModeFailed) {
+            result.readerModeFailed = true;
+        }
         sendResponse(result);
     }).catch((e) => {
         console.log('Error:', e);

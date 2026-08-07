@@ -302,8 +302,10 @@ async function test(name, body) {
         absent.context.ensureContentScripts(3, (ok) => { absentResult = ok; });
         await settle();
         assert.strictEqual(absentResult, true);
+        // Order is the assertion, not just membership: jszip and readability are
+        // globals the scripts after them use at load time.
         assert.deepStrictEqual(absent.state.executeScripts[0].files,
-            ['libs/jszip.js', 'utils.js', 'extractHtml.js', 'saveEbook.js']);
+            ['libs/jszip.js', 'libs/readability.js', 'utils.js', 'extractHtml.js', 'saveEbook.js']);
 
         const denied = createHarness({pingResponse: undefined, executeScriptFailure: true});
         let deniedResult;
@@ -354,6 +356,47 @@ async function test(name, body) {
         assert.strictEqual(messages(add, (m) => m.alert === 'Page or selection added as chapter!').length, 1);
     });
 
+    await test('reader mode reaches a page extraction and never a selection', () => {
+        const extractions = (h) => messages(h,
+            (m) => m.type === 'extract-page' || m.type === 'extract-selection');
+
+        for (const action of ['extract-page', 'extract-selection']) {
+            const on = createHarness();
+            on.context.startJob(7);
+            on.context.applyAction([{id: 7}], action, true, false, [], true);
+            assert.strictEqual(extractions(on)[0].message.readerMode,
+                action === 'extract-page',
+                action + ' was sent the wrong reader mode flag');
+        }
+
+        // The checkbox being off has to be sent as false rather than left out:
+        // the content script reads the flag, it does not default it.
+        const off = createHarness();
+        off.context.startJob(7);
+        off.context.applyAction([{id: 7}], 'extract-page', true, false, [], undefined);
+        assert.strictEqual(extractions(off)[0].message.readerMode, false);
+    });
+
+    await test('a reader mode fallback is reported and the page still saved', () => {
+        const response = {title: 'A', content: '<p>chapter</p>', readerModeFailed: true};
+        const h = createHarness({extractionResponse: response, local: {allPages: []}});
+        h.context.startJob(7);
+        h.context.applyAction([{id: 7}], 'extract-page', true, false, [], true);
+        assert.strictEqual(messages(h,
+            (m) => (m.alert || '').startsWith('Readability.js found no article')).length, 1);
+        // the point of the fallback: telling the user does not cost them the save
+        assert.deepStrictEqual(h.state.local.allPages, [response]);
+
+        const succeeded = createHarness({
+            extractionResponse: {title: 'A', content: '<p>chapter</p>'},
+            local: {allPages: []}
+        });
+        succeeded.context.startJob(7);
+        succeeded.context.applyAction([{id: 7}], 'extract-page', true, false, [], true);
+        assert.strictEqual(messages(succeeded,
+            (m) => (m.alert || '').indexOf('Readability.js') > -1).length, 0);
+    });
+
     await test('style matching skips invalid regexes and selects the longest match', async () => {
         const styles = [
             {title: 'Invalid', url: '[', style: '.invalid {}'},
@@ -395,6 +438,7 @@ async function test(name, body) {
             {type: 'get styles'}, {type: 'set styles', styles: []},
             {type: 'get current style'}, {type: 'set current style', currentStyle: 2},
             {type: 'get include style'}, {type: 'set include style', includeStyle: true},
+            {type: 'get reader mode'}, {type: 'set reader mode', readerMode: true},
             {type: 'is busy?'}, {type: 'job-heartbeat'},
             {type: 'save-page'}, {type: 'save-selection'}, {type: 'add-page'},
             {type: 'add-selection'}, {type: 'done'}, {type: 'unknown'}

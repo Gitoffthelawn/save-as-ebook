@@ -6,6 +6,9 @@ var appliedStyles = [];
 // renders them correctly and keeps the store's "unsafe innerHTML" check quiet
 document.getElementById('menuTitle').textContent = chrome.i18n.getMessage('extName');
 document.getElementById('includeStyle').textContent = chrome.i18n.getMessage('includeStyle');
+document.getElementById('readerMode').textContent = chrome.i18n.getMessage('readerMode');
+// which of the four actions it applies to is not guessable from the label
+document.getElementById('readerModeOption').title = chrome.i18n.getMessage('readerModeHint');
 document.getElementById('editStyles').textContent = chrome.i18n.getMessage('editStyles');
 document.getElementById('savePageLabel').textContent = chrome.i18n.getMessage('savePage');
 document.getElementById('saveSelectionLabel').textContent = chrome.i18n.getMessage('saveSelection');
@@ -113,6 +116,26 @@ document.getElementById('includeStyleCheck').onclick = function () {
     chrome.runtime.sendMessage({
         type: "set include style",
         includeStyle: includeStyleCheck.checked
+    }, function(response) {
+    });
+}
+
+function createReaderMode(data) {
+    let readerModeCheck = document.getElementById('readerModeCheck');
+    readerModeCheck.checked = data;
+}
+
+chrome.runtime.sendMessage({
+    type: "get reader mode"
+}, function(response) {
+    createReaderMode(response.readerMode);
+});
+
+document.getElementById('readerModeCheck').onclick = function () {
+    let readerModeCheck = document.getElementById('readerModeCheck');
+    chrome.runtime.sendMessage({
+        type: "set reader mode",
+        readerMode: readerModeCheck.checked
     }, function(response) {
     });
 }

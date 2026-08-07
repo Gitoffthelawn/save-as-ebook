@@ -6,6 +6,12 @@
     "includeStyle": {
         "message": "Inclure le style"
     },
+    "readerMode": {
+        "message": "Appliquer Readability.js"
+    },
+    "readerModeHint": {
+        "message": "Ne garder que l'article, sans la navigation, les barres latérales ni les commentaires. Ne s'applique qu'à « Enregistrer la page » et « Ajouter la page comme chapitre ». Les pages qui ne sont pas des articles sont enregistrées en entier."
+    },
     "styleLabel": {
         "message": "Style personnalisé :"
     },

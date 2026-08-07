@@ -1,0 +1,79 @@
+<!doctype html>
+<html>
+<head>
+<title>Index</title>
+<script>
+window.chrome = {
+  runtime: {onMessage: {addListener: function(){}}, sendMessage: function(){}},
+  i18n: {getMessage: function(){ return ''; }}
+};
+</script>
+<script src="../../web-extension/libs/readability.js"></script>
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/extractHtml.js"></script>
+</head>
+<body>
+
+<!-- A link index: no prose anywhere, which is what a density heuristic has no
+     answer for. The same shape as the pages reader mode is most likely to be
+     pointed at by mistake - a documentation index, a search results page, a tag
+     listing, a forum thread.
+--
+     What is asserted here is not that Readability distils this well. It cannot.
+     It is that failing to distil costs the user nothing: no candidate clears the
+     character threshold, Readability retries with its heuristics progressively
+     disabled and hands back the longest attempt it made, and the chapter ends up
+     with the page in it. A reader-mode save on the wrong kind of page has to be
+     indistinguishable from a normal one, because the alternative - a chapter
+     holding one heading and nothing else - is a save the user has lost. -->
+<h1>Index</h1>
+<ul>
+  <li><a href="/a">Getting started</a></li>
+  <li><a href="/b">Installation</a></li>
+  <li><a href="/c">Configuration</a></li>
+  <li><a href="/d">Command reference</a></li>
+  <li><a href="/e">Api reference</a></li>
+  <li><a href="/f">Changelog</a></li>
+  <li><a href="/g">Licence</a></li>
+</ul>
+
+<script>
+var results = document.createElement('ul');
+results.id = 'results';
+
+function report(name, ok, detail) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name +
+                   (detail ? ' -- ' + String(detail).replace(/\s+/g, ' ').trim() : '');
+  results.appendChild(li);
+}
+
+window.addEventListener('load', function () {
+  var beforeHtml = document.body.innerHTML;
+
+  allImages = []; extractedImages = []; imageFileNames.clear();
+  classNameToCss.clear(); cssToClassName.clear(); usedElementIds.clear();
+
+  var state = readLivePage(false, []);
+  var readable = extractReadableContent(state);
+  clearLiveMarks(state);
+
+  // Null is the one answer the listener has a fallback for. Anything else has to
+  // be good enough to save as it stands, since nothing downstream re-checks it.
+  report('a page with no article still yields something to save', !!readable);
+
+  var content = readable ? getContent(readable, state) : '';
+  var entries = ['Getting started', 'Installation', 'Configuration',
+                 'Command reference', 'Api reference', 'Changelog', 'Licence'];
+  var lost = entries.filter(function (e) { return content.indexOf(e) < 0; });
+  report('nothing is silently dropped from a page it cannot distil',
+         lost.length === 0, 'lost ' + lost.join(', '));
+
+  report('live dom unchanged', document.body.innerHTML === beforeHtml);
+
+  document.body.appendChild(results);
+  document.title = 'DONE';
+});
+</script>
+</body>
+</html>

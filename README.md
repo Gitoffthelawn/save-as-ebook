@@ -135,6 +135,7 @@ in Chrome:
  - http://ebooks.stackexchange.com/questions/1183/what-is-the-minimum-required-content-for-a-valid-epub
  - https://github.com/blowsie/Pure-JavaScript-HTML5-Parser
  - https://stuk.github.io/jszip/
+ - https://github.com/mozilla/readability - the library behind Firefox's Reader View, used by the "Apply Readability.js" option. Apache-2.0.
  - http://johnny.github.io/jquery-sortable/
  - https://github.com/eligrey/FileSaver.js/
  - https://www.iconfinder.com/icons/753890/book_books_education_library_study_icon#size=128

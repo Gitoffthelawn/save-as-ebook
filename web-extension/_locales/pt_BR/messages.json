@@ -6,6 +6,12 @@
     "includeStyle": {
         "message": "Incuir estilo (personalizado)"
     },
+    "readerMode": {
+        "message": "Aplicar Readability.js"
+    },
+    "readerModeHint": {
+        "message": "Manter apenas o artigo, removendo navegação, barras laterais e comentários. Aplica-se somente a «Salvar página» e «Adicionar página como capítulo». Páginas que não são artigos são salvas por inteiro."
+    },
     "editStyles": {
         "message": "Editar estilos personalizados ..."
     },
