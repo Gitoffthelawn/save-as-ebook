@@ -62,6 +62,27 @@ function saveEbookTitle(title) {
     });
 }
 
+// The book-wide stylesheet, kept beside the title and the identifier because it
+// belongs to the book being assembled rather than to any one chapter - and is
+// discarded with them. Not to be confused with the per-site styles behind
+// getStyles(): those are applied to a page while it is being captured and
+// outlive any single book.
+function getBookCss(callback) {
+    chrome.runtime.sendMessage({
+        type: "get book css"
+    }, function(response) {
+        callback(response && typeof response.css === 'string' ? response.css : '');
+    });
+}
+
+function saveBookCss(css) {
+    chrome.runtime.sendMessage({
+        type: "set book css",
+        css: css
+    }, function(response) {
+    });
+}
+
 // The identifier of the ebook being assembled from chapters. Minted once by the
 // background and kept next to the chapters, because dc:identifier is what a
 // library uses to decide whether a file is a new book or a newer copy of one it

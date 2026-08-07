@@ -303,9 +303,11 @@ async function test(name, body) {
         await settle();
         assert.strictEqual(absentResult, true);
         // Order is the assertion, not just membership: jszip and readability are
-        // globals the scripts after them use at load time.
+        // globals the scripts after them use at load time, and sanitizeHtml.js
+        // defines the tag lists extractHtml.js reads while it loads.
         assert.deepStrictEqual(absent.state.executeScripts[0].files,
-            ['libs/jszip.js', 'libs/readability.js', 'utils.js', 'extractHtml.js', 'saveEbook.js']);
+            ['libs/jszip.js', 'libs/readability.js', 'utils.js', 'sanitizeHtml.js',
+             'extractHtml.js', 'saveEbook.js']);
 
         const denied = createHarness({pingResponse: undefined, executeScriptFailure: true});
         let deniedResult;
@@ -431,10 +433,27 @@ async function test(name, body) {
         assert.deepStrictEqual(request(h, {type: 'get uuid'}), [{uuid: 'second-id'}]);
     });
 
+    await test('the book stylesheet persists for a book and is discarded with it', () => {
+        const h = createHarness();
+        assert.deepStrictEqual(request(h, {type: 'get book css'}), [{css: ''}],
+            'a book nobody styled has an empty stylesheet, not a missing one');
+        request(h, {type: 'set book css', css: 'body{font-family:serif}'});
+        assert.deepStrictEqual(request(h, {type: 'get book css'}),
+            [{css: 'body{font-family:serif}'}]);
+        request(h, {type: 'remove'});
+        assert.strictEqual(h.state.local.bookCss, undefined,
+            'the stylesheet belongs to the discarded chapters');
+        // the per-site styles are a different thing entirely and outlive any book
+        request(h, {type: 'set styles', styles: [{title: 'a site'}]});
+        request(h, {type: 'remove'});
+        assert.deepStrictEqual(h.state.local.styles, [{title: 'a site'}]);
+    });
+
     await test('each runtime message sends at most one response', async () => {
         const cases = [
             {type: 'get'}, {type: 'set', pages: []}, {type: 'remove'},
             {type: 'get uuid'}, {type: 'get title'}, {type: 'set title', title: 'T'},
+            {type: 'get book css'}, {type: 'set book css', css: 'p{}'},
             {type: 'get styles'}, {type: 'set styles', styles: []},
             {type: 'get current style'}, {type: 'set current style', currentStyle: 2},
             {type: 'get include style'}, {type: 'set include style', includeStyle: true},

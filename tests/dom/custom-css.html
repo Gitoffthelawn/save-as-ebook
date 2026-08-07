@@ -1,0 +1,321 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="../../web-extension/chapterEditor.css">
+</head>
+<body>
+<script>
+// The two stylesheets a user can write: one for the book, one for a chapter.
+//
+// The claim being tested is that the box and the archive agree. What is typed
+// into either box is what the frame renders, and what the frame renders is what
+// chapterStyleContent() and buildEbook() write into the zip - the preview is the
+// only feedback there is while writing css against content, so it has to be the
+// same string, assembled the same way, not a second rendering that can drift.
+//
+// The other claim is the one thing user css is held to: a stylesheet may not
+// reach outside the archive. Everything else about it is left alone.
+
+var FIXTURE_PAGES = [
+  {
+    title: 'Chapter One',
+    url: 'c1.xhtml',
+    content: '<p id="body-text">one</p>',
+    images: [],
+    styleFileName: 'style0.css',
+    styleFileContent: '#body-text{color:rgb(1, 2, 3)}',
+    // a chapter that was already styled, so that reopening it shows the user
+    // what they wrote rather than an empty box
+    customCss: '#body-text{padding-top:5px}'
+  },
+  {
+    title: 'Chapter Two',
+    url: 'c2.xhtml',
+    content: '<h1>Chapter Two</h1><p>two</p>',
+    images: [],
+    styleFileName: 'style1.css',
+    styleFileContent: ''
+  }
+];
+
+var STORED_BOOK_CSS = 'p{padding-left:3px}';
+
+var written = {pages: null, bookCss: null};
+var builds = [];
+window.close = function(){};
+window.confirm = function(){ return true; };
+
+window.chrome = {
+  runtime: {
+    onMessage: {addListener: function(){}},
+    lastError: null,
+    getURL: function(p){ return 'chrome-extension://fake/' + p; },
+    sendMessage: function(msg, cb) {
+      var reply = {};
+      if (msg.type === 'set') written.pages = msg.pages;
+      if (msg.type === 'set book css') written.bookCss = msg.css;
+      if (msg.type === 'get') reply = {allPages: FIXTURE_PAGES};
+      if (msg.type === 'get title') reply = {title: 'My Book'};
+      if (msg.type === 'get uuid') reply = {uuid: 'fixture-uuid'};
+      if (msg.type === 'get book css') reply = {css: STORED_BOOK_CSS};
+      if (cb) setTimeout(function(){ cb(reply); }, 0);
+    }
+  },
+  i18n: {getMessage: function(k){ return k; }},
+  tabs: {query: function(q, cb){ cb([{id: 1, url: 'https://example.com'}]); },
+         create: function(){}, update: function(){}},
+  commands: {getAll: function(cb){ cb([]); }}
+};
+
+var errors = [];
+window.addEventListener('error', function(e){ errors.push(e.message); });
+</script>
+
+<!-- the script set chapters.html loads, in the same order -->
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/libs/jszip.js"></script>
+<script src="../../web-extension/sanitizeHtml.js"></script>
+<script src="../../web-extension/saveEbook.js"></script>
+<script src="../../web-extension/chapterPreview.js"></script>
+<script src="../../web-extension/chapterContentEditor.js"></script>
+<script src="../../web-extension/chapterEditor.js"></script>
+
+<script>
+// The build is the last step and downloads a file; what this fixture needs from
+// it is the book metadata the editor hands it.
+var realBuildEbook = window.buildEbook;
+window.buildEbook = function(pages, bookMeta) {
+  builds.push({pages: pages, meta: bookMeta});
+};
+
+var results = document.createElement('ul');
+results.id = 'results';
+document.body.appendChild(results);
+
+function detail(text) {
+  var line = String(text).replace(/\s+/g, ' ').trim();
+  return line.length > 200 ? line.substring(0, 200) + '...' : line;
+}
+
+function report(name, ok, why) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (why ? ' -- ' + detail(why) : '');
+  results.appendChild(li);
+}
+
+function done(message) {
+  if (message) {
+    report(message, false);
+  }
+  document.title = 'DONE';
+}
+
+function waitFor(what, predicate, next) {
+  var tries = 0;
+  (function poll() {
+    var ready = false;
+    try { ready = predicate(); } catch (e) { ready = false; }
+    if (ready) { next(); return; }
+    if (++tries > 100) { done('timed out waiting for ' + what); return; }
+    setTimeout(poll, 20);
+  })();
+}
+
+function element(id) {
+  return document.getElementById(id);
+}
+
+// Setting .value is not typing, and the boxes are wired to oninput
+function type(box, text) {
+  box.value = text;
+  box.dispatchEvent(new Event('input', {bubbles: true}));
+}
+
+var frame = null;
+var frameDoc = null;
+
+function frameStyle(id) {
+  return frameDoc.getElementById(id).textContent;
+}
+
+function computed(selector, property) {
+  var node = frameDoc.querySelector(selector);
+  return frame.contentWindow.getComputedStyle(node)[property];
+}
+
+setTimeout(function () {
+  report('scripts ran without throwing', errors.length === 0, errors.join(' | '));
+
+  // ---- what a stylesheet may not do ------------------------------------------
+  //
+  // Everything else in it is the user's business: no allowlist, no property
+  // filter. These two reach outside the archive, and nothing else does.
+  report('an @import is removed',
+         sanitizeStylesheet('@import url("https://cdn.test/a.css");p{color:red}') ===
+             'p{color:red}',
+         sanitizeStylesheet('@import url("https://cdn.test/a.css");p{color:red}'));
+  report('a quoted @import is removed too, semicolons in the string and all',
+         sanitizeStylesheet('@import "a;b.css" screen;p{color:red}') === 'p{color:red}',
+         sanitizeStylesheet('@import "a;b.css" screen;p{color:red}'));
+  report('an unterminated @import at the end of the file is removed',
+         sanitizeStylesheet('p{color:red}@import "x.css"') === 'p{color:red}',
+         sanitizeStylesheet('p{color:red}@import "x.css"'));
+  report('a remote url becomes a value the property still accepts',
+         sanitizeStylesheet('p{background-image:url(https://cdn.test/x.png)}') ===
+             'p{background-image:none}',
+         sanitizeStylesheet('p{background-image:url(https://cdn.test/x.png)}'));
+  report('so does a scheme-relative one',
+         sanitizeStylesheet('p{background-image:url("//cdn.test/x.png")}') ===
+             'p{background-image:none}',
+         sanitizeStylesheet('p{background-image:url("//cdn.test/x.png")}'));
+  // it names a picture the book really contains
+  report('a reference into the archive is left alone',
+         sanitizeStylesheet('p{background-image:url("../images/x.png")}') ===
+             'p{background-image:url("../images/x.png")}');
+  // carried in the file rather than fetched from anywhere
+  report('a data url is left alone',
+         sanitizeStylesheet('p{background-image:url(data:image/gif;base64,R0l)}') ===
+             'p{background-image:url(data:image/gif;base64,R0l)}');
+  report('everything a reading system might not understand is still the user\'s to write',
+         sanitizeStylesheet('@media print{p{page-break-after:avoid;--x:1}}') ===
+             '@media print{p{page-break-after:avoid;--x:1}}');
+  report('nothing at all is not an error',
+         sanitizeStylesheet(undefined) === '' && sanitizeStylesheet(null) === '');
+
+  // ---- what the chapter's stylesheet is --------------------------------------
+  report('the captured stylesheet comes first, the user\'s after it',
+         chapterStyleContent({styleFileContent: 'a{color:red}', customCss: 'b{color:blue}'}) ===
+             'a{color:red}\nb{color:blue}',
+         chapterStyleContent({styleFileContent: 'a{color:red}', customCss: 'b{color:blue}'}));
+  report('a chapter nobody styled keeps exactly what was captured',
+         chapterStyleContent({styleFileContent: 'a{color:red}'}) === 'a{color:red}');
+  report('and one whose page gave nothing keeps exactly what was written',
+         chapterStyleContent({styleFileContent: '', customCss: 'b{color:blue}'}) ===
+             'b{color:blue}');
+
+  // ---- the document the preview renders --------------------------------------
+  var html = buildChapterPreviewDocument(FIXTURE_PAGES[0], {bookCss: 'body{margin:2em}'});
+  var doc = new DOMParser().parseFromString(html, 'text/html');
+  report('the book stylesheet is inlined under a name a caller can replace',
+         doc.getElementById('sae-preview-book-css') !== null &&
+         doc.getElementById('sae-preview-book-css').textContent === 'body{margin:2em}');
+  report('and so is the chapter\'s, holding both halves of it',
+         doc.getElementById('sae-preview-chapter-css').textContent ===
+             '#body-text{color:rgb(1, 2, 3)}\n#body-text{padding-top:5px}',
+         doc.getElementById('sae-preview-chapter-css').textContent);
+  report('the book stylesheet is first, which is the cascade the archive has',
+         html.indexOf('sae-preview-book-css') < html.indexOf('sae-preview-chapter-css'));
+  report('a stylesheet cannot reach outside the archive from the preview either',
+         buildChapterPreviewDocument(FIXTURE_PAGES[1],
+             {bookCss: '@import "https://cdn.test/a.css";p{color:red}'})
+             .indexOf('@import') < 0);
+
+  // ---- the box for it --------------------------------------------------------
+  var bookCss = element('chapterEditor-bookCss');
+  report('the book stylesheet box is folded away to begin with',
+         bookCss.style.display === 'none');
+  report('...and opens when it is asked for',
+         (element('chapterEditor-bookCssToggle').click(),
+          bookCss.style.display === 'block'));
+  report('it holds the stylesheet this book already had',
+         bookCss.value === STORED_BOOK_CSS, bookCss.value);
+
+  // ---- and it reaches the frame ----------------------------------------------
+  element('li0').getElementsByTagName('button')[0].click();
+  frame = element('chapterEditor-previewFrame');
+
+  var chapterCss = element('chapterEditor-chapterCss');
+  report('opening a chapter that has its own css opens the box holding it',
+         element('chapterEditor-chapterCssHolder').style.display === 'block' &&
+         chapterCss.value === '#body-text{padding-top:5px}',
+         chapterCss.value);
+
+  waitFor('the frame to load', function() {
+    frameDoc = frame.contentDocument;
+    return frameDoc && frameDoc.getElementById('body-text');
+  }, function() {
+    report('the stylesheet the book already had is rendering',
+           computed('#body-text', 'paddingLeft') === '3px',
+           computed('#body-text', 'paddingLeft'));
+    report('and so is the chapter\'s own',
+           computed('#body-text', 'color') === 'rgb(1, 2, 3)' &&
+           computed('#body-text', 'paddingTop') === '5px',
+           computed('#body-text', 'color') + ' / ' + computed('#body-text', 'paddingTop'));
+
+    // Typing, not saving: a rule that only takes effect once it has been stored
+    // cannot be written against content you are looking at.
+    type(bookCss, 'p{padding-left:11px}');
+    report('a rule typed into the book box takes effect as it is typed',
+           computed('#body-text', 'paddingLeft') === '11px',
+           computed('#body-text', 'paddingLeft'));
+    report('and it replaced that stylesheet rather than being added beside it',
+           frameDoc.querySelectorAll('style').length === 3,
+           frameDoc.querySelectorAll('style').length + ' style elements');
+
+    type(chapterCss, '#body-text{padding-bottom:13px}');
+    report('a rule typed into the chapter box takes effect too',
+           computed('#body-text', 'paddingBottom') === '13px',
+           computed('#body-text', 'paddingBottom'));
+    report('...without losing the stylesheet captured from the page',
+           computed('#body-text', 'color') === 'rgb(1, 2, 3)' &&
+           frameStyle('sae-preview-chapter-css')
+               .indexOf('#body-text{color:rgb(1, 2, 3)}') === 0,
+           frameStyle('sae-preview-chapter-css'));
+
+    // the frame is what the user is judging the css by, so it may not show a
+    // picture the book will not have
+    type(bookCss, 'p{background-image:url(https://cdn.test/x.png)}');
+    report('a remote reference is gone from the preview, as it will be from the book',
+           frameStyle('sae-preview-book-css') === 'p{background-image:none}',
+           frameStyle('sae-preview-book-css'));
+
+    type(bookCss, 'p{padding-left:11px}');
+
+    // ---- into storage ---------------------------------------------------------
+    report('the chapter css alone is enough to have something to save',
+           !element('chapterEditor-saveChapter').disabled);
+    element('chapterEditor-saveChapter').click();
+
+    waitFor('the chapter to be saved', function() { return written.pages !== null; },
+    function() {
+      report('this chapter\'s css was stored on its record',
+             written.pages[0].customCss === '#body-text{padding-bottom:13px}',
+             String(written.pages[0].customCss));
+      report('the chapter beside it was not given one',
+             !written.pages[1].customCss, String(written.pages[1].customCss));
+      report('the captured stylesheet was not overwritten with the merged one',
+             written.pages[0].styleFileContent === '#body-text{color:rgb(1, 2, 3)}',
+             written.pages[0].styleFileContent);
+      report('the book stylesheet was stored beside the title, not on a chapter',
+             written.bookCss === 'p{padding-left:11px}', String(written.bookCss));
+      report('and saving it left nothing more to save',
+             element('chapterEditor-saveChapter').disabled);
+
+      // ---- a chapter that has none ---------------------------------------------
+      element('li1').getElementsByTagName('button')[0].click();
+      report('opening a chapter with no css of its own opens an empty box, folded away',
+             element('chapterEditor-chapterCssHolder').style.display === 'none' &&
+             element('chapterEditor-chapterCss').value === '',
+             element('chapterEditor-chapterCss').value);
+
+      // ---- and what the build is handed -----------------------------------------
+      document.getElementsByClassName('chapterEditor-generate-button')[0].click();
+      waitFor('the build to be started', function() { return builds.length > 0; },
+      function() {
+        report('the build is handed the book stylesheet, from the box and not from storage',
+               builds[0].meta.css === 'p{padding-left:11px}', String(builds[0].meta.css));
+        report('along with the title and the identifier it already took',
+               builds[0].meta.title === 'My Book' && builds[0].meta.uuid === 'fixture-uuid',
+               JSON.stringify(builds[0].meta));
+        report('and the chapters carry their own css into it',
+               builds[0].pages[0].customCss === '#body-text{padding-bottom:13px}',
+               String(builds[0].pages[0].customCss));
+        done('');
+      });
+    });
+  });
+}, 300);
+</script>
+</body>
+</html>

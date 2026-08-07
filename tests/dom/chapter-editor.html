@@ -13,6 +13,9 @@ var FIXTURE_PAGES = [
 ];
 var FIXTURE_STYLES = [{title: 'Wikipedia', url: 'wikipedia\\.org', style: '#x{display:none}'}];
 var sent = [];
+// what was written, so a build can be checked against what the page held rather
+// than against what storage would have answered with
+var written = {pages: null, title: null};
 
 window.chrome = {
   runtime: {
@@ -22,8 +25,11 @@ window.chrome = {
     sendMessage: function(msg, cb) {
       sent.push(msg.type);
       var reply = {};
+      if (msg.type === 'set') written.pages = msg.pages;
+      if (msg.type === 'set title') written.title = msg.title;
       if (msg.type === 'get') reply = {allPages: FIXTURE_PAGES};
       if (msg.type === 'get title') reply = {title: 'My Book'};
+      if (msg.type === 'get uuid') reply = {uuid: 'fixture-uuid'};
       if (msg.type === 'get styles') reply = {styles: FIXTURE_STYLES};
       if (msg.type === 'get current style') reply = {currentStyle: 0};
       if (msg.type === 'get include style') reply = {includeStyle: true};
@@ -40,9 +46,13 @@ var errors = [];
 window.addEventListener('error', function(e){ errors.push(e.message); });
 </script>
 
+<!-- the script set chapters.html loads, in the same order -->
 <script src="../../web-extension/utils.js"></script>
 <script src="../../web-extension/libs/jszip.js"></script>
+<script src="../../web-extension/sanitizeHtml.js"></script>
 <script src="../../web-extension/saveEbook.js"></script>
+<script src="../../web-extension/chapterPreview.js"></script>
+<script src="../../web-extension/chapterContentEditor.js"></script>
 <script src="../../web-extension/chapterEditor.js"></script>
 
 <script>
@@ -68,7 +78,44 @@ setTimeout(function () {
   report('page stylesheets left enabled (no global disable)',
          document.styleSheets.length > 0);
 
-  document.title = 'DONE';
+  // ---- generating builds from the chapters the page is holding ----
+  //
+  // Not from storage: saveChanges() has only just started writing them, and
+  // that write is asynchronous. The editor used to reread storage here and
+  // race its own write.
+  var built = null;
+  buildEbook = function (pages, bookMeta) { built = {pages: pages, meta: bookMeta}; };
+
+  document.getElementById('text0').value = 'Renamed One';
+  document.getElementById('chapterEditor-ebookTitle').value = 'Edited Book';
+  // whatever storage would answer with now is stale by construction
+  FIXTURE_PAGES = [{title: 'Stale', url: 'stale.xhtml', content: '', images: []}];
+  sent = [];
+  document.getElementsByClassName('chapterEditor-generate-button')[0].click();
+
+  setTimeout(function () {
+    report('the build was handed the chapters, not left to find them', !!built);
+    report('both chapters reached the build', !!built && built.pages.length === 2,
+           built ? 'got ' + built.pages.length : 'no build');
+    report('the build sees the rename that was just made',
+           !!built && built.pages[0].title === 'Renamed One',
+           built ? built.pages[0].title : 'no build');
+    report('the build did not reread storage',
+           sent.indexOf('get') < 0, sent.join(','));
+    report('what was built is what was written',
+           !!built && written.pages === built.pages,
+           written.pages ? 'wrote ' + written.pages.length : 'nothing written');
+    report('the edited book title reaches the build',
+           !!built && built.meta.title === 'Edited Book' && written.title === 'Edited Book',
+           built ? built.meta.title : 'no build');
+    // the one thing that does have to come from storage: nothing on this page
+    // writes the identifier
+    report('the stored identifier reaches the build',
+           !!built && built.meta.uuid === 'fixture-uuid',
+           built ? String(built.meta.uuid) : 'no build');
+
+    document.title = 'DONE';
+  }, 100);
 }, 300);
 </script>
 </body>

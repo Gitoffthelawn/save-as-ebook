@@ -59,7 +59,7 @@ let jobClaimPending = false
 // acted on, and the alternative - injecting it separately when the setting is on
 // - leaves a tab that was injected with the setting off unable to honour it when
 // the user turns it on without reloading.
-const CONTENT_SCRIPTS = ['libs/jszip.js', 'libs/readability.js', 'utils.js', 'extractHtml.js', 'saveEbook.js']
+const CONTENT_SCRIPTS = ['libs/jszip.js', 'libs/readability.js', 'utils.js', 'sanitizeHtml.js', 'extractHtml.js', 'saveEbook.js']
 
 var defaultStyles = [
     {
@@ -600,6 +600,9 @@ function _execRequest(request, sender, sendResponse) {
         // the identifier belongs to the discarded set of chapters - the next
         // ebook is a different book and must not reuse it
         chrome.storage.local.remove('uuid');
+        // and so does the stylesheet written for them. The per-site styles under
+        // 'styles' are not touched: those belong to the sites, not to this book.
+        chrome.storage.local.remove('bookCss');
     }
     // Minted on first use and kept until the ebook is discarded, so rebuilding
     // after editing chapters produces the same dc:identifier. The service worker
@@ -627,6 +630,16 @@ function _execRequest(request, sender, sendResponse) {
     }
     if (request.type === 'set title') {
         chrome.storage.local.set({'title': request.title});
+    }
+    // The book-wide stylesheet. Empty until somebody writes one, which is what
+    // every book built before the editor had a box for it had.
+    if (request.type === 'get book css') {
+        chrome.storage.local.get('bookCss', function (data) {
+            sendResponse({css: data && typeof data.bookCss === 'string' ? data.bookCss : ''});
+        })
+    }
+    if (request.type === 'set book css') {
+        chrome.storage.local.set({'bookCss': typeof request.css === 'string' ? request.css : ''});
     }
     if (request.type === 'get styles') {
         chrome.storage.local.get('styles', function (data) {

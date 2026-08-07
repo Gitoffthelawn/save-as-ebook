@@ -41,6 +41,14 @@ for build in "fixture.epub" "single.epub --single"; do
     ./run-epubcheck.sh "out/$1" || status=1
 done
 
+# The build stage relies on invariants the extraction pipeline guarantees. Once
+# a user has edited the content in a live DOM, the only thing standing between
+# that DOM and an unparseable chapter is the shared sanitizer - and EPUBCheck is
+# the arbiter of whether it held.
+echo
+echo "### building and validating a book from edited chapters"
+./build-edited-epub.sh || status=1
+
 echo
 echo "### negative EPUB structure checks"
 node check-epub-negative.js "out/fixture.epub" || status=1

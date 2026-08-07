@@ -1,0 +1,163 @@
+<!doctype html>
+<html>
+<head>
+<!-- The point of the shared sanitizer is that it runs without a page to
+     extract: sanitizeHtml.js is loaded here on its own for most of these
+     assertions, exactly as the chapter editor loads it. extractHtml.js comes
+     after it only so the last group can check that what extraction writes is
+     already a fixed point of the editor's sanitizer - the round trip an edit
+     depends on. -->
+<script>
+window.chrome = {
+  runtime: {onMessage: {addListener: function(){}}, sendMessage: function(){}},
+  i18n: {getMessage: function(){ return ''; }}
+};
+</script>
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/sanitizeHtml.js"></script>
+<script src="../../web-extension/extractHtml.js"></script>
+<base href="https://example.com/blog/">
+</head>
+<body>
+  <article id="source">
+    <p class="lead">Text with &amp; an entity &nbsp; and a <b>bold</b> run.</p>
+    <blockquote cite="/sources/one"><p>Quoted</p></blockquote>
+    <p><a href="#note-1">a link into the page</a> and
+       <a href="/elsewhere">one off it</a>.</p>
+    <table><tr><td colspan="2">cell</td></tr></table>
+    <p id="note-1" lang="fr">Une note</p>
+    <img src="/img/logo.png" alt="a logo">
+  </article>
+
+<script>
+// The runner reads results a line at a time, so a detail carrying a newline -
+// which every one of these content strings does - would hide the result it
+// belongs to.
+function detail(text) {
+  var line = String(text).replace(/\s+/g, ' ').trim();
+  return line.length > 300 ? line.substring(0, 300) + '...' : line;
+}
+
+function report(name, ok, why) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (why ? ' -- ' + detail(why) : '');
+  document.getElementById('results').appendChild(li);
+}
+
+// The contract, checked rather than assumed: a chapter is written into an XHTML
+// document, and a reading system parses it as XML.
+function xmlError(content) {
+  var doc = new DOMParser().parseFromString(
+      '<html xmlns="http://www.w3.org/1999/xhtml"><body>' + content + '</body></html>',
+      'application/xhtml+xml');
+  var error = doc.querySelector('parsererror');
+  return error ? error.textContent.replace(/\s+/g, ' ').substring(0, 120) : '';
+}
+
+function reportWellFormed(name, content) {
+  var error = xmlError(content);
+  report(name, error === '', error);
+}
+
+window.addEventListener('load', function () {
+  var out = document.createElement('ul');
+  out.id = 'results';
+  document.body.appendChild(out);
+
+  // ---- 1. what a user edit can put in, and what may come out ----
+
+  var edited =
+      '<p onclick="steal()" style="color:red" class="cls0">kept text</p>' +
+      '<script>bad()<\/script>' +
+      '<p>tail <b>unclosed' +
+      '</div>' +
+      '<img src="https://cdn.example.net/remote.png" alt="remote">' +
+      '<img src="../images/img-1.png" alt="local">' +
+      '<a href="javascript:steal()">js</a>' +
+      '<a href="relative/page.html">relative</a>' +
+      '<a href="https://example.org/x">absolute</a>' +
+      '<a href="#nope!">bad fragment</a>' +
+      '<custom-widget>unwrapped, text stays</custom-widget>';
+  var clean = sanitizeChapterContent(edited);
+
+  reportWellFormed('edited content is well formed XML', clean);
+  report('scripts and their content are dropped',
+         clean.indexOf('bad()') < 0 && clean.indexOf('<script') < 0, clean);
+  report('event handlers are dropped', clean.indexOf('onclick') < 0);
+  report('inline style is dropped', clean.indexOf('style=') < 0);
+  report('the generated class survives an edit', clean.indexOf('class="cls0"') > -1, clean);
+  report('an unknown element is unwrapped, its text kept',
+         clean.indexOf('unwrapped, text stays') > -1 && clean.indexOf('custom-widget') < 0);
+  // The parser adopts everything after it into the <b>, and a stray </div>
+  // closes nothing - what has to hold is that the tag is closed exactly once,
+  // which is what the XML check above rests on.
+  report('an unclosed tag is closed',
+         (clean.match(/<b>/g) || []).length === 1 &&
+         (clean.match(/<\/b>/g) || []).length === 1, clean);
+  report('an image the archive does not hold is dropped',
+         clean.indexOf('remote.png') < 0, clean);
+  report('an image the archive holds is kept',
+         clean.indexOf('src="../images/img-1.png"') > -1, clean);
+  report('a javascript: link loses its href, keeps its text',
+         clean.indexOf('javascript:') < 0 && clean.indexOf('>js<') > -1, clean);
+  // Nothing on the editor page says what a relative reference is relative to -
+  // the editor's own address certainly is not it.
+  report('an unresolvable relative link loses its href',
+         clean.indexOf('relative/page.html') < 0 && clean.indexOf('>relative<') > -1, clean);
+  report('an absolute link is kept',
+         clean.indexOf('href="https://example.org/x"') > -1, clean);
+  report('a fragment that is not an XML name loses its href',
+         clean.indexOf('#nope!') < 0, clean);
+
+  // ---- 2. ids stay unique within the chapter ----
+  var duplicated = sanitizeChapterContent('<p id="a">one</p><p id="a">two</p><p id="9bad">three</p>');
+  report('the first of two equal ids keeps it',
+         (duplicated.match(/ id="a"/g) || []).length === 1, duplicated);
+  report('an id that is not an XML name is dropped',
+         duplicated.indexOf('9bad') < 0, duplicated);
+
+  // ---- 3. entities and characters XML cannot carry ----
+  var entities = sanitizeChapterContent('<p>a &amp; b &nbsp; c &mdash; d</p>');
+  reportWellFormed('decoded entities are re-escaped as XML predefines', entities);
+  report('no named entity survives',
+         entities.indexOf('&nbsp;') < 0 && entities.indexOf('&mdash;') < 0 &&
+         entities.indexOf('&amp;amp;') < 0 && entities.indexOf('a &amp; b') > -1,
+         entities);
+
+  // ---- 4. extraction output is a fixed point of the editor's sanitizer ----
+  //
+  // This is what makes an edit safe: the editor hands back a string built from
+  // content extraction wrote, and running it through again may tidy it but must
+  // not lose anything.
+  allImages = []; extractedImages = []; imageFileNames.clear();
+  classNameToCss.clear(); cssToClassName.clear(); usedElementIds.clear();
+
+  var state = readLivePage(true, []);
+  var clone = document.getElementById('source').cloneNode(true);
+  clearLiveMarks(state);
+  var extracted = getContent(clone, state);
+
+  reportWellFormed('extracted content is well formed XML', extracted);
+
+  var again = sanitizeChapterContent(extracted);
+  report('re-sanitizing extraction output changes nothing', again === extracted,
+         'before=' + extracted + ' after=' + again);
+  report('...and it was not empty to begin with',
+         extracted.indexOf('kept') > -1 || extracted.indexOf('Text with') > -1, extracted);
+  report('the generated css classes survived the round trip',
+         (again.match(/ class="/g) || []).length ===
+         (extracted.match(/ class="/g) || []).length, again);
+  report('a link into the chapter survived the round trip',
+         again.indexOf('href="#note-1"') > -1, again);
+  report('an absolutised link survived the round trip',
+         again.indexOf('href="https://example.com/elsewhere"') > -1, again);
+  report('the archive image reference survived the round trip',
+         (again.match(/\.\.\/images\//g) || []).length === 1, again);
+  report('blockquote cite survived the round trip',
+         again.indexOf('cite="https://example.com/sources/one"') > -1, again);
+
+  document.title = 'DONE';
+});
+</script>
+</body>
+</html>

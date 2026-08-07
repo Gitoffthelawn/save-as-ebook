@@ -12,7 +12,8 @@ const SVG_BYTES = Buffer.from(
 ).toString('base64');
 
 function makeSandbox() {
-    const state = {title: 'Scenario Book', uuid: null, pages: [], downloads: [], messages: [], alerts: []};
+    const state = {title: 'Scenario Book', uuid: null, css: '', pages: [], downloads: [],
+                   messages: [], alerts: []};
     const sandbox = {
         console,
         setTimeout,
@@ -47,6 +48,7 @@ function makeSandbox() {
                     let response = {};
                     if (message.type === 'get title') response = {title: state.title};
                     if (message.type === 'get uuid') response = {uuid: state.uuid};
+                    if (message.type === 'get book css') response = {css: state.css};
                     if (message.type === 'get') response = {allPages: state.pages};
                     if (callback) callback(response);
                 }
@@ -91,6 +93,7 @@ async function build(env, pages, options) {
     const {sandbox, state} = env;
     state.title = options.title === undefined ? 'Scenario Book' : options.title;
     state.uuid = options.uuid || null;
+    state.css = options.css || '';
     state.pages = pages;
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('builder did not produce an EPUB')), 5000);
@@ -102,13 +105,13 @@ async function build(env, pages, options) {
                 resolve(result);
             }, reject);
         };
-        if (options.path === 'chapters') sandbox.buildEbookFromChapters();
+        // 'chapters' is the build that reads the book back out of storage;
+        // 'one-shot' is a saved page, which passes no book metadata at all. The
+        // default is the editor's call: the chapters in hand, plus what the page
+        // knows about the book.
+        if (options.path === 'chapters') sandbox.buildEbookFromStorage();
         else if (options.path === 'one-shot') sandbox.buildEbook(pages);
-        else {
-            sandbox.ebookTitle = state.title;
-            sandbox.ebookUuid = state.uuid;
-            sandbox._buildEbook(pages);
-        }
+        else sandbox.buildEbook(pages, {title: state.title, uuid: state.uuid, css: state.css});
     });
 }
 
@@ -176,7 +179,7 @@ function equal(actual, expected, message) {
     await scenario('empty input is rejected and malformed records beside a valid chapter are skipped', async () => {
         const empty = makeSandbox();
         for (const value of [undefined, null, {}, [], [null, undefined, 'broken', {}]]) {
-            empty.sandbox._buildEbook(value);
+            empty.sandbox.buildEbook(value, {title: 'Scenario Book'});
         }
         await new Promise((resolve) => setTimeout(resolve, 0));
         equal(empty.state.downloads.length, 0, 'empty input must not download a book');
@@ -419,6 +422,80 @@ function equal(actual, expected, message) {
         epub = await inspect(env, await build(env, [chapter({metadata: undefined})]));
         ok(!epub.opf.includes('page-progression-direction'),
            'a chapter with no metadata at all should build as left to right');
+    });
+
+    await scenario('the book stylesheet is written, linked, and cascades under the chapter\'s own', async () => {
+        const env = makeSandbox();
+        const epub = await inspect(env, await build(env, [chapter({
+            styleFileContent: '.captured{color:#111}',
+            customCss: 'p{text-align:justify}'
+        })], {css: 'body{font-family:serif}'}));
+
+        equal(await epub.read('OEBPS/' + 'ebook.css'), 'body{font-family:serif}',
+              'the book css should be written into ebook.css');
+
+        const page = await epub.read('OEBPS/pages/chapter.xhtml');
+        ok(page.includes('<link href="../ebook.css" rel="stylesheet" type="text/css" />'),
+           'every chapter should link the book stylesheet');
+        // order is the cascade: the chapter's own is the more specific answer
+        ok(page.indexOf('../ebook.css') < page.indexOf('../style/chapter.css'),
+           'the book stylesheet should be linked before the chapter\'s own');
+        ok(epub.nav.includes('<link href="ebook.css"'),
+           'the table of contents should link it too, from the root it sits in');
+
+        equal(await epub.read('OEBPS/style/chapter.css'),
+              '.captured{color:#111}\np{text-align:justify}',
+              'a chapter\'s own css should be appended to what extraction captured');
+    });
+
+    await scenario('a book nobody styled is byte for byte what it was before there was a box to style it in', async () => {
+        const env = makeSandbox();
+        const epub = await inspect(env, await build(env, [chapter()]));
+        equal(await epub.read('OEBPS/ebook.css'), '',
+              'no book css means an empty ebook.css, as it always was');
+        equal(await epub.read('OEBPS/style/chapter.css'), '',
+              'no chapter css means the captured stylesheet unchanged');
+    });
+
+    await scenario('a stylesheet cannot reach outside the archive', async () => {
+        const env = makeSandbox();
+        const epub = await inspect(env, await build(env, [chapter({
+            // captured css reaches this too: 'list-style' serializes an absolute
+            // url whenever the source page gave its bullets a picture
+            styleFileContent: 'ul{list-style:outside none url("https://cdn.test/bullet.png")}',
+            customCss: [
+                '@import url("https://fonts.test/face.css");',
+                "@import 'local.css';",
+                '.remote{background-image:url(https://cdn.test/bg.png)}',
+                '.schemeless{background-image:url(//cdn.test/bg.png)}',
+                '.local{background-image:url("../images/local.png")}',
+                '.inline{background-image:url(data:image/gif;base64,R0lGOD)}',
+                '.kept{color:red}'
+            ].join('\n')
+        })], {css: '@import "https://cdn.test/book.css";\nbody{background-image:url(http://cdn.test/paper.png)}'}));
+
+        const book = await epub.read('OEBPS/ebook.css');
+        ok(!book.includes('@import'), 'the book css should carry no @import');
+        ok(!book.includes('cdn.test'), 'the book css should fetch nothing off the network');
+        ok(book.includes('background-image:none'),
+           'a removed url should leave a value the property accepts: ' + book);
+
+        const style = await epub.read('OEBPS/style/chapter.css');
+        ok(!style.includes('@import'), 'no @import survives, quoted or in a url()');
+        ok(!style.includes('cdn.test') && !style.includes('fonts.test'),
+           'nothing remote survives: ' + style);
+        ok(!style.includes('local.css'),
+           'a local @import names a file the archive cannot contain either');
+        // EPUB requires an item referencing a remote resource to say so, and
+        // this build makes no such claim about any file it writes
+        ok(!epub.opf.includes('remote-resources'),
+           'and so no manifest item has to claim remote resources');
+
+        ok(style.includes('url("../images/local.png")'),
+           'a reference to a picture the book really contains is kept: ' + style);
+        ok(style.includes('url(data:image/gif;base64,R0lGOD)'),
+           'a data url is carried in the file rather than fetched, and is kept');
+        ok(style.includes('.kept{color:red}'), 'and everything else is left alone');
     });
 
     console.log(failures === 0 ? '\nepub builder scenarios OK' : '\n' + failures + ' scenario failure(s)');

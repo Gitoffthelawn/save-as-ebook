@@ -1,8 +1,83 @@
 var cssFileName = 'ebook.css';
-var ebookTitle = null;
-// Set by buildEbookFromChapters() from storage. Left null on the one-shot
-// "save this page" path, which has no stored identity - see getBookId().
-var ebookUuid = null;
+
+// ---- the stylesheets the archive carries -------------------------------------
+//
+// Two kinds of css reach a book, and only one of them is filtered by content.
+// What extraction captures is scraped off somebody else's page, and supportedCss
+// in extractHtml.js decides which of its declarations are worth carrying. What a
+// user writes in the chapter editor is not that: it is theirs, it is meant to
+// change how the book looks, and holding it to an allowlist would only mean most
+// of what they typed silently did nothing. Nothing they can write in it makes the
+// package invalid either - css a reading system does not understand is css it
+// ignores.
+//
+// What this removes is neither of those judgements. It is the two ways a
+// stylesheet reaches outside the archive, which both kinds can do:
+//
+//   @import       pulls in another stylesheet, which for a remote address is a
+//                 network fetch from inside a file that is supposed to read
+//                 offline, and for a local one names a file the archive has no
+//                 way to contain.
+//   remote url()  a background image or a font fetched off the network. EPUB
+//                 requires a manifest item referencing a remote resource to say
+//                 so (properties="remote-resources"), and this build makes no
+//                 such claim about any file it writes - so rather than have the
+//                 claim and the content disagree, the reference goes. Captured
+//                 css hits this as well: 'list-style' serializes an absolute
+//                 url whenever the page gave its bullets a picture.
+//
+// A url() that is not remote is left alone: "../images/photo.jpg" from a chapter
+// stylesheet resolves to a picture the book really does contain, and using one as
+// a background is a reasonable thing to want. data: urls stay for the same
+// reason - they are carried in the file rather than fetched.
+
+// A url() target that leaves the archive: anything with a scheme, plus the
+// scheme-relative "//host/path" form. data: is not one of these - it is the
+// resource itself, not an address to go and get it from.
+function isRemoteCssUrl(target) {
+    var value = String(target || '').trim();
+    if (/^data:/i.test(value)) {
+        return false;
+    }
+    return /^(?:[a-z][a-z0-9+.\-]*:|\/\/)/i.test(value);
+}
+
+// An @import rule runs to the first semicolon; a quoted string inside it may
+// contain one, so strings are matched rather than scanned through. A rule left
+// unterminated at the end of the file, or at the end of the block it sits in,
+// ends there.
+var CSS_IMPORT_REGEX = /@import\b(?:[^;{}'"]|'[^']*'|"[^"]*")*(?:;|(?=\})|$)/gi;
+var CSS_URL_REGEX = /\burl\(\s*(?:"([^"]*)"|'([^']*)'|([^)"'\s]*))\s*\)/gi;
+
+// What a removed url() becomes. Dropping the token outright would leave
+// "background-image: ;", which a parser discards along with any fallback beside
+// it; 'none' is a value the properties that take a url actually accept, and
+// where it is not one the declaration is dropped by css error recovery, which is
+// the same outcome.
+var REMOVED_CSS_URL = 'none';
+
+function sanitizeStylesheet(css) {
+    return String(css == null ? '' : css)
+        .replace(CSS_IMPORT_REGEX, '')
+        .replace(CSS_URL_REGEX, function(rule, quoted, single, bare) {
+            var target = quoted !== undefined ? quoted :
+                         single !== undefined ? single : bare;
+            return isRemoteCssUrl(target) ? REMOVED_CSS_URL : rule;
+        });
+}
+
+// The stylesheet a chapter is written with: what extraction captured from the
+// page, then what the user added in the editor. In that order, so that a rule
+// the user writes wins over the scraped one it collides with - which is the
+// whole point of being able to write one.
+function chapterStyleContent(page) {
+    var captured = typeof page.styleFileContent === 'string' ? page.styleFileContent : '';
+    var authored = typeof page.customCss === 'string' ? page.customCss : '';
+    if (authored.trim() === '') {
+        return sanitizeStylesheet(captured);
+    }
+    return sanitizeStylesheet(captured === '' ? authored : captured + '\n' + authored);
+}
 
 // Compression is set per file, never globally: OCF requires 'mimetype' to be
 // the first entry and STORE-d, so readers can sniff the magic bytes.
@@ -63,7 +138,12 @@ function normalizeChapters(allPages) {
             images: Array.isArray(page.images) ? page.images : [],
             styleFileName: typeof page.styleFileName === 'string' && page.styleFileName ?
                            page.styleFileName : 'style' + index + '.css',
-            styleFileContent: typeof page.styleFileContent === 'string' ? page.styleFileContent : ''
+            styleFileContent: typeof page.styleFileContent === 'string' ? page.styleFileContent : '',
+            // kept beside the captured stylesheet rather than merged into it, so
+            // that reopening the editor shows the user what they wrote and not
+            // the page's computed styles with their rules buried at the bottom.
+            // chapterStyleContent() is where the two become one file.
+            customCss: typeof page.customCss === 'string' ? page.customCss : ''
         }));
     }).map(dropMissingImages);
 }
@@ -156,8 +236,8 @@ function getImagesIndex(allImages) {
 // so that rebuilding after an edit updates the same book in a library instead of
 // adding a second copy. A single page saved straight to disk was never stored
 // and is a new book every time, so it gets a fresh id.
-function getBookId() {
-    return 'urn:uuid:' + (ebookUuid || generateUuid());
+function getBookId(uuid) {
+    return 'urn:uuid:' + (uuid || generateUuid());
 }
 
 // dc:source, one per chapter. sourceUrl was added after baseUrl already existed;
@@ -812,29 +892,39 @@ function getExternalLinksIndex() { // TODO
     }, '');
 }
 
-function buildEbookFromChapters() {
+// Reads the whole book out of storage and builds it. For a caller that has no
+// chapters in hand - everything else passes its own array to buildEbook(), which
+// is what keeps a build from racing the storage write that preceded it.
+function buildEbookFromStorage() {
     getEbookTitle(function (title) {
-        ebookTitle = title;
-        if (!ebookTitle || ebookTitle.trim().length === 0) {
-            ebookTitle = 'eBook';
-        }
         getEbookUuid(function (uuid) {
-            ebookUuid = uuid;
-            getEbookPages(_buildEbook);
+            getBookCss(function (css) {
+                getEbookPages(function (allPages) {
+                    buildEbook(allPages, {title: title, uuid: uuid, css: css});
+                });
+            })
         })
     })
 }
 
-// FIXME remove  - keep one  function
-function buildEbook(allPages, fromMenu=false) {
-    // the one-shot "save this page" path: nothing about it was stored, so it is
-    // a new book every time and must not inherit an id from a chapter build
-    ebookUuid = null;
-    _buildEbook(allPages, fromMenu);
-}
-
+// The one way an ebook is built - the one-shot "save this page" and the editor's
+// "generate" differ only in what they pass here. Everything that is not
+// derivable from the chapters themselves arrives in bookMeta:
+//
+//   title  what the book is called. Absent, the first chapter names it, which is
+//          the right answer for a single saved page.
+//   uuid   dc:identifier. Absent, a fresh one is minted: the one-shot path
+//          stored nothing, so it is a new book every time and must not inherit
+//          an id from a chapter build - see getBookId().
+//   css    the book-wide stylesheet, written by the user in the chapter editor.
+//          Absent, ebook.css is written empty, which is what it was for every
+//          book built before there was anywhere to type one.
+//
 // http://ebooks.stackexchange.com/questions/1183/what-is-the-minimum-required-content-for-a-valid-epub
-function _buildEbook(allPages, fromMenu=false) {
+function buildEbook(allPages, bookMeta) {
+    bookMeta = bookMeta || {};
+    var ebookTitle = typeof bookMeta.title === 'string' && bookMeta.title.trim().length > 0 ?
+                     bookMeta.title : null;
     allPages = normalizeChapters(allPages);
     if (allPages.length === 0) {
         finishJob('There are no valid chapters to save.');
@@ -845,6 +935,7 @@ function _buildEbook(allPages, fromMenu=false) {
     console.log('Prepare Content...');
 
     var ebookFileName = 'eBook.epub';
+    var ebookName = '';
 
     if (ebookTitle) {
         // ~TODO a pre-processing function to apply escapeXMLChars to all page.titles
@@ -858,7 +949,7 @@ function _buildEbook(allPages, fromMenu=false) {
     // One instant for the whole package: dc:date (when this file was made) and
     // dcterms:modified disagreeing by a second reads as two separate events.
     var buildDate = new Date().toISOString().replace(/\.[0-9]+Z/i, 'Z');
-    var bookId = getBookId();
+    var bookId = getBookId(bookMeta.uuid);
     var bookLanguage = getBookLanguage(allPages);
     var bookDirection = getBookDirection(allPages);
     var publishers = collectDistinct(allPages, function(m) { return m.publisher; });
@@ -965,10 +1056,13 @@ function _buildEbook(allPages, fromMenu=false) {
         DEFLATED
     );
 
-    oebps.file(cssFileName, '', DEFLATED); //TODO
+    // The book-wide stylesheet: written by hand in the chapter editor, empty for
+    // every book whose author never opened that box. Every chapter links it, and
+    // so does the table of contents.
+    oebps.file(cssFileName, sanitizeStylesheet(bookMeta.css), DEFLATED);
     var styleFolder = oebps.folder('style');
     allPages.forEach(function(page) {
-        styleFolder.file(page.styleFileName, page.styleFileContent, DEFLATED);
+        styleFolder.file(page.styleFileName, chapterStyleContent(page), DEFLATED);
     });
 
     var pagesFolder = oebps.folder('pages');
@@ -989,6 +1083,12 @@ function _buildEbook(allPages, fromMenu=false) {
             dirAttribute(pageDirection) + '>' +
             '<head>' +
             '<title>' + tmpPageTitle+ '</title>' +
+            // In this order, and this is the cascade the preview reproduces: the
+            // book-wide stylesheet states what the book looks like, the chapter's
+            // own - the source page's computed styles, plus whatever the user
+            // added for this chapter alone - is the more specific answer and
+            // comes second.
+            '<link href="../' + cssFileName + '" rel="stylesheet" type="text/css" />' +
             '<link href="../style/' + page.styleFileName + '" rel="stylesheet" type="text/css" />' +
             '</head>' +
             getChapterBody(page, outlines[index]) +

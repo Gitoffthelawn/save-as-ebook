@@ -13,7 +13,7 @@
         "message": "Оставить только статью, убрав навигацию, боковые панели и комментарии. Работает только для «Сохранить страницу» и «Добавить страницу как главу». Страницы, не являющиеся статьями, сохраняются целиком."
     },
     "editStyles": {
-        "message": "Редактировать CSS ..."
+        "message": "Редактировать стили сайтов ..."
     },
     "savePage": {
         "message": "Сохранить страницу"
@@ -39,8 +39,80 @@
     "ebookTitleLabel": {
         "message": "Заголовок книги:"
     },
-    "rawPreview": {
+    "preview": {
         "message": "Предпросмотр"
+    },
+    "previewNote": {
+        "message": "Здесь видно, как выглядит глава. Разбивка на страницы, шрифты и поля задаются читалкой и различаются на разных устройствах."
+    },
+    "previewEmpty": {
+        "message": "В этой главе нечего показывать."
+    },
+    "editModeView": {
+        "message": "Чтение"
+    },
+    "editModeRemove": {
+        "message": "Удаление элементов"
+    },
+    "editModeText": {
+        "message": "Редактирование текста"
+    },
+    "viewModeHint": {
+        "message": "Режим чтения. Смените режим, чтобы редактировать главу."
+    },
+    "removeModeHint": {
+        "message": "Нажмите на элемент, чтобы удалить его. «Выбрать родителя» расширяет удаляемую область."
+    },
+    "removeModeTarget": {
+        "message": "Клик удалит:"
+    },
+    "textModeHint": {
+        "message": "Нажмите на текст, чтобы изменить его. Заголовок главы редактируется в списке глав."
+    },
+    "selectParent": {
+        "message": "Выбрать родителя"
+    },
+    "selectChild": {
+        "message": "Выбрать потомка"
+    },
+    "insertParagraphBefore": {
+        "message": "Добавить абзац перед"
+    },
+    "insertParagraphAfter": {
+        "message": "Добавить абзац после"
+    },
+    "insertedParagraphText": {
+        "message": "Новый абзац"
+    },
+    "undoEdit": {
+        "message": "Отменить"
+    },
+    "saveChapter": {
+        "message": "Сохранить главу"
+    },
+    "chapterSaved": {
+        "message": "Глава сохранена."
+    },
+    "bookCssLabel": {
+        "message": "Таблица стилей книги"
+    },
+    "bookCssHint": {
+        "message": "CSS для всей сохраняемой книги. Не путать со стилями сайтов, которые изменяют страницы при захвате."
+    },
+    "bookCssPlaceholder": {
+        "message": "body { font-family: serif; }"
+    },
+    "chapterCssLabel": {
+        "message": "CSS главы"
+    },
+    "chapterCssHint": {
+        "message": "CSS только для этой главы, применяется после стилей, захваченных с её страницы."
+    },
+    "chapterCssPlaceholder": {
+        "message": "p { text-align: justify; }"
+    },
+    "discardEditsConfirm": {
+        "message": "В этой главе есть несохранённые изменения. Закрыть без сохранения?"
     },
     "remove": {
         "message": "Удалить"
@@ -73,7 +145,7 @@
         "message": "Стиль сохранен!"
     },
     "styleEditor": {
-        "message": "Редактор стилей"
+        "message": "Редактор стилей сайтов"
     },
     "selectExistingCSS": {
         "message": "Выбрать существующий стиль"

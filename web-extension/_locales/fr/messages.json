@@ -19,7 +19,7 @@
         "message": "Appliquer"
     },
     "editStyles": {
-        "message": "Éditer les styles..."
+        "message": "Éditer les styles de site..."
     },
     "savePage": {
         "message": "Enregistrer la page"
@@ -45,8 +45,80 @@
     "ebookTitleLabel": {
         "message": "Titre de l'eBook :"
     },
-    "rawPreview": {
-        "message": "Aperçu brut"
+    "preview": {
+        "message": "Aperçu"
+    },
+    "previewNote": {
+        "message": "Ceci montre le rendu du chapitre. La pagination, les polices et les marges appartiennent à la liseuse et varient selon les appareils."
+    },
+    "previewEmpty": {
+        "message": "Ce chapitre n'a aucun contenu à prévisualiser."
+    },
+    "editModeView": {
+        "message": "Lecture"
+    },
+    "editModeRemove": {
+        "message": "Supprimer des éléments"
+    },
+    "editModeText": {
+        "message": "Modifier le texte"
+    },
+    "viewModeHint": {
+        "message": "Mode lecture. Changez de mode pour modifier ce chapitre."
+    },
+    "removeModeHint": {
+        "message": "Cliquez sur un élément pour le supprimer. « Sélectionner le parent » élargit ce que le clic supprime."
+    },
+    "removeModeTarget": {
+        "message": "Le clic supprime :"
+    },
+    "textModeHint": {
+        "message": "Cliquez dans le texte pour le modifier. Le titre du chapitre se modifie dans la liste des chapitres."
+    },
+    "selectParent": {
+        "message": "Sélectionner le parent"
+    },
+    "selectChild": {
+        "message": "Sélectionner l'enfant"
+    },
+    "insertParagraphBefore": {
+        "message": "Ajouter un paragraphe avant"
+    },
+    "insertParagraphAfter": {
+        "message": "Ajouter un paragraphe après"
+    },
+    "insertedParagraphText": {
+        "message": "Nouveau paragraphe"
+    },
+    "undoEdit": {
+        "message": "Annuler"
+    },
+    "saveChapter": {
+        "message": "Enregistrer le chapitre"
+    },
+    "chapterSaved": {
+        "message": "Chapitre enregistré."
+    },
+    "bookCssLabel": {
+        "message": "Feuille de style du livre"
+    },
+    "bookCssHint": {
+        "message": "CSS appliqué à tout le livre enregistré. À ne pas confondre avec les styles de site, qui modifient les pages lors de leur capture."
+    },
+    "bookCssPlaceholder": {
+        "message": "body { font-family: serif; }"
+    },
+    "chapterCssLabel": {
+        "message": "CSS du chapitre"
+    },
+    "chapterCssHint": {
+        "message": "CSS appliqué à ce seul chapitre, après les styles capturés depuis sa page."
+    },
+    "chapterCssPlaceholder": {
+        "message": "p { text-align: justify; }"
+    },
+    "discardEditsConfirm": {
+        "message": "Ce chapitre a des modifications non enregistrées. Fermer sans enregistrer ?"
     },
     "remove": {
         "message": "Retirer"
@@ -79,7 +151,7 @@
         "message": "Style enregistré !"
     },
     "styleEditor": {
-        "message": "Éditeur de style"
+        "message": "Éditeur de styles de site"
     },
     "selectExistingCSS": {
         "message": "Sélectionner un style existant"
