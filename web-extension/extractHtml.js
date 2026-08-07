@@ -1048,33 +1048,9 @@ function cleanName(raw) {
     return name;
 }
 
-function yearIsPlausible(year) {
-    let value = parseInt(year, 10);
-    return value >= 1400 && value <= new Date().getFullYear() + 1;
-}
-
-// dc:date must be a W3C-DTF date, and pages supply everything from "2024-03-01"
-// to "Fri, 01 Mar 2024 09:00:00 GMT".
-function normalizeDate(raw) {
-    if (!raw || typeof raw !== 'string') {
-        return '';
-    }
-    let text = raw.trim();
-    // Already well formed: keep it verbatim rather than round-tripping through
-    // Date, which would shift a local timestamp into UTC and invent a time of
-    // day for a bare date.
-    if (/^\d{4}$/.test(text) ||
-        /^\d{4}-\d{2}$/.test(text) ||
-        /^\d{4}-\d{2}-\d{2}$/.test(text) ||
-        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(text)) {
-        return yearIsPlausible(text.substring(0, 4)) ? text : '';
-    }
-    let parsed = new Date(text);
-    if (isNaN(parsed.getTime()) || !yearIsPlausible(parsed.getUTCFullYear())) {
-        return '';
-    }
-    return parsed.toISOString().replace(/\.[0-9]+Z$/, 'Z');
-}
+// normalizeDate() and normalizeLanguageTag() live in utils.js: the chapter
+// editor validates what a user types into the metadata panel by the same rules
+// that decide what survives a page's <head>, and it never loads this file.
 
 function extractLanguage() {
     let lang = normalizeLanguageTag(document.documentElement ?

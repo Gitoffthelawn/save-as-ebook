@@ -102,6 +102,78 @@ function showEditor() {
     bookCssHolder.appendChild(bookCssArea);
     modalList.appendChild(bookCssHolder);
 
+    /////////////////////
+    // What the book says about itself: dc:creator, dc:language, dc:publisher,
+    // dc:date, dc:description. The title is not here - it has had its own box at
+    // the top of this page since long before there was a panel to move it into,
+    // and moving it would hide the one field every book has.
+    //
+    // Folded away like the stylesheet above it, and for the same reason: a book
+    // whose chapters carry usable metadata needs none of this, and five empty
+    // boxes between the title and the chapter list would push the list off the
+    // first screen.
+    var bookMetaHolder = document.createElement('div');
+    bookMetaHolder.id = 'chapterEditor-bookMetaHolder';
+
+    var bookMetaToggle = document.createElement('button');
+    bookMetaToggle.id = 'chapterEditor-bookMetaToggle';
+    bookMetaToggle.className = 'chapterEditor-text-button';
+    bookMetaToggle.onclick = function() {
+        setBookMetaOpen(bookMetaFields.element.style.display === 'none');
+    };
+
+    var bookMetaHint = document.createElement('span');
+    bookMetaHint.id = 'chapterEditor-bookMetaHint';
+    bookMetaHint.innerText = chrome.i18n.getMessage('bookMetadataHint');
+
+    var bookMetaFields = createMetadataFieldSet('chapterEditor-bookMeta', {
+        emptyHint: chrome.i18n.getMessage('metadataFromChapters')
+    });
+    getBookMetadata(function (metadata) {
+        bookMetaFields.fill(metadata);
+    });
+
+    // What the boxes would produce if they were left alone, from the chapters as
+    // this page is holding them - so a chapter removed or renamed but not yet
+    // saved is already accounted for. Derived by the same functions the build
+    // derives it with; a placeholder promising something the archive will not
+    // say is worse than an empty box.
+    function refreshBookMetaPlaceholders() {
+        var derived = deriveBookMetadata(collectChapters());
+        bookMetaFields.setPlaceholders({
+            lang: derived.lang,
+            authors: derived.authors,
+            publisher: derived.publisher,
+            description: derived.description,
+            // A compilation is published on the day it is generated, which is
+            // not a date that can be shown in advance - so the box says where it
+            // will come from instead of what it will be.
+            date: derived.date || chrome.i18n.getMessage('metadataDateGenerated')
+        });
+    }
+
+    function setBookMetaOpen(open) {
+        bookMetaFields.element.style.display = open ? 'block' : 'none';
+        bookMetaToggle.innerText = (open ? '▾ ' : '▸ ') +
+                                   chrome.i18n.getMessage('bookMetadataLabel');
+        if (open) {
+            // recomputed on every opening rather than kept up to date: the
+            // chapter list is what they are derived from, and it changes while
+            // this panel is shut
+            refreshBookMetaPlaceholders();
+        }
+    }
+    setBookMetaOpen(false);
+
+    bookMetaHolder.appendChild(bookMetaToggle);
+    bookMetaHolder.appendChild(bookMetaHint);
+    bookMetaHolder.appendChild(bookMetaFields.element);
+    modalList.appendChild(bookMetaHolder);
+
+    function isBookMetaOpen() {
+        return bookMetaFields.element.style.display !== 'none';
+    }
+
     function createChapterList(allPages) {
         allPagesRef = allPages;
 
@@ -182,7 +254,19 @@ function showEditor() {
 
     var saveChangesButton = document.createElement('button');
     saveChangesButton.onclick = function() {
-        saveChanges();
+        // Saving is the end of a visit to this page, so it says what it did and
+        // then leaves - otherwise the tab stays open looking exactly as it did
+        // before, with nothing to say whether the click landed.
+        //
+        // The confirmation is also what makes closing safe: saveChanges() writes
+        // by messaging the background, and alert() holds the tab open until it
+        // is dismissed, which is long enough for those messages to be delivered.
+        // Nothing is said and nothing is closed when there was nothing to save.
+        if (!saveChanges()) {
+            return;
+        }
+        alert(chrome.i18n.getMessage('changesSaved'));
+        closeModal();
     };
     saveChangesButton.innerText = chrome.i18n.getMessage('saveChanges');
     saveChangesButton.className = 'chapterEditor-footer-button chapterEditor-float-right';
@@ -242,10 +326,11 @@ function showEditor() {
     var previewChapter = null;
     var previewFrame = null;
     var editSession = null;
-    // What this chapter's own css was when the panel opened, so that "has it
-    // changed" is answered by comparison rather than by a flag that has to be
-    // cleared in the right places.
+    // What this chapter's own css and stated metadata were when the panel
+    // opened, so that "has it changed" is answered by comparison rather than by
+    // a flag that has to be cleared in the right places.
     var chapterCssOriginal = '';
+    var chapterMetaOriginal = '';
 
     function toolbarButton(id, messageKey, onClick) {
         var button = document.createElement('button');
@@ -300,6 +385,10 @@ function showEditor() {
         function() {
             setChapterCssOpen(chapterCssHolder.style.display === 'none');
         });
+    var chapterMetaButton = toolbarButton('chapterEditor-chapterMetaToggle', 'chapterMetadataLabel',
+        function() {
+            setChapterMetaOpen(chapterMetaHolder.style.display === 'none');
+        });
     var saveChapterButton = toolbarButton('chapterEditor-saveChapter', 'saveChapter',
                                           saveChapterEdits);
     saveChapterButton.classList.add('chapterEditor-toolbar-save');
@@ -320,7 +409,7 @@ function showEditor() {
     toolbarGroup('chapterEditor-modeGroup', [modeButtons.view, modeButtons.remove, modeButtons.text]);
     toolbarGroup('chapterEditor-removeGroup', [widenButton, narrowButton]);
     toolbarGroup('chapterEditor-textGroup', [insertBeforeButton, insertAfterButton]);
-    toolbarGroup('chapterEditor-cssGroup', [chapterCssButton]);
+    toolbarGroup('chapterEditor-cssGroup', [chapterCssButton, chapterMetaButton]);
     toolbarGroup('chapterEditor-editGroup', [undoButton, saveChapterButton]);
 
     // This chapter's own css, appended to the stylesheet extraction captured for
@@ -352,6 +441,39 @@ function showEditor() {
     }
     setChapterCssOpen(false);
 
+    // What this chapter says about itself, as against what the book says. A
+    // chapter's language is the one field here a reading system acts on per
+    // chapter - it is written onto the chapter's own <html> element and is what
+    // hyphenates and speaks it - and the rest is what this chapter contributes
+    // to the book's authors, publishers and dates.
+    //
+    // It is in the preview panel rather than in the chapter list for the same
+    // reason the css box is: it is written about a chapter you are looking at,
+    // and a row in a list is not one.
+    var chapterMetaHolder = document.createElement('div');
+    chapterMetaHolder.id = 'chapterEditor-chapterMetaHolder';
+
+    var chapterMetaHint = document.createElement('div');
+    chapterMetaHint.id = 'chapterEditor-chapterMetaHint';
+    chapterMetaHint.innerText = chrome.i18n.getMessage('chapterMetadataHint');
+
+    var chapterMetaFields = createMetadataFieldSet('chapterEditor-chapterMeta', {
+        emptyHint: chrome.i18n.getMessage('metadataFromPage'),
+        onInput: function() {
+            applyChapterMetaToPreview();
+            updateToolbar();
+        }
+    });
+
+    chapterMetaHolder.appendChild(chapterMetaHint);
+    chapterMetaHolder.appendChild(chapterMetaFields.element);
+
+    function setChapterMetaOpen(open) {
+        chapterMetaHolder.style.display = open ? 'block' : 'none';
+        chapterMetaButton.classList.toggle('chapterEditor-mode-active', open);
+    }
+    setChapterMetaOpen(false);
+
     // What the current mode does, and - in remove mode - what a click would take
     // with it. Naming the element that is about to go is the difference between
     // removing a stray advertisement and removing the article around it.
@@ -361,6 +483,7 @@ function showEditor() {
     previewContent.appendChild(previewHeader);
     previewContent.appendChild(previewToolbar);
     previewContent.appendChild(chapterCssHolder);
+    previewContent.appendChild(chapterMetaHolder);
     previewContent.appendChild(previewNote);
     previewContent.appendChild(previewHint);
     previewContent.appendChild(previewBody);
@@ -433,9 +556,22 @@ function showEditor() {
 
     function removeListItem(atIndex) {
         return function() {
+            // Named by the title the row shows rather than the one storage
+            // holds, so an unsaved rename is not asked about under its old name
+            var titleInput = document.getElementById('text' + atIndex);
+            var title = titleInput && titleInput.value.trim() !== '' ?
+                        titleInput.value : allPagesRef[atIndex].title;
+            if (!confirm(chrome.i18n.getMessage('removeChapterConfirm') +
+                         ' <' + title + '>')) {
+                return;
+            }
             allPagesRef[atIndex].removed = true;
             var tmpListElem = document.getElementById('li' + atIndex);
             tmpListElem.style.display = 'none';
+            if (isBookMetaOpen()) {
+                // the removed chapter's author is no longer one of the book's
+                refreshBookMetaPlaceholders();
+            }
         };
     }
 
@@ -472,6 +608,15 @@ function showEditor() {
         // opened for a chapter that already has one, so it is not a box the user
         // has to remember they filled in
         setChapterCssOpen(chapterCssOriginal.trim() !== '');
+
+        // The boxes hold what was stated about this chapter; what its page said
+        // stands behind them as the placeholders, which is the whole of the
+        // precedence rule made visible.
+        chapterMetaFields.fill(page.metadataOverride);
+        chapterMetaOriginal = chapterMetaFields.serialize();
+        // an override of nothing, so the fallbacks are what the page stated
+        chapterMetaFields.setPlaceholders(getPageMetadata(page, null));
+        setChapterMetaOpen(!chapterMetaFields.isEmpty());
 
         if (preview.html === '') {
             // a record the build would skip as well
@@ -530,8 +675,26 @@ function showEditor() {
         }));
     }
 
+    // The one thing the metadata panel changes about the rendering: which
+    // language the chapter is written in, which is what a reading system
+    // hyphenates and speaks by. Set on the open document rather than by
+    // rebuilding it - a rebuilt srcdoc reloads the frame, and reloading it would
+    // throw away the edit session and every unsaved change in it.
+    function applyChapterMetaToPreview() {
+        var doc = previewDocument();
+        if (!doc || !doc.documentElement || !previewChapter) {
+            return;
+        }
+        doc.documentElement.lang =
+            getPageMetadata(previewChapter, chapterMetaFields.read()).lang || 'en';
+    }
+
     function isChapterCssDirty() {
         return previewChapter !== null && chapterCssArea.value !== chapterCssOriginal;
+    }
+
+    function isChapterMetaDirty() {
+        return previewChapter !== null && chapterMetaFields.serialize() !== chapterMetaOriginal;
     }
 
     function startEditSession(frame, preview) {
@@ -562,16 +725,21 @@ function showEditor() {
         previewFrame = null;
         chapterCssOriginal = '';
         chapterCssArea.value = '';
+        chapterMetaFields.fill(null);
+        chapterMetaFields.setPlaceholders(null);
+        chapterMetaOriginal = chapterMetaFields.serialize();
         while (previewBody.firstChild) {
             previewBody.removeChild(previewBody.firstChild);
         }
     }
 
     function closePreview() {
-        // Edits live in the frame - and the chapter's css in its box - until they
-        // are saved, and both go when the panel closes. Nothing else in this page
-        // warns before discarding work, because nothing else in it holds any.
-        if (((editSession && editSession.isDirty()) || isChapterCssDirty()) &&
+        // Edits live in the frame - and the chapter's css and metadata in their
+        // boxes - until they are saved, and all of them go when the panel
+        // closes. Nothing else in this page warns before discarding work,
+        // because nothing else in it holds any.
+        if (((editSession && editSession.isDirty()) || isChapterCssDirty() ||
+             isChapterMetaDirty()) &&
             !confirm(chrome.i18n.getMessage('discardEditsConfirm'))) {
             return;
         }
@@ -584,11 +752,12 @@ function showEditor() {
     // page is holding is updated first: it is what a build reads, and what the
     // preview would be rebuilt from.
     //
-    // The content and this chapter's css are saved together, by this one button,
-    // because they are the two things the panel holds and a user who has changed
-    // both would otherwise have to find two ways to keep them. The css does not
-    // need the edit session - it is a field on the record, not a serialization of
-    // a DOM - so a chapter that failed to become editable can still be styled.
+    // The content, this chapter's css and what it states about itself are saved
+    // together, by this one button, because they are what the panel holds and a
+    // user who has changed several of them would otherwise have to find several
+    // ways to keep them. Neither the css nor the metadata needs the edit session
+    // - they are fields on the record, not a serialization of a DOM - so a
+    // chapter that failed to become editable can still be styled and described.
     function saveChapterEdits() {
         if (previewIndex < 0 || !allPagesRef[previewIndex]) {
             return;
@@ -601,6 +770,11 @@ function showEditor() {
             }
             allPagesRef[previewIndex].customCss = chapterCssArea.value;
             chapterCssOriginal = chapterCssArea.value;
+            // stated nothing is stored as nothing, so that a chapter whose panel
+            // was opened and closed again is the record it was
+            allPagesRef[previewIndex].metadataOverride =
+                chapterMetaFields.isEmpty() ? null : chapterMetaFields.read();
+            chapterMetaOriginal = chapterMetaFields.serialize();
             saveChanges();
             if (editSession) {
                 editSession.markSaved();
@@ -645,13 +819,15 @@ function showEditor() {
             hasChapter ? 'inline' : 'none';
         if (!hasChapter) {
             setChapterCssOpen(false);
+            setChapterMetaOpen(false);
         }
 
         narrowButton.disabled = !editSession || editSession.getWidenLevel() === 0;
         undoButton.disabled = !editSession || !editSession.canUndo();
         undoButton.style.display = editable ? 'inline' : 'none';
         saveChapterButton.disabled =
-            !((editSession && editSession.isDirty()) || isChapterCssDirty());
+            !((editSession && editSession.isDirty()) || isChapterCssDirty() ||
+              isChapterMetaDirty());
 
         if (!editable) {
             setHint('');
@@ -686,43 +862,69 @@ function showEditor() {
                 return;
             }
             getEbookUuid(function (uuid) {
-                buildEbook(changes.chapters,
-                           {title: changes.title, uuid: uuid, css: changes.bookCss});
+                buildEbook(changes.chapters, {
+                    title: changes.title,
+                    uuid: uuid,
+                    css: changes.bookCss,
+                    metadata: changes.metadata
+                });
             });
         } catch (e) {
             console.log('Error:', e);
         }
     }
 
+    // The chapters as this page currently shows them: in list order, without the
+    // ones marked removed, carrying the titles as they stand in their boxes.
+    // What saveChanges() writes, and what the book metadata placeholders are
+    // derived from - those two have to be the same book, or the panel describes
+    // one nobody asked for.
+    function collectChapters() {
+        var chapters = [];
+        var tmpChaptersList = document.getElementsByClassName('chapterEditor-chapter-item');
+        if (!tmpChaptersList || !allPagesRef) {
+            return chapters;
+        }
+        for (var i = 0; i < tmpChaptersList.length; i++) {
+            var tmpChapterItem = tmpChaptersList[i];
+            var listIndex = Number(tmpChapterItem.id.replace('li', ''));
+            if (allPagesRef[listIndex].removed === false) {
+                allPagesRef[listIndex].title =
+                    tmpChapterItem.children.namedItem('text' + listIndex).value;
+                chapters.push(allPagesRef[listIndex]);
+            }
+        }
+        return chapters;
+    }
+
     // Persists what the page currently shows, and hands it back so that a build
     // can use it without waiting for storage.
     function saveChanges() {
-        var newChapters = [];
         var newEbookTitle = ebookTilte.value;
         if (newEbookTitle.trim() === '') {
             newEbookTitle = 'eBook';
         }
 
         try {
-            var tmpChaptersList = document.getElementsByClassName('chapterEditor-chapter-item');
-            if (!tmpChaptersList || !allPagesRef) {
+            if (!allPagesRef) {
                 return;
             }
-
-            for (var i = 0; i < tmpChaptersList.length; i++) {
-                var tmpChapterItem = tmpChaptersList[i];
-                var listIndex = Number(tmpChapterItem.id.replace('li', ''));
-                if (allPagesRef[listIndex].removed === false) {
-                    var newChapterTitle = tmpChapterItem.children.namedItem('text'+listIndex).value;
-                    allPagesRef[listIndex].title = newChapterTitle;
-                    newChapters.push(allPagesRef[listIndex]);
-                }
-            }
+            var newChapters = collectChapters();
+            // stated nothing is stored as nothing - the same rule the chapter
+            // panel follows, so that a book nobody described has no record
+            // saying it was described with five empty strings
+            var newMetadata = bookMetaFields.isEmpty() ? null : bookMetaFields.read();
 
             saveEbookTitle(newEbookTitle);
             saveBookCss(bookCssArea.value);
+            saveBookMetadata(newMetadata);
             saveEbookPages(newChapters);
-            return {chapters: newChapters, title: newEbookTitle, bookCss: bookCssArea.value};
+            return {
+                chapters: newChapters,
+                title: newEbookTitle,
+                bookCss: bookCssArea.value,
+                metadata: newMetadata
+            };
         } catch (e) {
             console.log('Error:', e);
         }
@@ -731,6 +933,181 @@ function showEditor() {
     /////////////////////
 
     getEbookPages(createChapterList);
+}
+
+// ---- the metadata boxes ------------------------------------------------------
+//
+// The things a user can state about a book, and the same things about one
+// chapter of it. One function builds both, because they are the same fields read
+// the same way: what differs is only what an empty one falls back to, and that
+// is what the placeholders say.
+//
+// An empty box is not an empty value. It means no override - use what the page
+// said - and it has to, because empty is what every box starts as and it cannot
+// mean one thing then and another later. The consequence is worth stating: there
+// is no way to type a blank publisher over one a page stated. Removing what a
+// page said is the one thing this panel does not do.
+//
+// Nothing here is normalized on the way in. What the user typed is what is
+// stored and what they see again on reopening, even when it is not usable;
+// normalizeMetadataOverride() in saveEbook.js is where it becomes a value the
+// package can carry, or nothing at all. The two fields where "not usable" is
+// possible say so as they are typed rather than dropping the text silently.
+function createMetadataFieldSet(idPrefix, options) {
+    options = options || {};
+    var onInput = options.onInput || function() {};
+    var emptyHint = options.emptyHint || '';
+
+    var element = document.createElement('div');
+    element.id = idPrefix + 'Fields';
+    element.className = 'chapterEditor-metaFields';
+
+    var inputs = {};
+    var warnings = {};
+
+    // The two fields with a wrong answer as well as a right one. The rest is
+    // free text, which escapeXMLChars() makes safe at write time.
+    var validators = {
+        lang: {normalize: normalizeLanguageTag, message: 'metadataLanguageIgnored'},
+        date: {normalize: normalizeDate, message: 'metadataDateIgnored'}
+    };
+
+    function validate() {
+        Object.keys(validators).forEach(function(name) {
+            var typed = inputs[name].value.trim();
+            var usable = typed === '' || validators[name].normalize(typed) !== '';
+            warnings[name].innerText = usable ? '' :
+                chrome.i18n.getMessage(validators[name].message);
+            inputs[name].classList.toggle('chapterEditor-metaInvalid', !usable);
+        });
+    }
+
+    function addField(name, labelKey, multiline, hintKey) {
+        var row = document.createElement('div');
+        row.className = 'chapterEditor-metaRow';
+
+        var label = document.createElement('label');
+        label.className = 'chapterEditor-metaLabel';
+        label.htmlFor = idPrefix + '-' + name;
+        label.innerText = chrome.i18n.getMessage(labelKey);
+
+        var field = document.createElement(multiline ? 'textarea' : 'input');
+        field.id = idPrefix + '-' + name;
+        field.className = 'chapterEditor-metaInput';
+        field.spellcheck = false;
+        if (multiline) {
+            field.rows = 2;
+        } else {
+            field.type = 'text';
+        }
+        field.oninput = function() {
+            validate();
+            onInput();
+        };
+
+        var note = document.createElement('span');
+        note.className = 'chapterEditor-metaNote';
+        if (hintKey) {
+            note.innerText = chrome.i18n.getMessage(hintKey);
+        }
+
+        var warning = document.createElement('span');
+        warning.id = idPrefix + '-' + name + 'Warning';
+        warning.className = 'chapterEditor-metaWarning';
+
+        var value = document.createElement('div');
+        value.className = 'chapterEditor-metaValue';
+        value.appendChild(field);
+        value.appendChild(note);
+        value.appendChild(warning);
+
+        row.appendChild(label);
+        row.appendChild(value);
+        element.appendChild(row);
+
+        inputs[name] = field;
+        warnings[name] = warning;
+    }
+
+    // One author per line rather than separated by commas: "Smith, Jane" is a
+    // name as libraries write it, and a separator a name can contain is one that
+    // turns one author into two.
+    addField('authors', 'metadataAuthors', true, 'metadataAuthorsHint');
+    addField('lang', 'metadataLanguage', false, 'metadataLanguageHint');
+    addField('publisher', 'metadataPublisher', false, null);
+    addField('date', 'metadataDate', false, 'metadataDateHint');
+    addField('description', 'metadataDescription', true, null);
+
+    function asText(value, separator) {
+        if (Array.isArray(value)) {
+            return value.join(separator);
+        }
+        return typeof value === 'string' ? value : '';
+    }
+
+    function lines(text) {
+        return String(text).split('\n').map(function(line) {
+            return line.trim();
+        }).filter(function(line) {
+            return line !== '';
+        });
+    }
+
+    function read() {
+        return {
+            lang: inputs.lang.value.trim(),
+            authors: lines(inputs.authors.value),
+            publisher: inputs.publisher.value.trim(),
+            description: inputs.description.value.trim(),
+            date: inputs.date.value.trim()
+        };
+    }
+
+    return {
+        element: element,
+        read: read,
+        // Whether anything was stated at all. An override of nothing is stored
+        // as nothing, so that a chapter somebody opened and closed again is the
+        // record it was.
+        isEmpty: function() {
+            var stated = read();
+            return stated.lang === '' && stated.authors.length === 0 &&
+                   stated.publisher === '' && stated.description === '' && stated.date === '';
+        },
+        // for comparing against what was in the boxes when they were filled -
+        // "has this changed" answered by the values rather than by a flag that
+        // has to be cleared in the right places
+        serialize: function() {
+            return JSON.stringify(read());
+        },
+        fill: function(values) {
+            var stated = values && typeof values === 'object' ? values : {};
+            inputs.lang.value = stated.lang || '';
+            inputs.authors.value = Array.isArray(stated.authors) ? stated.authors.join('\n') : '';
+            inputs.publisher.value = stated.publisher || '';
+            inputs.description.value = stated.description || '';
+            inputs.date.value = stated.date || '';
+            validate();
+        },
+        // What the build would use for a box left empty, shown greyed inside it.
+        // A box whose fallback is nothing shows where that nothing would come
+        // from instead, which is the one thing the user cannot see from here.
+        //
+        // Takes what getPageMetadata() and deriveBookMetadata() return, and those
+        // two disagree about a field's shape: a chapter has one publisher, a book
+        // has every publisher its chapters named. Joined here rather than by each
+        // caller, because a list that reaches a placeholder unjoined is a list
+        // rendered by Array.toString - commas, no spaces, and no way to tell one
+        // publisher with a comma in its name from two without.
+        setPlaceholders: function(values) {
+            var derived = values || {};
+            inputs.lang.placeholder = asText(derived.lang, ', ') || emptyHint;
+            inputs.authors.placeholder = asText(derived.authors, '\n') || emptyHint;
+            inputs.publisher.placeholder = asText(derived.publisher, ', ') || emptyHint;
+            inputs.description.placeholder = asText(derived.description, ' ') || emptyHint;
+            inputs.date.placeholder = asText(derived.date, ', ') || emptyHint;
+        }
+    };
 }
 
 // Drag & drop reordering of the chapter list, replacing jquery-sortable.

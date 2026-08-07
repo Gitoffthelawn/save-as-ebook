@@ -114,6 +114,78 @@ setTimeout(function () {
            !!built && built.meta.uuid === 'fixture-uuid',
            built ? String(built.meta.uuid) : 'no build');
 
+    // ---- saving changes says so and leaves ----
+    //
+    // The tab is the editor, so a save that closed silently would look exactly
+    // like one that never happened. The alert is also what keeps the close
+    // safe: it holds the tab open while the writes behind it are delivered.
+    var alerted = null;
+    var closed = 0;
+    window.alert = function (text) { alerted = text; };
+    window.close = function () { closed++; };
+
+    written.pages = null;
+    written.title = null;
+    document.getElementById('text1').value = 'Renamed Two';
+    document.getElementById('chapterEditor-ebookTitle').value = 'Saved Book';
+
+    var saveChangesButton = null;
+    var footerButtons = document.getElementById('chapterEditor-modalFooter')
+                                .getElementsByTagName('button');
+    for (var i = 0; i < footerButtons.length; i++) {
+      if (footerButtons[i].innerText === 'saveChanges') {
+        saveChangesButton = footerButtons[i];
+      }
+    }
+    report('the save changes button is there', !!saveChangesButton);
+    if (saveChangesButton) {
+      saveChangesButton.click();
+    }
+
+    report('saving wrote what the page shows',
+           !!written.pages && written.pages.length === 2 &&
+           written.pages[1].title === 'Renamed Two' &&
+           written.title === 'Saved Book',
+           written.pages ? written.pages.length + ' chapters, title ' +
+                           String(written.title) : 'nothing written');
+    report('saving confirms it saved', alerted === 'changesSaved',
+           String(alerted));
+    report('the editor closes after the confirmation', closed === 1,
+           'closed ' + closed + ' times');
+
+    // ---- removing a chapter asks first ----
+    //
+    // A row's Remove button takes the chapter out with nothing to undo it, so
+    // it has to be a question rather than a click away from losing a chapter.
+    var confirmCalls = 0;
+    var asked = null;
+    var confirmAnswer = false;
+    window.confirm = function (text) { confirmCalls++; asked = text; return confirmAnswer; };
+
+    var firstRow = document.getElementById('li0');
+    var removeButton = firstRow.getElementsByTagName('button')[1];
+    removeButton.click();
+    report('removing a chapter asks first', confirmCalls === 1,
+           'asked ' + confirmCalls + ' times');
+    report('the question names the chapter as the row shows it',
+           String(asked).indexOf('Renamed One') > -1, String(asked));
+    report('answering no keeps the chapter', firstRow.style.display !== 'none',
+           'display ' + String(firstRow.style.display));
+
+    confirmAnswer = true;
+    removeButton.click();
+    report('answering yes removes the chapter', firstRow.style.display === 'none',
+           'display ' + String(firstRow.style.display));
+
+    written.pages = null;
+    if (saveChangesButton) {
+      saveChangesButton.click();
+    }
+    report('the removed chapter is not saved',
+           !!written.pages && written.pages.length === 1 &&
+           written.pages[0].title === 'Renamed Two',
+           written.pages ? written.pages.length + ' chapters' : 'nothing written');
+
     document.title = 'DONE';
   }, 100);
 }, 300);

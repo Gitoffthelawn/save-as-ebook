@@ -12,6 +12,12 @@
     "readerModeHint": {
         "message": "Keep only the article, dropping navigation, sidebars and comments. Applies to Save Page and Add Page as Chapter only. Pages that are not articles are saved whole."
     },
+    "reviewBeforeSaving": {
+        "message": "Review Before Saving"
+    },
+    "reviewBeforeSavingHint": {
+        "message": "Open Save Page and Save Selection in the chapter editor instead of downloading straight away, so the book can be previewed, edited and described first. The editor's Generate button saves the file."
+    },
     "editStyles": {
         "message": "Edit Site Styles ...",
         "description": "Per-site CSS applied to a page while it is captured - not the stylesheet of the book that comes out, which lives in the chapter editor"
@@ -112,11 +118,65 @@
     "chapterCssPlaceholder": {
         "message": "p { text-align: justify; }"
     },
+    "bookMetadataLabel": {
+        "message": "eBook Details"
+    },
+    "bookMetadataHint": {
+        "message": "What the eBook says about itself. A field left empty is taken from the chapters."
+    },
+    "chapterMetadataLabel": {
+        "message": "Chapter details"
+    },
+    "chapterMetadataHint": {
+        "message": "What this chapter says about itself. A field left empty is taken from the page it was saved from."
+    },
+    "metadataAuthors": {
+        "message": "Authors"
+    },
+    "metadataAuthorsHint": {
+        "message": "One per line"
+    },
+    "metadataLanguage": {
+        "message": "Language"
+    },
+    "metadataLanguageHint": {
+        "message": "A language tag, like en or pt-BR"
+    },
+    "metadataLanguageIgnored": {
+        "message": "Not a language tag - this will be ignored."
+    },
+    "metadataPublisher": {
+        "message": "Publisher"
+    },
+    "metadataDate": {
+        "message": "Date"
+    },
+    "metadataDateHint": {
+        "message": "YYYY-MM-DD"
+    },
+    "metadataDateIgnored": {
+        "message": "Not a date - this will be ignored."
+    },
+    "metadataDateGenerated": {
+        "message": "the day the eBook is generated"
+    },
+    "metadataDescription": {
+        "message": "Description"
+    },
+    "metadataFromChapters": {
+        "message": "from the chapters"
+    },
+    "metadataFromPage": {
+        "message": "from this chapter's page"
+    },
     "discardEditsConfirm": {
         "message": "This chapter has unsaved edits. Close without saving?"
     },
     "remove": {
         "message": "Remove"
+    },
+    "removeChapterConfirm": {
+        "message": "Do you want to remove this chapter?"
     },
     "removeChapters": {
         "message": "Remove Chapters"
@@ -132,6 +192,9 @@
     },
     "saveChanges": {
         "message": "Save changes"
+    },
+    "changesSaved": {
+        "message": "Changes saved."
     },
     "emptyBookWarning": {
         "message": "Can't generate an empty eBook!"

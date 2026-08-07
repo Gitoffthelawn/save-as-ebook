@@ -396,9 +396,11 @@ function dispatch(tab, action, justAddToBuffer, appliedStyles) {
     isIncludeStyles((result) => {
         let isIncludeStyle = result.includeStyle
         isReaderMode((readerResult) => {
-            prepareStyles(tab, isIncludeStyle, appliedStyles, (tmpAppliedStyles) => {
-                applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles,
-                    readerResult.readerMode)
+            isReviewBeforeSaving((reviewResult) => {
+                prepareStyles(tab, isIncludeStyle, appliedStyles, (tmpAppliedStyles) => {
+                    applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles,
+                        readerResult.readerMode, reviewResult.reviewBeforeSaving)
+                })
             })
         })
     })
@@ -420,6 +422,19 @@ function isReaderMode(callback) {
             callback({readerMode: false});
         } else {
             callback({readerMode: data.readerMode});
+        }
+    });
+}
+
+// Whether Save Page and Save Selection stop at the chapter editor instead of
+// downloading. Off unless somebody turned it on, so the two commands keep doing
+// what their labels have always said they do.
+function isReviewBeforeSaving(callback) {
+    chrome.storage.local.get('reviewBeforeSaving', (data) => {
+        if (!data) {
+            callback({reviewBeforeSaving: false});
+        } else {
+            callback({reviewBeforeSaving: data.reviewBeforeSaving});
         }
     });
 }
@@ -517,7 +532,49 @@ function prepareStyles(tab, includeStyle, appliedStyles, callback) {
     });
 }
 
-function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, readerMode) {
+// Save Page and Save Selection with "review before saving" turned on. The
+// extraction goes into the same buffer a chapter goes into and the editor is
+// opened on it, so that the one-shot commands get the preview, the metadata
+// boxes and the stylesheet the chapter path already has. Nothing is downloaded
+// here - the editor's own Generate button builds the file.
+//
+// This is the whole book, not an addition to one: the buffer, the title and the
+// identifier were all discarded when the command started (see dispatch), which
+// is what keeps a saved page a new book every time even though it is now stored
+// on the way out - the rule getBookId() in saveEbook.js states.
+//
+// The page names the book, because that is what the immediate build would have
+// called the file. An untitled page is left to the editor's own 'eBook'
+// fallback rather than stored as an empty title.
+function openForReview(response) {
+    let book = {'allPages': [response]};
+    if (response.title && response.title.trim() !== '') {
+        book.title = response.title;
+    }
+    chrome.storage.local.set(book, () => {
+        endJob()
+        chrome.tabs.create({url: chrome.runtime.getURL('chapters.html')})
+    })
+}
+
+// Appends one extracted page to the chapters already buffered.
+function addChapter(tab, response) {
+    chrome.storage.local.get('allPages', (data) => {
+        if (!data || !data.allPages) {
+            data.allPages = [];
+        }
+        data.allPages.push(response);
+        chrome.storage.local.set({'allPages': data.allPages}, () => {
+            endJob()
+            chrome.tabs.sendMessage(tab[0].id, {'alert': 'Page or selection added as chapter!'}, (r) => {
+                void chrome.runtime.lastError;
+            });
+        });
+    })
+}
+
+function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, readerMode,
+                     reviewBeforeSaving) {
     chrome.tabs.sendMessage(tab[0].id, {
         type: action,
         includeStyle: includeStyle,
@@ -556,25 +613,16 @@ function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, 
                 void chrome.runtime.lastError;
             });
         }
-        if (!justAddToBuffer) {
+        if (justAddToBuffer) {
+            addChapter(tab, response);
+        } else if (reviewBeforeSaving) {
+            openForReview(response);
+        } else {
             // the job stays open until the content script reports 'done' - it
             // still has to build and download the zip
             chrome.tabs.sendMessage(tab[0].id, {'shortcut': 'build-ebook', response: [response]}, (r) => {
                 void chrome.runtime.lastError;
             });
-        } else {
-            chrome.storage.local.get('allPages', (data) => {
-                if (!data || !data.allPages) {
-                    data.allPages = [];
-                }
-                data.allPages.push(response);
-                chrome.storage.local.set({'allPages': data.allPages}, () => {
-                    endJob()
-                    chrome.tabs.sendMessage(tab[0].id, {'alert': 'Page or selection added as chapter!'}, (r) => {
-                        void chrome.runtime.lastError;
-                    });
-                });
-            })
         }
     });
 }
@@ -603,6 +651,9 @@ function _execRequest(request, sender, sendResponse) {
         // and so does the stylesheet written for them. The per-site styles under
         // 'styles' are not touched: those belong to the sites, not to this book.
         chrome.storage.local.remove('bookCss');
+        // ...and what the user said the book was called by, written about the
+        // chapters that are going
+        chrome.storage.local.remove('bookMetadata');
     }
     // Minted on first use and kept until the ebook is discarded, so rebuilding
     // after editing chapters produces the same dc:identifier. The service worker
@@ -640,6 +691,20 @@ function _execRequest(request, sender, sendResponse) {
     }
     if (request.type === 'set book css') {
         chrome.storage.local.set({'bookCss': typeof request.css === 'string' ? request.css : ''});
+    }
+    // What the user stated about the book itself - authors, language, publisher,
+    // description, date. Absent until somebody fills a box in, which is what
+    // every book built before the editor had those boxes had.
+    if (request.type === 'get book metadata') {
+        chrome.storage.local.get('bookMetadata', function (data) {
+            sendResponse({metadata: data && data.bookMetadata ? data.bookMetadata : null});
+        })
+    }
+    if (request.type === 'set book metadata') {
+        chrome.storage.local.set({
+            'bookMetadata': request.metadata && typeof request.metadata === 'object' ?
+                            request.metadata : null
+        });
     }
     if (request.type === 'get styles') {
         chrome.storage.local.get('styles', function (data) {
@@ -688,6 +753,20 @@ function _execRequest(request, sender, sendResponse) {
     }
     if (request.type === 'set reader mode') {
         chrome.storage.local.set({'readerMode': request.readerMode});
+    }
+    // A preference rather than part of a book, so it is not among the keys
+    // 'remove' discards - it has to still be set for the save after this one.
+    if (request.type === 'get review before saving') {
+        chrome.storage.local.get('reviewBeforeSaving', function (data) {
+            if (!data) {
+                sendResponse({reviewBeforeSaving: false});
+            } else {
+                sendResponse({reviewBeforeSaving: data.reviewBeforeSaving});
+            }
+        });
+    }
+    if (request.type === 'set review before saving') {
+        chrome.storage.local.set({'reviewBeforeSaving': request.reviewBeforeSaving});
     }
     if (request.type === 'is busy?') {
         isBusy((busy) => {

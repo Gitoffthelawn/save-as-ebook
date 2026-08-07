@@ -72,6 +72,101 @@ ul.chapterEditor-chapters-list li.placeholder {
     resize: vertical;
 }
 
+/* What the book says about itself. Folded away beside the stylesheet, for the
+   same reason: most books need none of it, and five empty boxes here would push
+   the chapter list off the first screen. */
+#chapterEditor-bookMetaHolder {
+    background-color: #f5f5f5;
+    padding: 8px 20px;
+    margin-bottom: 10px;
+}
+#chapterEditor-bookMetaToggle {
+    font-weight: bold;
+    font-size: 15px;
+    padding: 3px 5px;
+    margin: 0;
+}
+#chapterEditor-bookMetaHint {
+    font-size: 12px;
+    font-family: sans-serif;
+    color: #666;
+    margin-left: 10px;
+}
+
+/* The same fields for one chapter, inside the preview panel - written about a
+   chapter you are looking at, which a row in a list is not. */
+#chapterEditor-chapterMetaHolder {
+    padding: 0 20px 5px 20px;
+    border-bottom: solid 1px #eee;
+}
+#chapterEditor-chapterMetaHint {
+    font-size: 12px;
+    font-family: sans-serif;
+    color: #666;
+    padding: 5px 0;
+}
+
+/* One label beside one field, per row. The label column is fixed so the fields
+   line up in a column of their own, which is what makes five of them readable
+   as one form rather than as five unrelated boxes. */
+.chapterEditor-metaFields {
+    margin-top: 8px;
+}
+.chapterEditor-metaRow {
+    display: flex;
+    align-items: baseline;
+    margin-bottom: 6px;
+}
+.chapterEditor-metaLabel {
+    flex: 0 0 130px;
+    font-family: sans-serif;
+    font-size: 13px;
+    font-weight: bold;
+    padding-top: 4px;
+}
+.chapterEditor-metaValue {
+    flex: 1 1 auto;
+    /* a flex item will not shrink below the width of its content otherwise, and
+       a long placeholder would push the row past the panel */
+    min-width: 0;
+}
+.chapterEditor-metaInput {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 5px;
+    font-family: sans-serif;
+    font-size: 13px;
+    border: solid 1px #ccc;
+    resize: vertical;
+}
+/* the placeholder is the value the build would use, so it has to read as a
+   value rather than as an instruction */
+.chapterEditor-metaInput::placeholder {
+    color: #999;
+    font-style: italic;
+}
+/* Typed, but not something the build can use. The text stays where it is - it
+   is what the user wrote - and the box says it will be ignored rather than
+   silently dropping it. */
+.chapterEditor-metaInput.chapterEditor-metaInvalid {
+    border-color: #c00;
+}
+.chapterEditor-metaNote,
+.chapterEditor-metaWarning {
+    display: inline-block;
+    font-family: sans-serif;
+    font-size: 11px;
+    padding-top: 2px;
+}
+.chapterEditor-metaNote {
+    color: #888;
+    margin-right: 8px;
+}
+.chapterEditor-metaWarning {
+    color: #c00;
+}
+
 /* The same box for one chapter, inside the preview panel - the only place it can
    be written, because it is written against what that chapter looks like. */
 #chapterEditor-chapterCssHolder {

@@ -12,6 +12,12 @@
     "readerModeHint": {
         "message": "Manter apenas o artigo, removendo navegação, barras laterais e comentários. Aplica-se somente a «Salvar página» e «Adicionar página como capítulo». Páginas que não são artigos são salvas por inteiro."
     },
+    "reviewBeforeSaving": {
+        "message": "Revisar antes de salvar"
+    },
+    "reviewBeforeSavingHint": {
+        "message": "Abrir «Salvar Página» e «Salvar Selecão» no editor de capítulos em vez de baixar imediatamente, para que o livro possa ser pré-visualizado, editado e descrito antes. O botão «Gerar eBook» do editor é que salva o arquivo."
+    },
     "editStyles": {
         "message": "Editar estilos do site ..."
     },
@@ -111,11 +117,65 @@
     "chapterCssPlaceholder": {
         "message": "p { text-align: justify; }"
     },
+    "bookMetadataLabel": {
+        "message": "Detalhes do eBook"
+    },
+    "bookMetadataHint": {
+        "message": "O que o livro diz sobre si mesmo. Um campo deixado vazio é obtido dos capítulos."
+    },
+    "chapterMetadataLabel": {
+        "message": "Detalhes do capítulo"
+    },
+    "chapterMetadataHint": {
+        "message": "O que este capítulo diz sobre si mesmo. Um campo deixado vazio é obtido da página de onde ele veio."
+    },
+    "metadataAuthors": {
+        "message": "Autores"
+    },
+    "metadataAuthorsHint": {
+        "message": "Um por linha"
+    },
+    "metadataLanguage": {
+        "message": "Idioma"
+    },
+    "metadataLanguageHint": {
+        "message": "Uma etiqueta de idioma, como pt-BR ou en"
+    },
+    "metadataLanguageIgnored": {
+        "message": "Não é uma etiqueta de idioma - será ignorada."
+    },
+    "metadataPublisher": {
+        "message": "Editora"
+    },
+    "metadataDate": {
+        "message": "Data"
+    },
+    "metadataDateHint": {
+        "message": "AAAA-MM-DD"
+    },
+    "metadataDateIgnored": {
+        "message": "Não é uma data - será ignorada."
+    },
+    "metadataDateGenerated": {
+        "message": "o dia em que o eBook for gerado"
+    },
+    "metadataDescription": {
+        "message": "Descrição"
+    },
+    "metadataFromChapters": {
+        "message": "dos capítulos"
+    },
+    "metadataFromPage": {
+        "message": "da página deste capítulo"
+    },
     "discardEditsConfirm": {
         "message": "Este capítulo tem alterações não salvas. Fechar sem salvar?"
     },
     "remove": {
         "message": "Remover"
+    },
+    "removeChapterConfirm": {
+        "message": "Você quer remover este capítulo?"
     },
     "removeChapters": {
         "message": "Remover capítulos"
@@ -131,6 +191,9 @@
     },
     "saveChanges": {
         "message": "Salvar alterações"
+    },
+    "changesSaved": {
+        "message": "Alterações salvas."
     },
     "emptyBookWarning": {
         "message": "Não é possível gerar um eBook vazio!"

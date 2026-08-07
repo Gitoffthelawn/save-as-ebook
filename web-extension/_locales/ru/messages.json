@@ -12,6 +12,12 @@
     "readerModeHint": {
         "message": "Оставить только статью, убрав навигацию, боковые панели и комментарии. Работает только для «Сохранить страницу» и «Добавить страницу как главу». Страницы, не являющиеся статьями, сохраняются целиком."
     },
+    "reviewBeforeSaving": {
+        "message": "Просмотреть перед сохранением"
+    },
+    "reviewBeforeSavingHint": {
+        "message": "Открывать «Сохранить страницу» и «Сохранить выделение» в редакторе глав вместо немедленной загрузки, чтобы книгу можно было сначала просмотреть, отредактировать и описать. Файл сохраняет кнопка «Создать книгу» в редакторе."
+    },
     "editStyles": {
         "message": "Редактировать стили сайтов ..."
     },
@@ -111,11 +117,65 @@
     "chapterCssPlaceholder": {
         "message": "p { text-align: justify; }"
     },
+    "bookMetadataLabel": {
+        "message": "Сведения о книге"
+    },
+    "bookMetadataHint": {
+        "message": "Что книга сообщает о себе. Пустое поле берётся из глав."
+    },
+    "chapterMetadataLabel": {
+        "message": "Сведения о главе"
+    },
+    "chapterMetadataHint": {
+        "message": "Что эта глава сообщает о себе. Пустое поле берётся со страницы, с которой она сохранена."
+    },
+    "metadataAuthors": {
+        "message": "Авторы"
+    },
+    "metadataAuthorsHint": {
+        "message": "По одному в строке"
+    },
+    "metadataLanguage": {
+        "message": "Язык"
+    },
+    "metadataLanguageHint": {
+        "message": "Языковой тег, например ru или pt-BR"
+    },
+    "metadataLanguageIgnored": {
+        "message": "Это не языковой тег - он будет проигнорирован."
+    },
+    "metadataPublisher": {
+        "message": "Издатель"
+    },
+    "metadataDate": {
+        "message": "Дата"
+    },
+    "metadataDateHint": {
+        "message": "ГГГГ-ММ-ДД"
+    },
+    "metadataDateIgnored": {
+        "message": "Это не дата - она будет проигнорирована."
+    },
+    "metadataDateGenerated": {
+        "message": "день создания книги"
+    },
+    "metadataDescription": {
+        "message": "Описание"
+    },
+    "metadataFromChapters": {
+        "message": "из глав"
+    },
+    "metadataFromPage": {
+        "message": "со страницы этой главы"
+    },
     "discardEditsConfirm": {
         "message": "В этой главе есть несохранённые изменения. Закрыть без сохранения?"
     },
     "remove": {
         "message": "Удалить"
+    },
+    "removeChapterConfirm": {
+        "message": "Вы точно хотите удалить эту главу?"
     },
     "removeChapters": {
         "message": "Удалить главы"
@@ -131,6 +191,9 @@
     },
     "saveChanges": {
         "message": "Сохранить изменения"
+    },
+    "changesSaved": {
+        "message": "Изменения сохранены."
     },
     "emptyBookWarning": {
         "message": "Невозможно создать пустую книгу"

@@ -176,6 +176,18 @@ const chapters = [
             description: '',
             date: ''
         },
+        // What a user typed about this chapter in the editor, over a page that
+        // said nothing: a creator and a date that reach the package document
+        // from the panel rather than from any <head>. The name is one getFileAs()
+        // must decline to invert, so the refinement it does get is a role and
+        // nothing more.
+        metadataOverride: {
+            lang: '',
+            authors: ['أحمد الشيخ'],
+            publisher: '',
+            description: '',
+            date: '1998-05-04'
+        },
         styleFileName: 'style2.css',
         styleFileContent: '.c3 {color:rgb(0, 0, 0);}',
         // no images and no formulas: this chapter is here for direction and for
@@ -268,11 +280,19 @@ if (chaptersFile) {
     console.log('building from ' + chaptersFile + ' (' + toBuild.length + ' chapters)');
 }
 
-vm.runInContext('buildEbook(FIXTURE, {title: "Fixture Book", css: BOOK_CSS})',
+// The book metadata a user stated in the editor. Only the publisher: the fields
+// beside it are what the fixture chapters are here to exercise - dc:date and
+// dc:description branch on how many chapters there are, dc:language is read off
+// the pages, and dc:creator is where getFileAs() has to decide what it can
+// invert. Overriding those would replace the cases with a constant. The
+// publisher is stated with characters that have to be escaped, which is the one
+// thing a stated value can do to a package that a derived one cannot.
+vm.runInContext('buildEbook(FIXTURE, {title: "Fixture Book", css: BOOK_CSS, metadata: BOOK_META})',
                 Object.assign(sandbox, {
                     FIXTURE: single ? toBuild.slice(0, 1) : toBuild,
                     BOOK_CSS: 'body {\n    font-family: serif;\n    line-height: 1.5;\n}\n' +
-                              'blockquote {\n    font-style: italic;\n}\n'
+                              'blockquote {\n    font-style: italic;\n}\n',
+                    BOOK_META: {publisher: 'A & B Books <Ltd>'}
                 }));
 
 // buildEbook finishes asynchronously in generateAsync

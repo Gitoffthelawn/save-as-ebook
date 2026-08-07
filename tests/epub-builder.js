@@ -12,8 +12,8 @@ const SVG_BYTES = Buffer.from(
 ).toString('base64');
 
 function makeSandbox() {
-    const state = {title: 'Scenario Book', uuid: null, css: '', pages: [], downloads: [],
-                   messages: [], alerts: []};
+    const state = {title: 'Scenario Book', uuid: null, css: '', metadata: null, pages: [],
+                   downloads: [], messages: [], alerts: []};
     const sandbox = {
         console,
         setTimeout,
@@ -49,6 +49,7 @@ function makeSandbox() {
                     if (message.type === 'get title') response = {title: state.title};
                     if (message.type === 'get uuid') response = {uuid: state.uuid};
                     if (message.type === 'get book css') response = {css: state.css};
+                    if (message.type === 'get book metadata') response = {metadata: state.metadata};
                     if (message.type === 'get') response = {allPages: state.pages};
                     if (callback) callback(response);
                 }
@@ -94,6 +95,7 @@ async function build(env, pages, options) {
     state.title = options.title === undefined ? 'Scenario Book' : options.title;
     state.uuid = options.uuid || null;
     state.css = options.css || '';
+    state.metadata = options.metadata || null;
     state.pages = pages;
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error('builder did not produce an EPUB')), 5000);
@@ -111,7 +113,8 @@ async function build(env, pages, options) {
         // knows about the book.
         if (options.path === 'chapters') sandbox.buildEbookFromStorage();
         else if (options.path === 'one-shot') sandbox.buildEbook(pages);
-        else sandbox.buildEbook(pages, {title: state.title, uuid: state.uuid, css: state.css});
+        else sandbox.buildEbook(pages, {title: state.title, uuid: state.uuid, css: state.css,
+                                        metadata: state.metadata});
     });
 }
 
@@ -496,6 +499,208 @@ function equal(actual, expected, message) {
         ok(style.includes('url(data:image/gif;base64,R0lGOD)'),
            'a data url is carried in the file rather than fetched, and is kept');
         ok(style.includes('.kept{color:red}'), 'and everything else is left alone');
+    });
+
+    // ---- what the user said about the book ------------------------------------
+    //
+    // The whole of this feature is a precedence rule - what a user typed, else
+    // what the page stated, else what the build always did - so what is checked
+    // is the order, in the package document, which is the only place it shows.
+
+    await scenario('what the user stated about the book wins over what the chapters said', async () => {
+        const env = makeSandbox();
+        const pages = [
+            chapter({url: 'one.xhtml',
+                     metadata: {lang: 'fr', authors: ['Scraped Byline'], publisher: 'Scraped Press',
+                                description: 'scraped blurb', date: '2020-01-01'}}),
+            chapter({title: 'Two', url: 'two.xhtml', styleFileName: 'two.css',
+                     metadata: {lang: 'fr', authors: ['Another Byline'], publisher: 'Other Press',
+                                description: '', date: '2021-02-02'}})
+        ];
+        const epub = await inspect(env, await build(env, pages, {metadata: {
+            lang: 'pt-BR',
+            authors: ['Ada Lovelace', 'Grace Hopper'],
+            publisher: 'The Publisher',
+            description: 'A book about several things.',
+            date: '2024-06-01'
+        }}));
+
+        ok(epub.opf.includes('<dc:language>pt-BR</dc:language>'), 'the stated language should be the book\'s');
+        ok(epub.opf.includes('<dc:publisher>The Publisher</dc:publisher>'), 'the stated publisher is missing');
+        ok(!epub.opf.includes('Scraped Press') && !epub.opf.includes('Other Press'),
+           'a stated publisher replaces the scraped ones rather than joining them');
+        ok(epub.opf.includes('>Ada Lovelace</dc:creator>') && epub.opf.includes('>Grace Hopper</dc:creator>'),
+           'the stated authors are missing');
+        ok(!epub.opf.includes('Byline'), 'stated authors replace the scraped ones');
+        ok(epub.opf.includes('<dc:date>2024-06-01</dc:date>'),
+           'a compilation may be given the date its author says it has');
+        ok(epub.opf.includes('<dc:description>A book about several things.</dc:description>'),
+           'a compilation may be given a description, which it can never derive');
+
+        // the chapters keep their own - a book-level answer is about the book
+        ok((await epub.read('OEBPS/pages/one.xhtml')).includes('xml:lang="fr"'),
+           'a stated book language must not restate every chapter');
+        equal((epub.opf.match(/property="dcterms:created"/g) || []).length, 2,
+              'each chapter still carries its own date');
+    });
+
+    await scenario('a field nobody filled in falls back to the chapters, field by field', async () => {
+        const env = makeSandbox();
+        const page = chapter({
+            metadata: {lang: 'de', authors: ['Scraped Byline'], publisher: 'Scraped Press',
+                       description: 'scraped blurb', date: '2020-01-01'}
+        });
+        // only the publisher is stated, and everything beside it is untouched
+        const epub = await inspect(env, await build(env, [page],
+            {metadata: {lang: '', authors: [], publisher: 'The Publisher', description: '', date: ''}}));
+        ok(epub.opf.includes('<dc:publisher>The Publisher</dc:publisher>'), 'the stated publisher is missing');
+        ok(epub.opf.includes('<dc:language>de</dc:language>'), 'an empty language must not override');
+        ok(epub.opf.includes('>Scraped Byline</dc:creator>'), 'an empty author list must not override');
+        ok(epub.opf.includes('<dc:date>2020-01-01</dc:date>'), 'an empty date must not override');
+        ok(epub.opf.includes('<dc:description>scraped blurb</dc:description>'),
+           'an empty description must not override');
+    });
+
+    await scenario('a stated language or date that is not one is dropped rather than written', async () => {
+        const env = makeSandbox();
+        const page = chapter({metadata: {lang: 'de', authors: [], publisher: '', description: '',
+                                         date: '2020-01-01'}});
+        const epub = await inspect(env, await build(env, [page],
+            {metadata: {lang: '{{locale}}', date: 'sometime last spring'}}));
+        ok(epub.opf.includes('<dc:language>de</dc:language>'),
+           'junk in the language box must not reach dc:language');
+        ok(epub.opf.includes('<dc:date>2020-01-01</dc:date>'),
+           'junk in the date box must not reach dc:date');
+
+        // a year outside any range a saved web page can plausibly have parses
+        // fine and means nothing - the same rule that filtered the pages' dates
+        const ancient = makeSandbox();
+        ok((await inspect(ancient, await build(ancient, [page], {metadata: {date: '1008'}})))
+               .opf.includes('<dc:date>2020-01-01</dc:date>'),
+           'an implausible year is dropped here as it is at extraction');
+
+        // and a date that is a date, in a spelling dc:date does not use
+        const other = makeSandbox();
+        const rewritten = await inspect(other, await build(other, [chapter()],
+            {metadata: {date: 'Fri, 01 Mar 2024 09:00:00 GMT'}}));
+        ok(rewritten.opf.includes('<dc:date>2024-03-01T09:00:00Z</dc:date>'),
+           'a date a user can write should be written the way dc:date wants it');
+    });
+
+    await scenario('what the user stated about one chapter is what that chapter says', async () => {
+        const env = makeSandbox();
+        const pages = [
+            chapter({url: 'one.xhtml',
+                     metadata: {lang: 'en', authors: ['Scraped Byline'], publisher: 'Scraped Press',
+                                description: '', date: '2020-01-01'},
+                     metadataOverride: {lang: 'ja', authors: ['Murasaki Shikibu'],
+                                        publisher: 'Heian Press', description: '', date: '1925'}}),
+            chapter({title: 'Two', url: 'two.xhtml', styleFileName: 'two.css'})
+        ];
+        const epub = await inspect(env, await build(env, pages));
+
+        ok((await epub.read('OEBPS/pages/one.xhtml')).includes('xml:lang="ja"'),
+           'the chapter should be written in the language stated for it');
+        ok(!(await epub.read('OEBPS/pages/two.xhtml')).includes('xml:lang="ja"'),
+           'and the chapter beside it should not be');
+        ok(epub.opf.includes('<dc:language>ja</dc:language>'),
+           'the first chapter to state a language names the book\'s, override or not');
+        // a chapter's people are the book's people
+        ok(epub.opf.includes('>Murasaki Shikibu</dc:creator>') && !epub.opf.includes('Scraped Byline'),
+           'a stated chapter author replaces the scraped one everywhere it is used');
+        ok(epub.opf.includes('<dc:publisher>Heian Press</dc:publisher>') &&
+           !epub.opf.includes('Scraped Press'), 'and so does a stated chapter publisher');
+        ok(epub.opf.includes('<meta refines="#ebook0" property="dcterms:created">1925</meta>'),
+           'the chapter should carry the date stated for it');
+    });
+
+    await scenario('the book has the last word over the chapter that disagrees with it', async () => {
+        const env = makeSandbox();
+        const page = chapter({
+            metadata: {lang: 'en', authors: [], publisher: '', description: '', date: ''},
+            metadataOverride: {publisher: 'Chapter Press', authors: ['Chapter Author']}
+        });
+        const epub = await inspect(env, await build(env, [page],
+            {metadata: {publisher: 'Book Press'}}));
+        ok(epub.opf.includes('<dc:publisher>Book Press</dc:publisher>') &&
+           !epub.opf.includes('Chapter Press'),
+           'dc:publisher is a claim about the book, so the book\'s answer is the one written');
+        ok(epub.opf.includes('>Chapter Author</dc:creator>'),
+           'a field the book left empty is still gathered from the chapters');
+    });
+
+    await scenario('metadata read back out of storage reaches the same package', async () => {
+        const env = makeSandbox();
+        const epub = await inspect(env, await build(env, [chapter()], {
+            path: 'chapters',
+            metadata: {publisher: 'Stored Press', lang: 'nl'}
+        }));
+        ok(epub.opf.includes('<dc:publisher>Stored Press</dc:publisher>'),
+           'the editor\'s build reads what it stored, and so must the one that has no chapters in hand');
+        ok(epub.opf.includes('<dc:language>nl</dc:language>'), 'the stored language is missing');
+    });
+
+    await scenario('a book nobody described is byte for byte what it was before there were boxes to describe it in', async () => {
+        const env = makeSandbox();
+        const page = chapter({
+            metadata: {lang: 'en', authors: ['Jane Smith'], publisher: 'Example Press',
+                       description: 'A blurb', date: '2024-05-06'}
+        });
+        // every shape of "nothing was stated" the editor and storage can produce
+        for (const metadata of [undefined, null, {}, {lang: '', authors: [], publisher: '',
+                                                      description: '', date: ''}]) {
+            const epub = await inspect(env, await build(env, [page], {metadata}));
+            ok(epub.opf.includes('<dc:language>en</dc:language>') &&
+               epub.opf.includes('>Jane Smith</dc:creator>') &&
+               epub.opf.includes('<dc:publisher>Example Press</dc:publisher>') &&
+               epub.opf.includes('<dc:description>A blurb</dc:description>') &&
+               epub.opf.includes('<dc:date>2024-05-06</dc:date>'),
+               'a book with no override should be exactly what the chapters make it: ' +
+               JSON.stringify(metadata));
+        }
+    });
+
+    await scenario('stated metadata is XML escaped like everything else in the package', async () => {
+        const env = makeSandbox();
+        const epub = await inspect(env, await build(env, [chapter()], {metadata: {
+            authors: ['A & B <Authors>'],
+            publisher: 'P & P <Press>',
+            description: 'D & D "quoted"'
+        }}));
+        ok(epub.opf.includes('A &amp; B &lt;Authors&gt;'), 'stated author was not escaped');
+        ok(epub.opf.includes('P &amp; P &lt;Press&gt;'), 'stated publisher was not escaped');
+        ok(epub.opf.includes('D &amp; D &quot;quoted&quot;'), 'stated description was not escaped');
+    });
+
+    // The boxes in the editor show these as their placeholders. They have to be
+    // what the build would write, or the panel describes a different book.
+    await scenario('the values the editor shows as fallbacks are the values the build derives', async () => {
+        const {sandbox} = makeSandbox();
+        const one = chapter({
+            metadata: {lang: 'fr', authors: ['Jane Smith'], publisher: 'Example Press',
+                       description: 'A blurb', date: '2024-05-06'}
+        });
+        let derived = sandbox.deriveBookMetadata([one]);
+        equal(derived.lang, 'fr', 'derived language');
+        equal(derived.authors.join('|'), 'Jane Smith', 'derived authors');
+        equal(derived.publisher.join('|'), 'Example Press', 'derived publisher');
+        equal(derived.description, 'A blurb', 'a one-chapter book is described by its chapter');
+        equal(derived.date, '2024-05-06', 'and dated by it');
+
+        const two = chapter({title: 'Two', url: 'two.xhtml',
+                             metadata: {lang: 'de', authors: ['Alan Turing'], publisher: 'Other Press',
+                                        description: 'Not the book', date: '2025-01-01'}});
+        derived = sandbox.deriveBookMetadata([one, two]);
+        equal(derived.authors.join('|'), 'Jane Smith|Alan Turing', 'a compilation gathers its authors');
+        equal(derived.publisher.join('|'), 'Example Press|Other Press', 'and its publishers');
+        equal(derived.description, '', 'but borrows neither a description');
+        equal(derived.date, '', 'nor a date');
+        equal(sandbox.deriveBookMetadata([]).lang, 'en', 'and a book with no chapters still has a language');
+
+        // a chapter override is part of what the chapter says, here as everywhere
+        equal(sandbox.deriveBookMetadata([Object.assign({}, one,
+                  {metadataOverride: {authors: ['Ada Lovelace']}})]).authors.join('|'),
+              'Ada Lovelace', 'the boxes account for what was stated about a chapter');
     });
 
     console.log(failures === 0 ? '\nepub builder scenarios OK' : '\n' + failures + ' scenario failure(s)');

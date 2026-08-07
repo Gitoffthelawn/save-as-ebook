@@ -12,6 +12,12 @@
     "readerModeHint": {
         "message": "Ne garder que l'article, sans la navigation, les barres latérales ni les commentaires. Ne s'applique qu'à « Enregistrer la page » et « Ajouter la page comme chapitre ». Les pages qui ne sont pas des articles sont enregistrées en entier."
     },
+    "reviewBeforeSaving": {
+        "message": "Vérifier avant d'enregistrer"
+    },
+    "reviewBeforeSavingHint": {
+        "message": "Ouvrir « Enregistrer la page » et « Enregistrer la sélection » dans l'éditeur de chapitre au lieu de télécharger aussitôt, afin de prévisualiser, modifier et décrire le livre d'abord. C'est le bouton « Générer l'eBook » de l'éditeur qui enregistre le fichier."
+    },
     "styleLabel": {
         "message": "Style personnalisé :"
     },
@@ -117,11 +123,65 @@
     "chapterCssPlaceholder": {
         "message": "p { text-align: justify; }"
     },
+    "bookMetadataLabel": {
+        "message": "Détails de l'eBook"
+    },
+    "bookMetadataHint": {
+        "message": "Ce que le livre dit de lui-même. Un champ laissé vide est repris des chapitres."
+    },
+    "chapterMetadataLabel": {
+        "message": "Détails du chapitre"
+    },
+    "chapterMetadataHint": {
+        "message": "Ce que ce chapitre dit de lui-même. Un champ laissé vide est repris de la page dont il provient."
+    },
+    "metadataAuthors": {
+        "message": "Auteurs"
+    },
+    "metadataAuthorsHint": {
+        "message": "Un par ligne"
+    },
+    "metadataLanguage": {
+        "message": "Langue"
+    },
+    "metadataLanguageHint": {
+        "message": "Une étiquette de langue, comme fr ou pt-BR"
+    },
+    "metadataLanguageIgnored": {
+        "message": "Ce n'est pas une étiquette de langue - elle sera ignorée."
+    },
+    "metadataPublisher": {
+        "message": "Éditeur"
+    },
+    "metadataDate": {
+        "message": "Date"
+    },
+    "metadataDateHint": {
+        "message": "AAAA-MM-JJ"
+    },
+    "metadataDateIgnored": {
+        "message": "Ce n'est pas une date - elle sera ignorée."
+    },
+    "metadataDateGenerated": {
+        "message": "le jour où l'eBook est généré"
+    },
+    "metadataDescription": {
+        "message": "Description"
+    },
+    "metadataFromChapters": {
+        "message": "repris des chapitres"
+    },
+    "metadataFromPage": {
+        "message": "repris de la page de ce chapitre"
+    },
     "discardEditsConfirm": {
         "message": "Ce chapitre a des modifications non enregistrées. Fermer sans enregistrer ?"
     },
     "remove": {
         "message": "Retirer"
+    },
+    "removeChapterConfirm": {
+        "message": "Voulez-vous supprimer ce chapitre ?"
     },
     "removeChapters": {
         "message": "Supprimer les chapitres"
@@ -137,6 +197,9 @@
     },
     "saveChanges": {
         "message": "Enregistrer les modifications"
+    },
+    "changesSaved": {
+        "message": "Modifications enregistrées."
     },
     "emptyBookWarning": {
         "message": "Impossible de générer un eBook vide !"

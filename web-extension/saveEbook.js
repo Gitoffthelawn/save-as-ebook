@@ -248,26 +248,75 @@ function getSourceUrl(page) {
     return page.sourceUrl || page.baseUrl || '';
 }
 
-// Chapters buffered before the <head> read existed have no metadata at all, and
-// a chapter whose page carried none has the key but empty values.
-function getPageMetadata(page) {
-    let metadata = page.metadata || {};
+// ---- what the user said, and what the pages said -----------------------------
+//
+// Every metadata field below has three possible answers, in this order: what the
+// user typed in the chapter editor, what the page it was extracted from stated,
+// and the fallback the build has always used. An override is stored as the user
+// typed it - so that reopening the editor shows what was written - which makes
+// this the place it becomes a value the package can carry, or nothing at all.
+//
+// An empty field is not an empty value. It is the absence of an override, and
+// what it means is "use what the page said": there is deliberately no way to
+// type a blank publisher over one a page stated, because an empty box is what
+// every field starts as and it has to mean the same thing then as later.
+function trimmedString(value) {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeMetadataOverride(raw) {
+    let stated = raw && typeof raw === 'object' ? raw : {};
     return {
-        lang: normalizeLanguageTag(metadata.lang),
-        // '' or 'rtl', never 'ltr' - see extractDirection() in extractHtml.js
-        dir: metadata.dir === 'rtl' ? 'rtl' : '',
-        authors: Array.isArray(metadata.authors) ? metadata.authors : [],
-        publisher: metadata.publisher || '',
-        description: metadata.description || '',
-        date: metadata.date || ''
+        // a tag no reader could use is no better than none - see
+        // normalizeLanguageTag(), which is what filtered the pages' own
+        lang: normalizeLanguageTag(stated.lang),
+        authors: (Array.isArray(stated.authors) ? stated.authors : [])
+            .map(trimmedString).filter(function(name) { return name !== ''; }),
+        publisher: trimmedString(stated.publisher),
+        description: trimmedString(stated.description),
+        // W3C-DTF or nothing, by the same rule that accepted the pages' dates
+        date: normalizeDate(stated.date)
     };
 }
 
-// dc:language is required, so there is always an answer: the first chapter that
-// stated a usable one, else the "en" this used to hardcode. A book whose chapters
-// disagree still gets a package language - each chapter overrides it on its own
-// <html> element, which is what a reader actually uses for hyphenation.
-function getBookLanguage(allPages) {
+// A chapter's metadata: what its page stated, with what the user overrode for
+// this chapter alone on top of it. Chapters buffered before the <head> read
+// existed have no metadata at all, and a chapter whose page carried none has the
+// key but empty values.
+//
+// The override is the chapter's own record unless a caller names another, which
+// is how the editor asks what a chapter would say under an override that is
+// still being typed and has not been stored yet.
+function getPageMetadata(page, override) {
+    let metadata = page.metadata || {};
+    let stated = normalizeMetadataOverride(
+        override === undefined ? page.metadataOverride : override);
+    return {
+        lang: stated.lang || normalizeLanguageTag(metadata.lang),
+        // '' or 'rtl', never 'ltr' - see extractDirection() in extractHtml.js.
+        // Not something the editor offers: a page states which way it reads and
+        // gets it right, and the field it would sit next to in the panel would
+        // be one nobody but a bidirectional reader could answer.
+        dir: metadata.dir === 'rtl' ? 'rtl' : '',
+        authors: stated.authors.length > 0 ? stated.authors :
+                 (Array.isArray(metadata.authors) ? metadata.authors : []),
+        publisher: stated.publisher || metadata.publisher || '',
+        description: stated.description || metadata.description || '',
+        date: stated.date || metadata.date || ''
+    };
+}
+
+// dc:language is required, so there is always an answer: what the user stated
+// about the book, else the first chapter that stated a usable one, else the "en"
+// this used to hardcode. A book whose chapters disagree still gets a package
+// language - each chapter overrides it on its own <html> element, which is what
+// a reader actually uses for hyphenation, and a book-level answer does not
+// silently reach down and restate every chapter.
+function getBookLanguage(allPages, override) {
+    let stated = normalizeMetadataOverride(override).lang;
+    if (stated) {
+        return stated;
+    }
     for (let i = 0; i < allPages.length; i++) {
         let lang = getPageMetadata(allPages[i]).lang;
         if (lang) {
@@ -297,17 +346,56 @@ function dirAttribute(direction) {
     return direction === 'rtl' ? ' dir="rtl"' : '';
 }
 
-function collectDistinct(allPages, pick) {
-    let values = [];
-    allPages.forEach(function(page) {
-        let picked = pick(getPageMetadata(page));
-        (Array.isArray(picked) ? picked : [picked]).forEach(function(value) {
-            if (value && values.indexOf(value) < 0) {
-                values.push(value);
-            }
-        });
+function addDistinct(values, picked) {
+    (Array.isArray(picked) ? picked : [picked]).forEach(function(value) {
+        if (value && values.indexOf(value) < 0) {
+            values.push(value);
+        }
     });
     return values;
+}
+
+// One field gathered across every chapter - the authors of a compilation are
+// the authors of its chapters, and so are its publishers.
+//
+// An override replaces that list rather than joining it. A user who names the
+// authors of the book means those authors: merging would leave every byline the
+// chapters were scraped from standing beside the ones they wrote, and there
+// would be no way to get rid of them.
+function collectDistinct(allPages, pick, override) {
+    let stated = addDistinct([], override === undefined ? [] : override);
+    if (stated.length > 0) {
+        return stated;
+    }
+    let values = [];
+    allPages.forEach(function(page) {
+        addDistinct(values, pick(getPageMetadata(page)));
+    });
+    return values;
+}
+
+// dc:creator is a list of people, not a wall of them: a compilation of fifty
+// articles has fifty bylines, and a package listing all of them is one no
+// library shows usefully.
+var MAX_BOOK_AUTHORS = 12;
+
+// What the book would say about itself if nobody overrode anything - the values
+// the build derives from the chapters in hand. Nothing in the build calls this:
+// it is what the editor puts in the metadata boxes as their placeholders, so
+// that an empty box visibly means "this is what you get" rather than "this is
+// blank". It has to be derived by the functions the build derives it with, or
+// the boxes promise something else than what is written.
+function deriveBookMetadata(allPages) {
+    let pages = normalizeChapters(allPages);
+    return {
+        lang: getBookLanguage(pages),
+        authors: collectDistinct(pages, function(m) { return m.authors; }).slice(0, MAX_BOOK_AUTHORS),
+        publisher: collectDistinct(pages, function(m) { return m.publisher; }),
+        // one page's blurb and date describe the book; several pages' do not -
+        // see where buildEbook() decides the same thing
+        description: pages.length === 1 ? getPageMetadata(pages[0]).description : '',
+        date: pages.length === 1 ? getPageMetadata(pages[0]).date : ''
+    };
 }
 
 // Two-word organisation names ("BBC News", "Associated Press") invert into
@@ -899,9 +987,12 @@ function buildEbookFromStorage() {
     getEbookTitle(function (title) {
         getEbookUuid(function (uuid) {
             getBookCss(function (css) {
-                getEbookPages(function (allPages) {
-                    buildEbook(allPages, {title: title, uuid: uuid, css: css});
-                });
+                getBookMetadata(function (metadata) {
+                    getEbookPages(function (allPages) {
+                        buildEbook(allPages,
+                                   {title: title, uuid: uuid, css: css, metadata: metadata});
+                    });
+                })
             })
         })
     })
@@ -919,6 +1010,10 @@ function buildEbookFromStorage() {
 //   css    the book-wide stylesheet, written by the user in the chapter editor.
 //          Absent, ebook.css is written empty, which is what it was for every
 //          book built before there was anywhere to type one.
+//   metadata what the user stated about the book - authors, language, publisher,
+//          description, date. Absent, or absent a field, every one of them is
+//          derived from the chapters exactly as it was before there were boxes
+//          to state them in.
 //
 // http://ebooks.stackexchange.com/questions/1183/what-is-the-minimum-required-content-for-a-valid-epub
 function buildEbook(allPages, bookMeta) {
@@ -950,19 +1045,30 @@ function buildEbook(allPages, bookMeta) {
     // dcterms:modified disagreeing by a second reads as two separate events.
     var buildDate = new Date().toISOString().replace(/\.[0-9]+Z/i, 'Z');
     var bookId = getBookId(bookMeta.uuid);
-    var bookLanguage = getBookLanguage(allPages);
+    // What the user stated about the book, if anything. Each field below asks it
+    // first and falls back to the chapters, which is what every book built
+    // before the editor had a metadata panel did for all of them.
+    var bookOverride = normalizeMetadataOverride(bookMeta.metadata);
+    var bookLanguage = getBookLanguage(allPages, bookOverride);
     var bookDirection = getBookDirection(allPages);
-    var publishers = collectDistinct(allPages, function(m) { return m.publisher; });
-    var authors = collectDistinct(allPages, function(m) { return m.authors; }).slice(0, 12);
+    var publishers = collectDistinct(allPages, function(m) { return m.publisher; },
+                                     bookOverride.publisher);
+    var authors = collectDistinct(allPages, function(m) { return m.authors; },
+                                  bookOverride.authors).slice(0, MAX_BOOK_AUTHORS);
     // dc:date is the date of publication of this file. For a single saved page
     // that is the article's own date, which is what a library should sort on; a
     // book assembled from several pages was published when it was assembled, and
-    // picking one chapter's date to stand for the whole would be a guess. Every
-    // chapter keeps its own date below regardless.
-    var bookDate = (allPages.length === 1 && getPageMetadata(allPages[0]).date) || buildDate;
+    // picking one chapter's date to stand for the whole would be a guess - which
+    // is exactly the guess a user is entitled to make for their own book, and
+    // the only reason the field is offered. Every chapter keeps its own date
+    // below regardless.
+    var bookDate = bookOverride.date ||
+                   (allPages.length === 1 && getPageMetadata(allPages[0]).date) || buildDate;
     // Likewise: one page's blurb describes the book. Several pages' first blurb
-    // describes one chapter, and claiming otherwise is worse than saying nothing.
-    var bookDescription = allPages.length === 1 ? getPageMetadata(allPages[0]).description : '';
+    // describes one chapter, and claiming otherwise is worse than saying nothing
+    // - unless somebody has written the blurb themselves.
+    var bookDescription = bookOverride.description ||
+                          (allPages.length === 1 ? getPageMetadata(allPages[0]).description : '');
 
     // The content as it will be written, with an id on every heading, and the
     // one navigation tree that the nav document, the ncx and the chapter files

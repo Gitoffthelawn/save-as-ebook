@@ -26,6 +26,7 @@ function createHarness(options) {
         badgeColors: [],
         badgeTexts: [],
         tabMessages: [],
+        createdTabs: [],
         runtimeMessages: [],
         executeScripts: [],
         insertedCss: [],
@@ -91,6 +92,7 @@ function createHarness(options) {
             query: (query, callback) => callback(copy(options.tabs || [
                 {id: 7, url: 'https://example.com/article'}
             ])),
+            create: (details) => state.createdTabs.push(copy(details)),
             sendMessage: (tabId, message, callback) => {
                 state.tabMessages.push({tabId: tabId, message: copy(message)});
                 let response;
@@ -114,6 +116,7 @@ function createHarness(options) {
         commands: {onCommand: event(state.listeners.command)},
         runtime: {
             lastError: null,
+            getURL: (path) => 'chrome-extension://save-as-ebook/' + path,
             onMessage: event(state.listeners.message),
             sendMessage: (message) => {
                 state.runtimeMessages.push(copy(message));
@@ -358,6 +361,72 @@ async function test(name, body) {
         assert.strictEqual(messages(add, (m) => m.alert === 'Page or selection added as chapter!').length, 1);
     });
 
+    await test('review before saving buffers the one-shot save and opens the editor', async () => {
+        const response = {title: 'Article', content: '<p>chapter</p>'};
+        for (const action of ['extract-page', 'extract-selection']) {
+            const h = createHarness({extractionResponse: response});
+            h.context.startJob(7);
+            h.context.applyAction([{id: 7}], action, false, false, [], false, true);
+            await settle();
+            // nothing was built or downloaded - the editor's own button does that
+            assert.strictEqual(messages(h, (m) => m.shortcut === 'build-ebook').length, 0,
+                action + ' built an ebook instead of stopping at the editor');
+            assert.deepStrictEqual(h.state.local.allPages, [response]);
+            // the page names the book, as the immediate build would have
+            assert.strictEqual(h.state.local.title, 'Article');
+            assert.deepStrictEqual(h.state.createdTabs,
+                [{url: 'chrome-extension://save-as-ebook/chapters.html'}]);
+            // the extraction is over: nothing is waiting on a 'done' that the
+            // content script will never send
+            assert.strictEqual(h.state.session.job, undefined);
+        }
+
+        // an untitled page is left to the editor's own fallback rather than
+        // stored as a title of ''
+        const untitled = createHarness({extractionResponse: {title: '  ', content: '<p>c</p>'}});
+        untitled.context.startJob(7);
+        untitled.context.applyAction([{id: 7}], 'extract-page', false, false, [], false, true);
+        assert.strictEqual(untitled.state.local.title, undefined);
+
+        // and with the option off the save still downloads without touching the buffer
+        const off = createHarness({extractionResponse: response});
+        off.context.startJob(7);
+        off.context.applyAction([{id: 7}], 'extract-page', false, false, [], false, false);
+        assert.strictEqual(messages(off, (m) => m.shortcut === 'build-ebook').length, 1);
+        assert.strictEqual(off.state.local.allPages, undefined);
+        assert.deepStrictEqual(off.state.createdTabs, []);
+    });
+
+    await test('a reviewed save is a new book, not an addition to the buffered one', () => {
+        // The rule getBookId() states: a page saved on its own is a new book
+        // every time. Storing it on the way to the editor must not let it
+        // inherit the identifier - or the chapters - of the book before it.
+        const h = createHarness({
+            extractionResponse: {title: 'Article', content: '<p>chapter</p>'},
+            local: {
+                reviewBeforeSaving: true,
+                allPages: [{title: 'an older chapter'}],
+                uuid: 'the-previous-book',
+                title: 'The Previous Book',
+                bookCss: 'p{}',
+                bookMetadata: {publisher: 'someone else'}
+            },
+            uuids: ['a-new-book']
+        });
+        h.context.startJob(7);
+        h.context.dispatch([{id: 7, url: 'https://example.com/article'}], 'extract-page', false, []);
+        assert.deepStrictEqual(h.state.local.allPages,
+            [{title: 'Article', content: '<p>chapter</p>'}]);
+        assert.strictEqual(h.state.local.title, 'Article');
+        assert.strictEqual(h.state.local.bookCss, undefined);
+        assert.strictEqual(h.state.local.bookMetadata, undefined);
+        assert.strictEqual(h.state.local.uuid, undefined,
+            'the reviewed save kept the identifier of the book it replaced');
+        assert.deepStrictEqual(request(h, {type: 'get uuid'}), [{uuid: 'a-new-book'}]);
+        // the preference itself is not part of the book that was discarded
+        assert.strictEqual(h.state.local.reviewBeforeSaving, true);
+    });
+
     await test('reader mode reaches a page extraction and never a selection', () => {
         const extractions = (h) => messages(h,
             (m) => m.type === 'extract-page' || m.type === 'extract-selection');
@@ -458,6 +527,8 @@ async function test(name, body) {
             {type: 'get current style'}, {type: 'set current style', currentStyle: 2},
             {type: 'get include style'}, {type: 'set include style', includeStyle: true},
             {type: 'get reader mode'}, {type: 'set reader mode', readerMode: true},
+            {type: 'get review before saving'},
+            {type: 'set review before saving', reviewBeforeSaving: true},
             {type: 'is busy?'}, {type: 'job-heartbeat'},
             {type: 'save-page'}, {type: 'save-selection'}, {type: 'add-page'},
             {type: 'add-selection'}, {type: 'done'}, {type: 'unknown'}

@@ -9,6 +9,10 @@ document.getElementById('includeStyle').textContent = chrome.i18n.getMessage('in
 document.getElementById('readerMode').textContent = chrome.i18n.getMessage('readerMode');
 // which of the four actions it applies to is not guessable from the label
 document.getElementById('readerModeOption').title = chrome.i18n.getMessage('readerModeHint');
+document.getElementById('reviewBeforeSaving').textContent = chrome.i18n.getMessage('reviewBeforeSaving');
+// what "review" means here - which two actions change, and where they stop -
+// does not fit on the line
+document.getElementById('reviewBeforeSavingOption').title = chrome.i18n.getMessage('reviewBeforeSavingHint');
 document.getElementById('editStyles').textContent = chrome.i18n.getMessage('editStyles');
 document.getElementById('savePageLabel').textContent = chrome.i18n.getMessage('savePage');
 document.getElementById('saveSelectionLabel').textContent = chrome.i18n.getMessage('saveSelection');
@@ -136,6 +140,26 @@ document.getElementById('readerModeCheck').onclick = function () {
     chrome.runtime.sendMessage({
         type: "set reader mode",
         readerMode: readerModeCheck.checked
+    }, function(response) {
+    });
+}
+
+function createReviewBeforeSaving(data) {
+    let reviewCheck = document.getElementById('reviewBeforeSavingCheck');
+    reviewCheck.checked = data;
+}
+
+chrome.runtime.sendMessage({
+    type: "get review before saving"
+}, function(response) {
+    createReviewBeforeSaving(response.reviewBeforeSaving);
+});
+
+document.getElementById('reviewBeforeSavingCheck').onclick = function () {
+    let reviewCheck = document.getElementById('reviewBeforeSavingCheck');
+    chrome.runtime.sendMessage({
+        type: "set review before saving",
+        reviewBeforeSaving: reviewCheck.checked
     }, function(response) {
     });
 }
