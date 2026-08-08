@@ -210,25 +210,296 @@
     "styleEditor": {
         "message": "Редактор стилей сайтов"
     },
-    "selectExistingCSS": {
-        "message": "Выбрать существующий стиль"
-    },
-    "orLabel": {
-        "message": "или"
-    },
-    "createNewStyle": {
-        "message": "Создать новый стиль"
-    },
     "styleNameLabel": {
         "message": "Название"
-    },
-    "howToWriteRegexLabel": {
-        "message": "Введите регулярное выражение для адреса"
     },
     "removeStyle": {
         "message": "Удалить стиль"
     },
     "saveStyle": {
         "message": "Сохранить стиль"
+    },
+    "styleSearchPlaceholder": {
+        "message": "Искать по названию, шаблону или CSS"
+    },
+    "styleFilterAll": {
+        "message": "Все"
+    },
+    "styleFilterMatches": {
+        "message": "Подходят здесь"
+    },
+    "styleFilterSite": {
+        "message": "Стили сайтов"
+    },
+    "styleFilterTheme": {
+        "message": "Все страницы"
+    },
+    "styleFilterEnabled": {
+        "message": "Включенные"
+    },
+    "styleFilterMine": {
+        "message": "Мои"
+    },
+    "styleFilterBuiltin": {
+        "message": "Встроенные"
+    },
+    "newSiteStyle": {
+        "message": "Новый стиль сайта"
+    },
+    "newThemeStyle": {
+        "message": "Новый стиль для всех страниц"
+    },
+    "newStyleTitle": {
+        "message": "Новый стиль"
+    },
+    "untitledStyle": {
+        "message": "Стиль без названия"
+    },
+    "styleListEmpty": {
+        "message": "Ни один стиль не подходит под этот поиск."
+    },
+    "styleLibraryEmpty": {
+        "message": "Библиотека пуста. Создайте стиль, чтобы начать."
+    },
+    "styleNoSelection": {
+        "message": "Выберите стиль слева, чтобы увидеть, что он делает, или создайте новый."
+    },
+    "styleDescriptionLabel": {
+        "message": "Заметка"
+    },
+    "styleDescriptionPlaceholder": {
+        "message": "Для чего этот стиль"
+    },
+    "styleScopeLabel": {
+        "message": "Применяется к"
+    },
+    "styleScopeSite": {
+        "message": "Страницам, подходящим под шаблон"
+    },
+    "styleScopeTheme": {
+        "message": "Ко всем захватываемым страницам"
+    },
+    "styleMatchTypeLabel": {
+        "message": "Сопоставление"
+    },
+    "styleMatchDomain": {
+        "message": "Домен и его поддомены"
+    },
+    "styleMatchPrefix": {
+        "message": "URL начинается с"
+    },
+    "styleMatchGlob": {
+        "message": "Шаблон URL (* — любой текст)"
+    },
+    "styleMatchRegex": {
+        "message": "Регулярное выражение"
+    },
+    "stylePatternLabel": {
+        "message": "Шаблон"
+    },
+    "stylePatternHintDomain": {
+        "message": "example.com"
+    },
+    "stylePatternHintPrefix": {
+        "message": "example.com/blog/"
+    },
+    "stylePatternHintGlob": {
+        "message": "example.com/*/comments"
+    },
+    "stylePatternHintRegex": {
+        "message": "example\\.com\\/[0-9]+"
+    },
+    "stylePatternMissing": {
+        "message": "Шаблона нет — ничему не соответствует."
+    },
+    "styleTestUrlLabel": {
+        "message": "Проверить на URL"
+    },
+    "styleTestUrlPlaceholder": {
+        "message": "https://example.com/stranica"
+    },
+    "styleTestMatches": {
+        "message": "Подходит под этот URL."
+    },
+    "styleTestNoMatch": {
+        "message": "Не подходит под этот URL."
+    },
+    "styleTestInvalid": {
+        "message": "Недопустимое регулярное выражение — оно ничему не соответствует."
+    },
+    "styleTestNoUrl": {
+        "message": "Вставьте URL выше, чтобы проверить шаблон."
+    },
+    "styleAppliesEveryPage": {
+        "message": "Все захватываемые страницы"
+    },
+    "styleMatchDescDomain": {
+        "message": "$pattern$ и его поддомены",
+        "placeholders": {
+            "pattern": {
+                "content": "$1",
+                "example": "example.com"
+            }
+        }
+    },
+    "styleMatchDescPrefix": {
+        "message": "URL, начинающиеся с $pattern$",
+        "placeholders": {
+            "pattern": {
+                "content": "$1",
+                "example": "example.com/blog/"
+            }
+        }
+    },
+    "styleMatchDescGlob": {
+        "message": "URL вида $pattern$",
+        "placeholders": {
+            "pattern": {
+                "content": "$1",
+                "example": "example.com/*/comments"
+            }
+        }
+    },
+    "styleMatchDescRegex": {
+        "message": "URL, подходящие под $pattern$",
+        "placeholders": {
+            "pattern": {
+                "content": "$1",
+                "example": "example\\.com"
+            }
+        }
+    },
+    "styleOriginBuiltin": {
+        "message": "Встроенный"
+    },
+    "styleOriginForked": {
+        "message": "Изменённый встроенный"
+    },
+    "styleOriginImported": {
+        "message": "Импортированный"
+    },
+    "styleOriginUser": {
+        "message": "Ваш"
+    },
+    "styleEnabledHint": {
+        "message": "Применять этот стиль при захвате страницы"
+    },
+    "styleCssHint": {
+        "message": "Применяется к странице при захвате, а не к книге"
+    },
+    "styleDuplicate": {
+        "message": "Дублировать"
+    },
+    "styleCopyTitle": {
+        "message": "$title$ (копия)",
+        "placeholders": {
+            "title": {
+                "content": "$1",
+                "example": "Wikipedia Article"
+            }
+        }
+    },
+    "styleResetToBuiltin": {
+        "message": "Вернуть встроенный"
+    },
+    "styleResetConfirm": {
+        "message": "Заменить вашу версию встроенным стилем?"
+    },
+    "styleNeedsPattern": {
+        "message": "Стилю для отдельных страниц нужен шаблон. Добавьте его или примените стиль ко всем страницам."
+    },
+    "styleDiscardEditsConfirm": {
+        "message": "В этом стиле есть несохранённые изменения. Отменить их?"
+    },
+    "styleThisPage": {
+        "message": "Стилизовать эту страницу ..."
+    },
+    "styleThisPageHint": {
+        "message": "Снять копию этой страницы и открыть на ней библиотеку стилей, чтобы писать стиль по тому, что действительно будет сохранено."
+    },
+    "stylePreviewTitle": {
+        "message": "Предпросмотр"
+    },
+    "stylePreviewClear": {
+        "message": "Отказаться"
+    },
+    "stylePreviewClearConfirm": {
+        "message": "Отказаться от снятой страницы, которую показывает предпросмотр?"
+    },
+    "stylePreviewOf": {
+        "message": "Снято с $url$",
+        "placeholders": {
+            "url": {
+                "content": "$1",
+                "example": "https://example.com/a-page"
+            }
+        }
+    },
+    "stylePreviewApplied": {
+        "message": "Показано: $styles$",
+        "placeholders": {
+            "styles": {
+                "content": "$1",
+                "example": "Wikipedia Article + Serif Reading"
+            }
+        }
+    },
+    "stylePreviewNothingApplies": {
+        "message": "К этой странице пока не применяется ни один стиль."
+    },
+    "stylePreviewHowTo": {
+        "message": "Страница не снята. Откройте расширение на нужной странице и выберите «Стилизовать эту страницу ...», чтобы проверить на ней свои стили."
+    },
+    "stylePreviewNote": {
+        "message": "Снятая страница с применёнными стилями в том виде, в каком её покажет eBook. Правило, скрывающее элемент здесь, не пустит его в eBook; шрифты и поля задаёт читалка."
+    },
+    "stylePickElement": {
+        "message": "Выбрать элемент"
+    },
+    "stylePickHint": {
+        "message": "Наведите на элемент в предпросмотре, чтобы скрыть его."
+    },
+    "stylePickTarget": {
+        "message": "Скроет $selector$",
+        "placeholders": {
+            "selector": {
+                "content": "$1",
+                "example": "aside.sidebar"
+            }
+        }
+    },
+    "stylePickTargetShared": {
+        "message": "Скроет $selector$ - элементов на странице: $count$",
+        "placeholders": {
+            "selector": {
+                "content": "$1",
+                "example": "div.promo"
+            },
+            "count": {
+                "content": "$2",
+                "example": "4"
+            }
+        }
+    },
+    "stylePickNeedsStyle": {
+        "message": "Сначала выберите стиль слева - выбранный элемент запишется в него."
+    },
+    "styleRecipeHideImages": {
+        "message": "Скрыть изображения"
+    },
+    "styleRecipeHideSidebars": {
+        "message": "Скрыть боковые панели"
+    },
+    "styleRecipeUnstickHeaders": {
+        "message": "Открепить шапки"
+    },
+    "styleRecipeHideComments": {
+        "message": "Скрыть комментарии"
+    },
+    "styleRecipeSingleColumn": {
+        "message": "Одна колонка"
+    },
+    "styleRecipeBiggerText": {
+        "message": "Крупнее текст"
     }
 }

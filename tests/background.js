@@ -12,6 +12,11 @@ const vm = require('vm');
 
 const source = fs.readFileSync(
     path.join(__dirname, '..', 'web-extension', 'background.js'), 'utf8');
+// What the worker gets from importScripts, which the VM has no equivalent of.
+// Kept a separate evaluation rather than concatenated so that a line number in a
+// stack trace still points at the file it came from.
+const styleLibrarySource = fs.readFileSync(
+    path.join(__dirname, '..', 'web-extension', 'styleLibrary.js'), 'utf8');
 
 function copy(value) {
     return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -31,6 +36,7 @@ function createHarness(options) {
         executeScripts: [],
         insertedCss: [],
         removedCss: [],
+        fetches: [],
         logs: [],
         pendingSessionGets: [],
         listeners: {tabUpdated: [], tabRemoved: [], command: [], message: []},
@@ -141,9 +147,21 @@ function createHarness(options) {
         }
     };
 
+    // styles/catalog.json, which the worker reads with fetch. Empty unless a test
+    // says otherwise, so that a test about injection is about the styles it set
+    // up rather than about whatever the extension happens to ship.
+    const catalog = options.catalog === undefined ? {version: 1, entries: []} : options.catalog;
+
     const uuids = options.uuids || ['uuid-1', 'uuid-2', 'uuid-3'];
     const context = {
         chrome: chrome,
+        fetch: (url) => {
+            state.fetches.push(url);
+            if (options.catalogFailure) {
+                return Promise.reject(new Error('no such resource'));
+            }
+            return Promise.resolve({json: () => Promise.resolve(copy(catalog))});
+        },
         navigator: {userAgent: 'BackgroundUnitTest'},
         console: {log: (...args) => state.logs.push(args)},
         crypto: {randomUUID: () => uuids[state.uuidIndex++]},
@@ -152,6 +170,7 @@ function createHarness(options) {
         clearTimeout: () => {}
     };
     vm.createContext(context);
+    vm.runInContext(styleLibrarySource, context, {filename: 'styleLibrary.js'});
     vm.runInContext(source, context, {filename: 'background.js'});
 
     return {
@@ -198,24 +217,41 @@ async function test(name, body) {
         const h = createHarness({now: 2500});
         h.context.startJob(17);
         assert.deepStrictEqual(h.state.session.job, {
-            tabId: 17, startedAt: 2500, lastHeartbeat: 2500, injectedCss: null
+            tabId: 17, startedAt: 2500, lastHeartbeat: 2500, injectedCss: []
         });
         assert.deepStrictEqual(h.state.badgeColors, [{color: 'red'}]);
         assert.deepStrictEqual(h.state.badgeTexts, [{text: 'Busy'}]);
     });
 
-    await test('jobs finish by clearing state, badge, injected CSS, and popup', async () => {
+    await test('jobs finish by clearing state, badge, every injected sheet, and popup', async () => {
         const h = createHarness();
         h.context.startJob(17);
-        h.context.updateJob({injectedCss: '.reader { color: black; }'});
+        h.context.updateJob({injectedCss: ['.theme { font-family: serif; }',
+                                           '.reader { color: black; }']});
         h.context.endJob();
         await settle();
         assert.strictEqual(h.state.session.job, undefined);
         assert.deepStrictEqual(h.state.badgeTexts.at(-1), {text: ''});
-        assert.deepStrictEqual(h.state.removedCss, [{
-            target: {tabId: 17}, css: '.reader { color: black; }'
-        }]);
+        // every sheet the job laid down, not just the last one: what is left
+        // applied silently restyles the page the user is still looking at
+        assert.deepStrictEqual(h.state.removedCss, [
+            {target: {tabId: 17}, css: '.theme { font-family: serif; }'},
+            {target: {tabId: 17}, css: '.reader { color: black; }'}
+        ]);
         assert.deepStrictEqual(h.state.runtimeMessages.at(-1), {type: 'popup-close'});
+    });
+
+    // A job started by the previous release can still be in session storage when
+    // the update lands, and that one recorded its one sheet as a bare string.
+    await test('a job recorded before layered injection is still cleaned up', async () => {
+        const h = createHarness({
+            session: {job: {
+                tabId: 5, startedAt: 1000, lastHeartbeat: 1000, injectedCss: '.old {}'
+            }}
+        });
+        h.context.endJob();
+        await settle();
+        assert.deepStrictEqual(h.state.removedCss, [{target: {tabId: 5}, css: '.old {}'}]);
     });
 
     await test('timed-out jobs are reclaimed with the same cleanup as completion', async () => {
@@ -471,11 +507,16 @@ async function test(name, body) {
             (m) => (m.alert || '').indexOf('Readability.js') > -1).length, 0);
     });
 
-    await test('style matching skips invalid regexes and selects the longest match', async () => {
+    // The v1 storage this reads is what every existing install has: the whole
+    // path from that array to the sheets on the page is exercised here, because
+    // a migration that only works on data written by the same release is a
+    // migration that has not been tested.
+    await test('matching styles are layered onto the page least specific first', async () => {
         const styles = [
-            {title: 'Invalid', url: '[', style: '.invalid {}'},
+            {title: 'Broken', url: '[', style: '.broken {}'},
+            {title: 'Specific', url: 'example\\.com\\/articles\\/42', style: '.specific {}'},
             {title: 'General', url: 'example\\.com', style: '.general {}'},
-            {title: 'Specific', url: 'example\\.com\\/articles\\/42', style: '.specific {}'}
+            {title: 'Elsewhere', url: 'other\\.example\\.net', style: '.elsewhere {}'}
         ];
         const h = createHarness({local: {styles: styles}, deferSessionGets: true});
         h.context.startJob(12);
@@ -487,12 +528,90 @@ async function test(name, body) {
         assert.strictEqual(applied, undefined,
             'action continued before the CSS cleanup record was persisted');
         h.flushSessionGets();
-        assert.strictEqual(applied.length, 1);
-        assert.strictEqual(applied[0].title, 'Specific');
-        assert.deepStrictEqual(h.state.insertedCss, [{
-            target: {tabId: 12}, css: '.specific {}'
-        }]);
-        assert.strictEqual(h.state.session.job.injectedCss, '.specific {}');
+
+        // both matches go on, and the broad one first: the sheets are a cascade,
+        // so the style written for the article has to be able to override the
+        // one written for the site
+        assert.deepStrictEqual(h.state.insertedCss, [
+            {target: {tabId: 12}, css: '.general {}'},
+            {target: {tabId: 12}, css: '.specific {}'}
+        ]);
+        assert.deepStrictEqual(applied.map((style) => style.title), ['General', 'Specific']);
+        assert.deepStrictEqual(h.state.session.job.injectedCss, ['.general {}', '.specific {}']);
+
+        // the v1 array is left where it is - it is the way back to the previous
+        // release, and this release never writes it again
+        assert.deepStrictEqual(h.state.local.styles, styles);
+        assert.strictEqual(h.state.local.styleLibrary.version, 2);
+        assert.deepStrictEqual(
+            h.state.local.styleLibrary.entries.map((entry) => entry.title),
+            ['Broken', 'Specific', 'General', 'Elsewhere']);
+    });
+
+    await test('themes lead, and a style that is switched off is not injected', async () => {
+        const h = createHarness({
+            deferSessionGets: true,
+            local: {styleLibrary: {version: 2, entries: [
+                {id: 'site-on', scope: 'site', css: '.on {}',
+                 match: {type: 'domain', pattern: 'example.com'}},
+                {id: 'site-off', scope: 'site', css: '.off {}', enabled: false,
+                 match: {type: 'domain', pattern: 'example.com'}},
+                {id: 'theme', scope: 'theme', css: '.theme {}'},
+                {id: 'empty', scope: 'theme', css: '   '}
+            ]}}
+        });
+        h.context.startJob(3);
+        let applied;
+        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], true, [],
+                                (value) => { applied = value; });
+        await settle();
+        h.flushSessionGets();
+        assert.deepStrictEqual(h.state.insertedCss, [
+            {target: {tabId: 3}, css: '.theme {}'},
+            {target: {tabId: 3}, css: '.on {}'}
+        ]);
+    });
+
+    // The first sheet is refused - an activeTab grant that has lapsed, a tab
+    // that navigated to a page the extension cannot touch - and the rest of the
+    // capture still has to happen.
+    await test('a sheet the tab refuses does not take the rest of the styles with it', async () => {
+        const h = createHarness({
+            insertCssFailure: true,
+            local: {styleLibrary: {version: 2, entries: [
+                {id: 'one', scope: 'theme', css: '.one {}'}
+            ]}}
+        });
+        h.context.startJob(3);
+        let applied = 'not called';
+        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], true, [],
+                                (value) => { applied = value; });
+        await settle();
+        assert.deepStrictEqual(applied, []);
+        assert.deepStrictEqual(h.state.session.job.injectedCss, [],
+            'nothing went on the page, so there is nothing to take off it');
+    });
+
+    // Losing the job mid-insertion is the case with no second chance: endJob has
+    // already run, so whatever went on the page after it is nobody's to remove
+    // but this callback's.
+    await test('styles inserted into a job that has already ended are taken off again', async () => {
+        const h = createHarness({
+            local: {styleLibrary: {version: 2, entries: [
+                {id: 'one', scope: 'theme', css: '.one {}'},
+                {id: 'two', scope: 'theme', css: '.two {}'}
+            ]}}
+        });
+        // no startJob: nothing is in flight, so updateJob has nothing to record
+        let applied = 'not called';
+        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], true, [],
+                                (value) => { applied = value; });
+        await settle();
+        assert.deepStrictEqual(applied, []);
+        assert.deepStrictEqual(h.state.removedCss, [
+            {target: {tabId: 3}, css: '.one {}'},
+            {target: {tabId: 3}, css: '.two {}'}
+        ]);
     });
 
     await test('UUIDs persist for a book and reset when chapters are discarded', () => {
@@ -515,11 +634,138 @@ async function test(name, body) {
         request(h, {type: 'remove'});
         assert.strictEqual(h.state.local.bookCss, undefined,
             'the stylesheet belongs to the discarded chapters');
-        // the per-site styles are a different thing entirely and outlive any book
-        request(h, {type: 'set styles', styles: [{title: 'a site'}]});
+        // the site styles are a different thing entirely and outlive any book
+        request(h, {type: 'set style library', library: {version: 2, entries: [
+            {id: 'a', title: 'a site', scope: 'site', css: 'p{}',
+             match: {type: 'domain', pattern: 'a.example'}}
+        ]}});
         request(h, {type: 'remove'});
-        assert.deepStrictEqual(h.state.local.styles, [{title: 'a site'}]);
+        assert.deepStrictEqual(
+            h.state.local.styleLibrary.entries.map((entry) => entry.title), ['a site']);
     });
+
+    // The library page speaks the stored shape now, and is handed the bundled
+    // catalog beside it - it needs to know what a fork can be reset to, and this
+    // is the same file the read it just made was merged from.
+    const testCatalog = {
+        version: 1,
+        entries: [
+            {builtinId: 'wiki', title: 'Wikipedia Article', scope: 'site',
+             match: {type: 'regex', pattern: 'wikipedia\\.org\\/wiki\\/'},
+             css: '#mw-panel {display: none}', enabled: true, v1: true},
+            {builtinId: 'serif', title: 'Serif Reading', scope: 'theme',
+             match: {type: 'domain', pattern: ''},
+             css: 'body {font-family: serif}', enabled: false}
+        ]
+    };
+
+    await test('the library page is given the stored library and the catalog', async () => {
+        // a v1 install: an untouched copy of the bundled style, and their own
+        const h = createHarness({catalog: testCatalog, local: {styles: [
+            {title: 'Wikipedia Article', url: 'wikipedia\\.org\\/wiki\\/',
+             style: '#mw-panel {display: none}'},
+            {title: 'Mine', url: 'my\\.example', style: 'p{}'}
+        ]}});
+        const responses = request(h, {type: 'get style library'});
+        await settle();
+
+        assert.strictEqual(responses.length, 1);
+        assert.deepStrictEqual(h.state.fetches, ['chrome-extension://save-as-ebook/styles/catalog.json']);
+        assert.deepStrictEqual(responses[0].library.entries.map((entry) => entry.title),
+            ['Wikipedia Article', 'Mine', 'Serif Reading'],
+            'the migration ran, and the catalog was merged over what it produced');
+        assert.deepStrictEqual(responses[0].library.entries.map((entry) => entry.origin),
+            ['builtin', 'user', 'builtin']);
+        assert.deepStrictEqual(responses[0].catalog, testCatalog,
+            'without this the page cannot offer to reset a fork');
+        // and the result was stored, so the next read has nothing to migrate
+        assert.deepStrictEqual(h.state.local.styleLibrary, responses[0].library);
+    });
+
+    await test('the catalog is read once however many times the library is', async () => {
+        const h = createHarness({catalog: testCatalog});
+        request(h, {type: 'get style library'});
+        await settle();
+        request(h, {type: 'get style library'});
+        await settle();
+        assert.strictEqual(h.state.fetches.length, 1,
+            'it is a file that ships with the extension - it cannot change while the worker lives');
+    });
+
+    // A style the page saves is injected into real pages, so its shape is the
+    // worker's business rather than the page's.
+    await test('a library written by the page is normalized before it is stored', async () => {
+        const h = createHarness();
+        request(h, {type: 'set style library', library: {version: 2, entries: [
+            null,
+            {id: 'odd', scope: 'nonsense', enabled: 'yes', css: 'p{}',
+             match: {type: 'invented', pattern: 7}}
+        ], removedBuiltins: ['gone', 42]}});
+        await settle();
+
+        const stored = h.state.local.styleLibrary;
+        assert.strictEqual(stored.entries.length, 1);
+        assert.strictEqual(stored.entries[0].scope, 'site');
+        assert.strictEqual(stored.entries[0].enabled, true);
+        assert.deepStrictEqual(stored.entries[0].match, {type: 'regex', pattern: ''});
+        assert.deepStrictEqual(stored.removedBuiltins, ['gone']);
+    });
+
+    // The bundled styles are a file on disk; the user's are in storage. A failure
+    // to read the first must not be mistaken for a decision about the second.
+    await test('a catalog that cannot be read leaves the stored library alone', async () => {
+        const h = createHarness({
+            catalogFailure: true,
+            local: {styleLibrary: {version: 2, entries: [
+                {id: 'fork', title: 'My Wikipedia', scope: 'site', css: 'p{}',
+                 origin: 'user', builtinId: 'wiki', match: {type: 'domain', pattern: 'wikipedia.org'}}
+            ], removedBuiltins: ['serif']}}
+        });
+        const responses = request(h, {type: 'get style library'});
+        await settle();
+
+        assert.deepStrictEqual(responses[0].library.entries.map((entry) => entry.id), ['fork']);
+        assert.deepStrictEqual(responses[0].library.removedBuiltins, ['serif'],
+            'an empty catalog is not the user deleting anything');
+        assert.deepStrictEqual(responses[0].catalog, {entries: []});
+
+        // and it is read again next time, rather than the worker being left
+        // without the bundled styles until it restarts
+        assert.strictEqual(h.state.fetches.length, 1);
+        request(h, {type: 'get style library'});
+        await settle();
+        assert.strictEqual(h.state.fetches.length, 2);
+    });
+
+    // The one test that reads the file the extension actually ships: the path in
+    // getURL, the json in it, and the merge all have to agree, and none of that
+    // is exercised by a catalog written in this file.
+    await test('the catalog the extension ships is read, merged and applied', async () => {
+        const shipped = JSON.parse(fs.readFileSync(
+            path.join(__dirname, '..', 'web-extension', 'styles', 'catalog.json'), 'utf8'));
+        const h = createHarness({catalog: shipped, deferSessionGets: true});
+        const responses = request(h, {type: 'get style library'});
+        await settle();
+
+        const entries = responses[0].library.entries;
+        assert.deepStrictEqual(entries.map((entry) => entry.builtinId),
+            shipped.entries.map((entry) => entry.builtinId),
+            'a fresh install is the catalog, in the order the catalog states');
+        assert.ok(entries.every((entry) => entry.origin === 'builtin'));
+        assert.ok(entries.filter((entry) => entry.scope === 'theme')
+                         .every((entry) => entry.enabled === false),
+            'a style that applies to every capture cannot arrive switched on');
+
+        // and it reaches the page: the bundled Wikipedia style, on a wikipedia url
+        h.context.startJob(4);
+        let applied;
+        h.context.prepareStyles([{id: 4, url: 'https://en.wikipedia.org/wiki/Book'}],
+                                true, [], (value) => { applied = value; });
+        await settle();
+        h.flushSessionGets();
+        assert.deepStrictEqual(applied.map((entry) => entry.builtinId), ['wikipedia-article']);
+    });
+
 
     // Chrome tears the channel down when the listener returns, unless it
     // returned true - and then the sender's callback waits for a response that,
@@ -532,7 +778,8 @@ async function test(name, body) {
             {type: 'get'}, {type: 'set', pages: []}, {type: 'remove'},
             {type: 'get uuid'}, {type: 'get title'}, {type: 'set title', title: 'T'},
             {type: 'get book css'}, {type: 'set book css', css: 'p{}'},
-            {type: 'get styles'}, {type: 'set styles', styles: []},
+            {type: 'get style library'},
+            {type: 'set style library', library: {version: 2, entries: []}},
             {type: 'get current style'}, {type: 'set current style', currentStyle: 2},
             {type: 'get include style'}, {type: 'set include style', includeStyle: true},
             {type: 'get reader mode'}, {type: 'set reader mode', readerMode: true},

@@ -211,26 +211,301 @@
     "styleEditor": {
         "message": "Site Style Editor"
     },
-    "selectExistingCSS": {
-        "message": "Select Existing CSS"
-    },
-    "orLabel": {
-        "message": "or"
-    },
-    "createNewStyle": {
-        "message": "Create New Style"
-    },
     "styleNameLabel": {
         "message": "Name"
-    },
-    "howToWriteRegexLabel": {
-        "message": "How to write a regular expression pattern"
     },
     "removeStyle": {
         "message": "Remove Style"
     },
     "saveStyle": {
         "message": "Save Style"
+    },
+    "styleSearchPlaceholder": {
+        "message": "Search name, pattern or CSS"
+    },
+    "styleFilterAll": {
+        "message": "All"
+    },
+    "styleFilterMatches": {
+        "message": "Applies here",
+        "description": "Filter for the styles that apply to the page the popup was opened on"
+    },
+    "styleFilterSite": {
+        "message": "Site styles"
+    },
+    "styleFilterTheme": {
+        "message": "Every page",
+        "description": "Filter for styles applied to every captured page, rather than to pages matching a pattern"
+    },
+    "styleFilterEnabled": {
+        "message": "On"
+    },
+    "styleFilterMine": {
+        "message": "Mine"
+    },
+    "styleFilterBuiltin": {
+        "message": "Built-in"
+    },
+    "newSiteStyle": {
+        "message": "New site style"
+    },
+    "newThemeStyle": {
+        "message": "New every-page style"
+    },
+    "newStyleTitle": {
+        "message": "New style"
+    },
+    "untitledStyle": {
+        "message": "Untitled style"
+    },
+    "styleListEmpty": {
+        "message": "No style matches this search."
+    },
+    "styleLibraryEmpty": {
+        "message": "The library is empty. Make a style to start."
+    },
+    "styleNoSelection": {
+        "message": "Pick a style on the left to see what it does, or make a new one."
+    },
+    "styleDescriptionLabel": {
+        "message": "Note"
+    },
+    "styleDescriptionPlaceholder": {
+        "message": "What this style is for"
+    },
+    "styleScopeLabel": {
+        "message": "Applies to"
+    },
+    "styleScopeSite": {
+        "message": "Pages that match a pattern"
+    },
+    "styleScopeTheme": {
+        "message": "Every page that is captured",
+        "description": "The choice that makes a style apply to every captured page"
+    },
+    "styleMatchTypeLabel": {
+        "message": "Match by"
+    },
+    "styleMatchDomain": {
+        "message": "Domain and its subdomains"
+    },
+    "styleMatchPrefix": {
+        "message": "URL starts with"
+    },
+    "styleMatchGlob": {
+        "message": "URL pattern (* stands for anything)"
+    },
+    "styleMatchRegex": {
+        "message": "Regular expression"
+    },
+    "stylePatternLabel": {
+        "message": "Pattern"
+    },
+    "stylePatternHintDomain": {
+        "message": "example.com"
+    },
+    "stylePatternHintPrefix": {
+        "message": "example.com/blog/"
+    },
+    "stylePatternHintGlob": {
+        "message": "example.com/*/comments"
+    },
+    "stylePatternHintRegex": {
+        "message": "example\\.com\\/[0-9]+"
+    },
+    "stylePatternMissing": {
+        "message": "No pattern yet - this matches nothing."
+    },
+    "styleTestUrlLabel": {
+        "message": "Test against a URL"
+    },
+    "styleTestUrlPlaceholder": {
+        "message": "https://example.com/a-page"
+    },
+    "styleTestMatches": {
+        "message": "Matches this URL."
+    },
+    "styleTestNoMatch": {
+        "message": "Does not match this URL."
+    },
+    "styleTestInvalid": {
+        "message": "Not a usable regular expression - this matches nothing."
+    },
+    "styleTestNoUrl": {
+        "message": "Paste a URL above to check the pattern against it."
+    },
+    "styleAppliesEveryPage": {
+        "message": "Every page that is captured"
+    },
+    "styleMatchDescDomain": {
+        "message": "$pattern$ and its subdomains",
+        "placeholders": {
+            "pattern": {
+                "content": "$1",
+                "example": "example.com"
+            }
+        }
+    },
+    "styleMatchDescPrefix": {
+        "message": "URLs starting with $pattern$",
+        "placeholders": {
+            "pattern": {
+                "content": "$1",
+                "example": "example.com/blog/"
+            }
+        }
+    },
+    "styleMatchDescGlob": {
+        "message": "URLs like $pattern$",
+        "placeholders": {
+            "pattern": {
+                "content": "$1",
+                "example": "example.com/*/comments"
+            }
+        }
+    },
+    "styleMatchDescRegex": {
+        "message": "URLs matching $pattern$",
+        "placeholders": {
+            "pattern": {
+                "content": "$1",
+                "example": "example\\.com"
+            }
+        }
+    },
+    "styleOriginBuiltin": {
+        "message": "Built-in"
+    },
+    "styleOriginForked": {
+        "message": "Edited built-in",
+        "description": "Badge for a bundled style the user has edited - it can still be reset"
+    },
+    "styleOriginImported": {
+        "message": "Imported"
+    },
+    "styleOriginUser": {
+        "message": "Yours"
+    },
+    "styleEnabledHint": {
+        "message": "Apply this style while a page is being captured"
+    },
+    "styleCssHint": {
+        "message": "Applied to the page while it is captured, not to the eBook",
+        "description": "Said beside the CSS box, to distinguish it from the eBook stylesheet in the chapter editor"
+    },
+    "styleDuplicate": {
+        "message": "Duplicate"
+    },
+    "styleCopyTitle": {
+        "message": "$title$ (copy)",
+        "placeholders": {
+            "title": {
+                "content": "$1",
+                "example": "Wikipedia Article"
+            }
+        }
+    },
+    "styleResetToBuiltin": {
+        "message": "Reset to built-in"
+    },
+    "styleResetConfirm": {
+        "message": "Replace your version with the built-in style?"
+    },
+    "styleNeedsPattern": {
+        "message": "A style for matching pages needs a pattern. Add one, or set it to apply to every page."
+    },
+    "styleDiscardEditsConfirm": {
+        "message": "This style has unsaved changes. Discard them?"
+    },
+    "styleThisPage": {
+        "message": "Style This Page ..."
+    },
+    "styleThisPageHint": {
+        "message": "Capture this page and open the style library on it, so a style can be written against what will actually be saved."
+    },
+    "stylePreviewTitle": {
+        "message": "Preview"
+    },
+    "stylePreviewClear": {
+        "message": "Discard"
+    },
+    "stylePreviewClearConfirm": {
+        "message": "Discard the captured page this preview is showing?"
+    },
+    "stylePreviewOf": {
+        "message": "Captured from $url$",
+        "placeholders": {
+            "url": {
+                "content": "$1",
+                "example": "https://example.com/a-page"
+            }
+        }
+    },
+    "stylePreviewApplied": {
+        "message": "Showing: $styles$",
+        "placeholders": {
+            "styles": {
+                "content": "$1",
+                "example": "Wikipedia Article + Serif Reading"
+            }
+        }
+    },
+    "stylePreviewNothingApplies": {
+        "message": "No style applies to this page yet."
+    },
+    "stylePreviewHowTo": {
+        "message": "No page captured. Open the extension on a page you want to style and choose \"Style This Page ...\" to preview your styles against it."
+    },
+    "stylePreviewNote": {
+        "message": "The captured page with the styles above applied, rendered as the eBook will show it. A rule that hides an element here keeps it out of the eBook; fonts and margins are the reading system's."
+    },
+    "stylePickElement": {
+        "message": "Pick element"
+    },
+    "stylePickHint": {
+        "message": "Point at something in the preview to hide it."
+    },
+    "stylePickTarget": {
+        "message": "Hides $selector$",
+        "placeholders": {
+            "selector": {
+                "content": "$1",
+                "example": "aside.sidebar"
+            }
+        }
+    },
+    "stylePickTargetShared": {
+        "message": "Hides $selector$ - $count$ elements on this page",
+        "placeholders": {
+            "selector": {
+                "content": "$1",
+                "example": "div.promo"
+            },
+            "count": {
+                "content": "$2",
+                "example": "4"
+            }
+        }
+    },
+    "stylePickNeedsStyle": {
+        "message": "Pick a style on the left first - the element you click is written into it."
+    },
+    "styleRecipeHideImages": {
+        "message": "Hide images"
+    },
+    "styleRecipeHideSidebars": {
+        "message": "Hide sidebars"
+    },
+    "styleRecipeUnstickHeaders": {
+        "message": "Unstick headers"
+    },
+    "styleRecipeHideComments": {
+        "message": "Hide comments"
+    },
+    "styleRecipeSingleColumn": {
+        "message": "Single column"
+    },
+    "styleRecipeBiggerText": {
+        "message": "Bigger text"
     }
-
 }

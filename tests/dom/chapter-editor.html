@@ -11,7 +11,6 @@ var FIXTURE_PAGES = [
   {title: 'Chapter One', url: 'c1.xhtml', content: '<div><p>one</p></div>', images: [], removed: false},
   {title: 'Chapter Two', url: 'c2.xhtml', content: '<div><p>two</p></div>', images: [], removed: false}
 ];
-var FIXTURE_STYLES = [{title: 'Wikipedia', url: 'wikipedia\\.org', style: '#x{display:none}'}];
 var sent = [];
 // what was written, so a build can be checked against what the page held rather
 // than against what storage would have answered with
@@ -30,7 +29,6 @@ window.chrome = {
       if (msg.type === 'get') reply = {allPages: FIXTURE_PAGES};
       if (msg.type === 'get title') reply = {title: 'My Book'};
       if (msg.type === 'get uuid') reply = {uuid: 'fixture-uuid'};
-      if (msg.type === 'get styles') reply = {styles: FIXTURE_STYLES};
       if (msg.type === 'get current style') reply = {currentStyle: 0};
       if (msg.type === 'get include style') reply = {includeStyle: true};
       if (cb) setTimeout(function(){ cb(reply); }, 0);

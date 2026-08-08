@@ -1,0 +1,269 @@
+{
+    "version": 1,
+    "entries": [
+        {
+            "builtinId": "reddit-comments",
+            "title": "Reddit Comments",
+            "description": "Drops the sidebar, the vote arrows and the comment toolbars from a thread.",
+            "scope": "site",
+            "match": {
+                "type": "regex",
+                "pattern": "reddit\\.com\\/r\\/[^\\/]+\\/comments"
+            },
+            "css": ".side {\ndisplay: none;\n}\n#header {\ndisplay: none;\n}\n.arrow, .expand, .score, .live-timestamp, .flat-list, .buttons, .morecomments, .footer-parent, .icon {\ndisplay: none !important;\n}\n",
+            "enabled": true,
+            "tags": [
+                "site"
+            ],
+            "v1": true
+        },
+        {
+            "builtinId": "wikipedia-article",
+            "title": "Wikipedia Article",
+            "description": "Drops the navigation column, the page tools and the footer from an article.",
+            "scope": "site",
+            "match": {
+                "type": "regex",
+                "pattern": "wikipedia\\.org\\/wiki\\/"
+            },
+            "css": "#mw-navigation {\ndisplay: none;\n}\n#footer {\ndisplay: none;\n}\n#mw-panel {\ndisplay: none;\n}\n#mw-head {\ndisplay: none;\n}\n",
+            "enabled": true,
+            "tags": [
+                "site"
+            ],
+            "v1": true
+        },
+        {
+            "builtinId": "hn-comments",
+            "title": "YCombinator News Comments",
+            "description": "Drops the orange bar, the vote arrows and the reply forms from a thread.",
+            "scope": "site",
+            "match": {
+                "type": "regex",
+                "pattern": "news\\.ycombinator\\.com\\/item\\?id=[0-9]+"
+            },
+            "css": "#hnmain > tbody > tr:nth-child(1) > td > table {\ndisplay: none;\n}\n* {\nbackground-color: white;\n}\n.title, .storylink {\ntext-align: left;\nfont-weight: bold;\nfont-size: 20px;\n}\n.score {\ndisplay: none;\n}\n.age {\ndisplay: none;\n}\n.hnpast {\ndisplay: none;\n}\n.togg {\ndisplay: none;\n}\n.votelinks, .rank {\ndisplay: none;\n}\n.votearrow {\ndisplay: none;\n}\n.yclinks {\ndisplay: none;\n}\nform {\ndisplay: none;\n}\na.hnuser {\nfont-weight: bold;\ncolor: black !important;\npadding: 3px;\n}\n.subtext > span, .subtext > a:not(:nth-child(2)) {\ndisplay: none;\n}\n",
+            "enabled": true,
+            "tags": [
+                "site"
+            ],
+            "v1": true
+        },
+        {
+            "builtinId": "medium-article",
+            "title": "Medium Article",
+            "description": "Drops the floating bars, the share widget and the footer from a post.",
+            "scope": "site",
+            "match": {
+                "type": "regex",
+                "pattern": "medium\\.com"
+            },
+            "css": ".metabar {\ndisplay: none !important;\n}\nheader.container {\ndisplay: none;\n}\n.js-postShareWidget {\ndisplay: none;\n}\nfooter, canvas {\ndisplay: none !important;\n}\n.u-fixed, .u-bottom0 {\ndisplay: none;\n}\n",
+            "enabled": true,
+            "tags": [
+                "site"
+            ],
+            "v1": true
+        },
+        {
+            "builtinId": "twitter",
+            "title": "Twitter",
+            "description": "Drops the top bar, the profile header and the tweet action rows.",
+            "scope": "site",
+            "match": {
+                "type": "regex",
+                "pattern": "twitter\\.com\\/.+"
+            },
+            "css": ".topbar {\ndisplay: none !important;\n}\n.ProfileCanopy, .ProfileCanopy-inner {\ndisplay: none;\n}\n.ProfileSidebar {\ndisplay: none;\n}\n.ProfileHeading {\ndisplay: none !important;\n}\n.ProfileTweet-actionList {\ndisplay: none;\n}\n",
+            "enabled": true,
+            "tags": [
+                "site"
+            ],
+            "v1": true
+        },
+        {
+            "builtinId": "github-repo",
+            "title": "GitHub",
+            "description": "Drops the app header, the repository toolbars and the footer.",
+            "scope": "site",
+            "match": {
+                "type": "domain",
+                "pattern": "github.com"
+            },
+            "css": ".AppHeader, header.Header, .js-header-wrapper {\ndisplay: none !important;\n}\n.footer, .js-repo-nav, .UnderlineNav, .file-navigation, .pagehead-actions {\ndisplay: none !important;\n}\n.Layout-sidebar, #repository-container-header .flex-wrap {\ndisplay: none !important;\n}\n.gh-header-actions, .js-notification-shelf, .flash-messages {\ndisplay: none !important;\n}\n",
+            "enabled": true,
+            "tags": [
+                "site",
+                "code"
+            ]
+        },
+        {
+            "builtinId": "stackoverflow-question",
+            "title": "Stack Overflow",
+            "description": "Drops the top bar, the sidebar, the vote gutters and the answer form.",
+            "scope": "site",
+            "match": {
+                "type": "domain",
+                "pattern": "stackoverflow.com"
+            },
+            "css": "header.s-topbar, .s-topbar, #left-sidebar, #sidebar, #footer {\ndisplay: none !important;\n}\n.votecell, .js-voting-container, .post-menu, .js-post-notice {\ndisplay: none !important;\n}\n#post-form, .js-answer-form, .bottom-notice, .s-notice {\ndisplay: none !important;\n}\n.user-info .-flair, .js-gps-track[title] {\ndisplay: none;\n}\n",
+            "enabled": true,
+            "tags": [
+                "site",
+                "code"
+            ]
+        },
+        {
+            "builtinId": "substack-post",
+            "title": "Substack",
+            "description": "Drops the subscribe prompts, the top bar and the comment section from a post.",
+            "scope": "site",
+            "match": {
+                "type": "domain",
+                "pattern": "substack.com"
+            },
+            "css": ".subscribe-widget, .subscription-widget-wrap, [class*=\"subscribe-prompt\"] {\ndisplay: none !important;\n}\n.topbar, .main-menu, .publication-footer, .footer-wrap {\ndisplay: none !important;\n}\n.post-footer, .comments-page, .post-ufi, .share-dialog {\ndisplay: none !important;\n}\n",
+            "enabled": true,
+            "tags": [
+                "site",
+                "newsletter"
+            ]
+        },
+        {
+            "builtinId": "arxiv-abs",
+            "title": "arXiv Abstract",
+            "description": "Drops the site header, the download box and the submission history.",
+            "scope": "site",
+            "match": {
+                "type": "domain",
+                "pattern": "arxiv.org"
+            },
+            "css": "#header, .header-breadcrumbs, .footer, #footer {\ndisplay: none !important;\n}\n.extra-services, .full-text, .browse, .bookmarks {\ndisplay: none !important;\n}\n.submission-history, .endorsers, .extra-ref-cite {\ndisplay: none !important;\n}\n",
+            "enabled": true,
+            "tags": [
+                "site",
+                "science"
+            ]
+        },
+        {
+            "builtinId": "hide-consent-banners",
+            "title": "Hide Cookie Banners",
+            "description": "Removes the consent dialogs the common banner tools put up, and undoes the page scroll lock they leave behind.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "#onetrust-banner-sdk, #onetrust-consent-sdk, #CybotCookiebotDialog, #usercentrics-root {\ndisplay: none !important;\n}\n.cc-window, .fc-consent-root, .qc-cmp2-container, .osano-cm-window {\ndisplay: none !important;\n}\n[id*=\"cookie-banner\"], [id*=\"cookie-consent\"], [class*=\"cookie-banner\"], [class*=\"cookie-consent\"] {\ndisplay: none !important;\n}\nhtml, body {\noverflow: auto !important;\nposition: static !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "cleanup"
+            ]
+        },
+        {
+            "builtinId": "unstick-headers",
+            "title": "Unstick Headers",
+            "description": "Stops sticky and floating bars from being pinned, so they are captured once at the top instead of over the text.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "header, nav, [role=\"banner\"], [class*=\"sticky\"], [class*=\"fixed\"], [class*=\"floating\"] {\nposition: static !important;\n}\n[style*=\"position: fixed\"], [style*=\"position:fixed\"] {\nposition: static !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "cleanup"
+            ]
+        },
+        {
+            "builtinId": "hide-share-widgets",
+            "title": "Hide Share Widgets",
+            "description": "Removes the share, follow and newsletter boxes that sit between the paragraphs.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "[class*=\"share-button\"], [class*=\"social-share\"], [class*=\"sharedaddy\"], [class*=\"addtoany\"] {\ndisplay: none !important;\n}\n[class*=\"newsletter-signup\"], [class*=\"follow-button\"], [aria-label*=\"Share\"] {\ndisplay: none !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "cleanup"
+            ]
+        },
+        {
+            "builtinId": "theme-serif-reading",
+            "title": "Serif Reading",
+            "description": "A serif body face, looser lines and a narrower measure.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "body, p, li, blockquote, td {\nfont-family: Georgia, \"Times New Roman\", serif !important;\nline-height: 1.7 !important;\n}\np, li, blockquote {\nfont-size: 18px !important;\n}\narticle, main, .content, #content {\nmax-width: 40em !important;\nmargin: 0 auto !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "theme"
+            ]
+        },
+        {
+            "builtinId": "theme-compact",
+            "title": "Compact",
+            "description": "Smaller type and tighter spacing, for fitting more of a long page on a page.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "body, p, li, td {\nfont-size: 14px !important;\nline-height: 1.35 !important;\n}\np, ul, ol, blockquote, figure, h1, h2, h3 {\nmargin-top: 0.4em !important;\nmargin-bottom: 0.4em !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "theme"
+            ]
+        },
+        {
+            "builtinId": "theme-large-print",
+            "title": "Large Print",
+            "description": "Larger type and heavier spacing throughout.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "body, p, li, td, blockquote {\nfont-size: 22px !important;\nline-height: 1.8 !important;\n}\nh1 {\nfont-size: 32px !important;\n}\nh2 {\nfont-size: 27px !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "theme"
+            ]
+        },
+        {
+            "builtinId": "theme-force-light",
+            "title": "Force Light Background",
+            "description": "Black on white, whatever the page uses - a dark page is captured as dark, and prints as a black slab.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "html, body, article, main, section, div, p, li, td, th, blockquote, pre {\nbackground-color: #ffffff !important;\nbackground-image: none !important;\ncolor: #000000 !important;\n}\na, a * {\ncolor: #00000f !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "theme"
+            ]
+        },
+        {
+            "builtinId": "theme-no-images",
+            "title": "No Images",
+            "description": "Leaves the pictures out, for a smaller file and a text-only read.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "img, picture, figure, svg, video, iframe, canvas {\ndisplay: none !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "theme"
+            ]
+        }
+    ]
+}

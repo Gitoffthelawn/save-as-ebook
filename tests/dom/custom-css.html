@@ -249,8 +249,10 @@ setTimeout(function () {
     report('a rule typed into the book box takes effect as it is typed',
            computed('#body-text', 'paddingLeft') === '11px',
            computed('#body-text', 'paddingLeft'));
+    // book css, chapter css, the empty site-style slot the library uses, and the
+    // one the edit session adds - and no fifth one growing per keystroke
     report('and it replaced that stylesheet rather than being added beside it',
-           frameDoc.querySelectorAll('style').length === 3,
+           frameDoc.querySelectorAll('style').length === 4,
            frameDoc.querySelectorAll('style').length + ' style elements');
 
     type(chapterCss, '#body-text{padding-bottom:13px}');
