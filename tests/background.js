@@ -170,8 +170,11 @@ function messages(harness, predicate) {
 
 function request(harness, value, sender) {
     const responses = [];
-    harness.state.listeners.message[0](value, sender || {},
+    const kept = harness.state.listeners.message[0](value, sender || {},
         (response) => responses.push(copy(response)));
+    // what the listener returned, i.e. whether it asked to keep the message
+    // channel open - hidden from the deepStrictEqual comparisons on the list
+    Object.defineProperty(responses, 'kept', {value: kept});
     return responses;
 }
 
@@ -518,7 +521,13 @@ async function test(name, body) {
         assert.deepStrictEqual(h.state.local.styles, [{title: 'a site'}]);
     });
 
-    await test('each runtime message sends at most one response', async () => {
+    // Chrome tears the channel down when the listener returns, unless it
+    // returned true - and then the sender's callback waits for a response that,
+    // if the branch never sends one, only arrives as "the message channel closed
+    // before a response was received". Both halves are asserted below: every
+    // message is answered exactly once, and a branch that keeps the channel open
+    // has answered by the time it settles.
+    await test('each runtime message sends exactly one response', async () => {
         const cases = [
             {type: 'get'}, {type: 'set', pages: []}, {type: 'remove'},
             {type: 'get uuid'}, {type: 'get title'}, {type: 'set title', title: 'T'},
@@ -536,9 +545,16 @@ async function test(name, body) {
         for (const value of cases) {
             const h = createHarness();
             const responses = request(h, value, {tab: {id: 7}});
+            const kept = responses.kept;
+            const answeredBeforeReturning = responses.length;
             await settle();
-            assert.ok(responses.length <= 1,
+            assert.strictEqual(responses.length, 1,
                 value.type + ' sent ' + responses.length + ' responses');
+            // a branch that lets the channel close must already have answered
+            if (kept !== true) {
+                assert.strictEqual(answeredBeforeReturning, 1,
+                    value.type + ' closed the channel before responding');
+            }
         }
 
         const empty = createHarness();

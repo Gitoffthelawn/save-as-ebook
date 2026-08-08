@@ -389,21 +389,28 @@ function executeCommand(command) {
 }
 
 function dispatch(tab, action, justAddToBuffer, appliedStyles) {
-    if (!justAddToBuffer) {
-        _execRequest({type: 'remove'});
-    }
-
-    isIncludeStyles((result) => {
-        let isIncludeStyle = result.includeStyle
-        isReaderMode((readerResult) => {
-            isReviewBeforeSaving((reviewResult) => {
-                prepareStyles(tab, isIncludeStyle, appliedStyles, (tmpAppliedStyles) => {
-                    applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles,
-                        readerResult.readerMode, reviewResult.reviewBeforeSaving)
+    // a save starts a new book, so the previous one is cleared first - and the
+    // extraction only starts once it is gone, or the chapter it produces could
+    // be written before the removal it was supposed to follow
+    let start = () => {
+        isIncludeStyles((result) => {
+            let isIncludeStyle = result.includeStyle
+            isReaderMode((readerResult) => {
+                isReviewBeforeSaving((reviewResult) => {
+                    prepareStyles(tab, isIncludeStyle, appliedStyles, (tmpAppliedStyles) => {
+                        applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles,
+                            readerResult.readerMode, reviewResult.reviewBeforeSaving)
+                    })
                 })
             })
         })
-    })
+    }
+
+    if (justAddToBuffer) {
+        start()
+    } else {
+        clearEbook(start)
+    }
 }
 
 function isIncludeStyles(callback) {
@@ -627,8 +634,38 @@ function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, 
     });
 }
 
+// Discards the book being assembled: the chapters and everything written about
+// them. One remove call, so the callback runs with the last key already gone -
+// a caller that clears the book and immediately writes a new one must not have
+// its first chapter removed by a clearing that was still in flight.
+function clearEbook(callback) {
+    chrome.storage.local.remove([
+        'allPages',
+        'title',
+        // the identifier belongs to the discarded set of chapters - the next
+        // ebook is a different book and must not reuse it
+        'uuid',
+        // and so does the stylesheet written for them. The per-site styles under
+        // 'styles' are not touched: those belong to the sites, not to this book.
+        'bookCss',
+        // ...and what the user said the book was called by, written about the
+        // chapters that are going
+        'bookMetadata'
+    ], () => {
+        if (callback) {
+            callback()
+        }
+    })
+}
+
 chrome.runtime.onMessage.addListener(_execRequest);
 
+// Every branch answers, and the ones that answer from a storage callback are the
+// only ones that return true. A listener that returns true without ever calling
+// sendResponse leaves the sender's callback pending until the channel is torn
+// down, which is what Chrome reports as "a listener indicated an asynchronous
+// response ... but the message channel closed" - and every setter below is
+// called with a callback somewhere (see utils.js).
 function _execRequest(request, sender, sendResponse) {
     if (request.type === 'get') {
         chrome.storage.local.get('allPages', function (data) {
@@ -638,22 +675,19 @@ function _execRequest(request, sender, sendResponse) {
             }
             sendResponse({allPages: data.allPages});
         })
+        return true;
     }
     if (request.type === 'set') {
-        chrome.storage.local.set({'allPages': request.pages});
+        chrome.storage.local.set({'allPages': request.pages}, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     if (request.type === 'remove') {
-        chrome.storage.local.remove('allPages');
-        chrome.storage.local.remove('title');
-        // the identifier belongs to the discarded set of chapters - the next
-        // ebook is a different book and must not reuse it
-        chrome.storage.local.remove('uuid');
-        // and so does the stylesheet written for them. The per-site styles under
-        // 'styles' are not touched: those belong to the sites, not to this book.
-        chrome.storage.local.remove('bookCss');
-        // ...and what the user said the book was called by, written about the
-        // chapters that are going
-        chrome.storage.local.remove('bookMetadata');
+        clearEbook(function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     // Minted on first use and kept until the ebook is discarded, so rebuilding
     // after editing chapters produces the same dc:identifier. The service worker
@@ -669,6 +703,7 @@ function _execRequest(request, sender, sendResponse) {
                 sendResponse({uuid: uuid});
             });
         })
+        return true;
     }
     if (request.type === 'get title') {
         chrome.storage.local.get('title', function (data) {
@@ -678,9 +713,13 @@ function _execRequest(request, sender, sendResponse) {
                 sendResponse({title: data.title});
             }
         })
+        return true;
     }
     if (request.type === 'set title') {
-        chrome.storage.local.set({'title': request.title});
+        chrome.storage.local.set({'title': request.title}, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     // The book-wide stylesheet. Empty until somebody writes one, which is what
     // every book built before the editor had a box for it had.
@@ -688,9 +727,15 @@ function _execRequest(request, sender, sendResponse) {
         chrome.storage.local.get('bookCss', function (data) {
             sendResponse({css: data && typeof data.bookCss === 'string' ? data.bookCss : ''});
         })
+        return true;
     }
     if (request.type === 'set book css') {
-        chrome.storage.local.set({'bookCss': typeof request.css === 'string' ? request.css : ''});
+        chrome.storage.local.set({
+            'bookCss': typeof request.css === 'string' ? request.css : ''
+        }, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     // What the user stated about the book itself - authors, language, publisher,
     // description, date. Absent until somebody fills a box in, which is what
@@ -699,12 +744,16 @@ function _execRequest(request, sender, sendResponse) {
         chrome.storage.local.get('bookMetadata', function (data) {
             sendResponse({metadata: data && data.bookMetadata ? data.bookMetadata : null});
         })
+        return true;
     }
     if (request.type === 'set book metadata') {
         chrome.storage.local.set({
             'bookMetadata': request.metadata && typeof request.metadata === 'object' ?
                             request.metadata : null
+        }, function () {
+            sendResponse({ok: true});
         });
+        return true;
     }
     if (request.type === 'get styles') {
         chrome.storage.local.get('styles', function (data) {
@@ -714,9 +763,13 @@ function _execRequest(request, sender, sendResponse) {
                 sendResponse({styles: data.styles});
             }
         });
+        return true;
     }
     if (request.type === 'set styles') {
-        chrome.storage.local.set({'styles': request.styles});
+        chrome.storage.local.set({'styles': request.styles}, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     if (request.type === 'get current style') {
         chrome.storage.local.get('currentStyle', function (data) {
@@ -726,9 +779,13 @@ function _execRequest(request, sender, sendResponse) {
                 sendResponse({currentStyle: data.currentStyle});
             }
         });
+        return true;
     }
     if (request.type === 'set current style') {
-        chrome.storage.local.set({'currentStyle': request.currentStyle});
+        chrome.storage.local.set({'currentStyle': request.currentStyle}, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     if (request.type === 'get include style') {
         chrome.storage.local.get('includeStyle', function (data) {
@@ -738,9 +795,13 @@ function _execRequest(request, sender, sendResponse) {
                 sendResponse({includeStyle: data.includeStyle});
             }
         });
+        return true;
     }
     if (request.type === 'set include style') {
-        chrome.storage.local.set({'includeStyle': request.includeStyle});
+        chrome.storage.local.set({'includeStyle': request.includeStyle}, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     if (request.type === 'get reader mode') {
         chrome.storage.local.get('readerMode', function (data) {
@@ -750,9 +811,13 @@ function _execRequest(request, sender, sendResponse) {
                 sendResponse({readerMode: data.readerMode});
             }
         });
+        return true;
     }
     if (request.type === 'set reader mode') {
-        chrome.storage.local.set({'readerMode': request.readerMode});
+        chrome.storage.local.set({'readerMode': request.readerMode}, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     // A preference rather than part of a book, so it is not among the keys
     // 'remove' discards - it has to still be set for the save after this one.
@@ -764,25 +829,43 @@ function _execRequest(request, sender, sendResponse) {
                 sendResponse({reviewBeforeSaving: data.reviewBeforeSaving});
             }
         });
+        return true;
     }
     if (request.type === 'set review before saving') {
-        chrome.storage.local.set({'reviewBeforeSaving': request.reviewBeforeSaving});
+        chrome.storage.local.set({
+            'reviewBeforeSaving': request.reviewBeforeSaving
+        }, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     if (request.type === 'is busy?') {
         isBusy((busy) => {
             sendResponse({isBusy: busy})
         })
+        return true;
     }
     // the extraction is still running - see JOB_TIMEOUT
     if (request.type === 'job-heartbeat') {
         touchJob()
+        sendResponse({ok: true});
+        return false;
     }
+    // Answered before the command runs, not after: the work reaches into the
+    // page and ends in a download, far longer than a popup that closes as soon
+    // as the command starts stays alive to hear about it.
     if (request.type === 'save-page' || request.type === 'save-selection' ||
         request.type === 'add-page' || request.type === 'add-selection') {
+        sendResponse({started: true});
         executeCommand({type: request.type})
+        return false;
     }
     if (request.type === 'done') {
+        sendResponse({ok: true});
         endJob()
+        return false;
     }
-    return true;
+    // an unknown type still has a sender waiting on a callback
+    sendResponse({});
+    return false;
 }

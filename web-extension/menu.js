@@ -28,10 +28,14 @@ chrome.runtime.onMessage.addListener((request) => {
     }
 });
 
-function removeEbook() {
+function removeEbook(callback) {
     chrome.runtime.sendMessage({
         type: "remove"
-    }, function(response) {});
+    }, function(response) {
+        if (callback) {
+            callback();
+        }
+    });
 }
 
 chrome.runtime.sendMessage({
@@ -184,17 +188,25 @@ document.getElementById("editChapters").onclick = function() {
     openEditor('chapters.html');
 };
 
+// The wait message stays up for as long as this popup lives: the background
+// answers as soon as the command has started, not when the ebook is finished,
+// and it is the one that closes the popup once the job ends (see finishJob).
+//
+// A save starts a new book, so the old chapters go first - and only once the
+// removal is confirmed, or the command would race the storage write.
 function dispatch(commandType, justAddToBuffer) {
     document.getElementById('busy').style.display = 'block';
-    if (!justAddToBuffer) {
-        removeEbook();
+    let start = function () {
+        chrome.runtime.sendMessage({
+            type: commandType
+        }, function(response) {
+        });
+    };
+    if (justAddToBuffer) {
+        start();
+    } else {
+        removeEbook(start);
     }
-    chrome.runtime.sendMessage({
-        type: commandType
-    }, function(response) {
-        //FIXME - hidden before done
-        document.getElementById('busy').style.display = 'none';
-    });
 }
 
 document.getElementById('savePage').onclick = function() {
