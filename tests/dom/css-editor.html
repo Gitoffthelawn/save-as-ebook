@@ -6,13 +6,86 @@
 </head>
 <body>
 <script>
-// Stand in for the extension apis the editors use on their own page
-var FIXTURE_PAGES = [
-  {title: 'Chapter One', url: 'c1.xhtml', content: '<div><p>one</p></div>', images: [], removed: false},
-  {title: 'Chapter Two', url: 'c2.xhtml', content: '<div><p>two</p></div>', images: [], removed: false}
-];
-var FIXTURE_STYLES = [{title: 'Wikipedia', url: 'wikipedia\\.org', style: '#x{display:none}'}];
+// The style library page, in the browser. What is checked here is the part that
+// needs a DOM: which rows the list shows for a search or a filter chip, what the
+// detail pane says about the style that was clicked, and what gets written when a
+// checkbox, a save or a delete is used. The matcher and the library rules
+// themselves are node tests - see tests/style-library.js.
+
+// The page reads the url the popup was opened on out of its own query string, so
+// the fixture has to have one before cssEditor.js runs.
+var TARGET_URL = 'https://example.com/articles/42';
+history.replaceState(null, '', '?for=' + encodeURIComponent(TARGET_URL));
+
+var FIXTURE_CATALOG = {
+  version: 1,
+  entries: [
+    {builtinId: 'wikipedia-article', title: 'Wikipedia Article', description: 'the article only',
+     scope: 'site', match: {type: 'regex', pattern: 'wikipedia\\.org\\/wiki\\/'},
+     css: '#mw-panel {display: none}', enabled: true, v1: true},
+    {builtinId: 'theme-serif-reading', title: 'Serif Reading', description: 'a serif face',
+     scope: 'theme', match: {type: 'domain', pattern: ''},
+     css: 'body {font-family: serif}', enabled: false}
+  ]
+};
+
+// Built as the background would hand it over: normalized, and in the order the
+// cascade is worked out from.
+function fixtureLibrary() {
+  return normalizeStyleLibrary({version: 2, entries: [
+    {id: 'builtin-wikipedia-article', title: 'Wikipedia Article', origin: 'builtin',
+     builtinId: 'wikipedia-article', scope: 'site',
+     match: {type: 'regex', pattern: 'wikipedia\\.org\\/wiki\\/'},
+     css: '#mw-panel {display: none}'},
+    {id: 'ex', title: 'Example Site', origin: 'user', scope: 'site',
+     match: {type: 'domain', pattern: 'example.com'}, css: '.ad {display: none}'},
+    {id: 'off', title: 'Switched Off', origin: 'user', scope: 'site', enabled: false,
+     match: {type: 'domain', pattern: 'example.com'}, css: '.x {}'},
+    {id: 'serif', title: 'Serif Reading', origin: 'builtin',
+     builtinId: 'theme-serif-reading', scope: 'theme', enabled: false,
+     css: 'body {font-family: serif}'},
+    {id: 'other', title: 'Elsewhere', origin: 'user', scope: 'site',
+     match: {type: 'domain', pattern: 'other.test'}, css: '.y {}'}
+  ]});
+}
+
+// A page captured by "Style this page ...", as the background stores it. The
+// markup carries the page's own class names and ids, which is the whole point of
+// the snapshot mode in extractHtml.js: it is what the styles being previewed
+// select on, and what the element picker names things by.
+function fixtureSnapshot() {
+  return {
+    url: TARGET_URL,
+    title: 'Example Article',
+    capturedAt: 1700000000000,
+    page: {
+      title: 'Example Article',
+      url: 'example42.xhtml',
+      styleFileName: 'style1.css',
+      styleFileContent: '.sae-c-aB0{color:rgb(1, 2, 3)}',
+      images: [],
+      content: '<div>' +
+               '<article class="post sae-c-aB0">' +
+               '<h1 id="headline">Example Article</h1>' +
+               '<p class="body-text">One.</p>' +
+               '<p class="body-text">Two.</p>' +
+               '</article>' +
+               // three kinds of class name on one element: the page's own, one a
+               // build tool minted, and one extraction added
+               '<aside class="sidebar widget css-1x9fk2 sae-c-aB0">side</aside>' +
+               '<div id="comments"><p>a comment</p></div>' +
+               '</div>'
+    }
+  };
+}
+
+var snapshot = fixtureSnapshot();
+
 var sent = [];
+var saved = [];
+var alerts = [];
+var confirms = [];
+var confirmAnswer = true;
 
 window.chrome = {
   runtime: {
@@ -22,25 +95,45 @@ window.chrome = {
     sendMessage: function(msg, cb) {
       sent.push(msg.type);
       var reply = {};
-      if (msg.type === 'get') reply = {allPages: FIXTURE_PAGES};
-      if (msg.type === 'get title') reply = {title: 'My Book'};
-      if (msg.type === 'get styles') reply = {styles: FIXTURE_STYLES};
-      if (msg.type === 'get current style') reply = {currentStyle: 0};
-      if (msg.type === 'get include style') reply = {includeStyle: true};
+      if (msg.type === 'get style library') {
+        reply = {library: fixtureLibrary(), catalog: FIXTURE_CATALOG};
+      }
+      if (msg.type === 'set style library') {
+        saved.push(msg.library);
+        reply = {ok: true};
+      }
+      if (msg.type === 'get style snapshot') {
+        reply = {snapshot: snapshot};
+      }
+      if (msg.type === 'clear style snapshot') {
+        snapshot = null;
+        reply = {ok: true};
+      }
       if (cb) setTimeout(function(){ cb(reply); }, 0);
     }
   },
-  i18n: {getMessage: function(k){ return k; }},
-  tabs: {query: function(q, cb){ cb([{id: 1, url: 'https://example.com'}]); },
+  // The real messages are sentences; the key plus its substitutions is enough to
+  // assert on, and shows a message used with the wrong number of them.
+  i18n: {getMessage: function(k, subs){ return subs ? k + ':' + subs.join(',') : k; }},
+  tabs: {query: function(q, cb){ cb([{id: 1, url: TARGET_URL}]); },
          create: function(){}, update: function(){}},
   commands: {getAll: function(cb){ cb([]); }}
 };
+
+window.alert = function(message){ alerts.push(message); };
+window.confirm = function(message){ confirms.push(message); return confirmAnswer; };
 
 var errors = [];
 window.addEventListener('error', function(e){ errors.push(e.message); });
 </script>
 
+<!-- the same list styles.html loads, in the same order -->
 <script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/styleLibrary.js"></script>
+<script src="../../web-extension/sanitizeHtml.js"></script>
+<script src="../../web-extension/saveEbook.js"></script>
+<script src="../../web-extension/chapterPreview.js"></script>
+<script src="../../web-extension/stylePicker.js"></script>
 <script src="../../web-extension/cssEditor.js"></script>
 
 <script>
@@ -50,23 +143,479 @@ function report(name, ok, detail) {
   document.getElementById('results').appendChild(li);
 }
 
+function rows() {
+  return Array.prototype.slice.call(
+    document.getElementsByClassName('cssEditor-style-row'));
+}
+
+function rowNames() {
+  return rows().map(function (row) {
+    return row.getElementsByClassName('cssEditor-style-row-name')[0].textContent;
+  });
+}
+
+function click(id) {
+  document.getElementById(id).click();
+}
+
+function lastSaved() {
+  return saved[saved.length - 1];
+}
+
+function savedEntry(id) {
+  var library = lastSaved();
+  if (!library) {
+    return null;
+  }
+  return library.entries.filter(function (entry) { return entry.id === id; })[0] || null;
+}
+
 setTimeout(function () {
   var out = document.createElement('ul');
   out.id = 'results';
   document.body.appendChild(out);
 
-  report('cssEditor script ran without throwing', errors.length === 0, errors.join(' | '));
-  report('editor modal rendered', !!document.getElementById('cssEditor-Modal'));
-  var sel = document.getElementById('cssEditor-selectStyle');
-  report('style list populated', !!sel && sel.options.length === 2,
-         'options=' + (sel ? sel.options.length : 'none'));
+  report('library page script ran without throwing', errors.length === 0, errors.join(' | '));
+  report('page rendered', !!document.getElementById('cssEditor-Modal') &&
+                          !!document.getElementById('cssEditor-styleList'));
+  report('the library was asked for', sent.indexOf('get style library') > -1);
+
+  // ---- the list ----
+  report('every style is a row, in the library\'s own order',
+         rowNames().join('|') === 'Wikipedia Article|Example Site|Switched Off|Serif Reading|Elsewhere',
+         rowNames().join('|'));
+
+  var firstRow = rows()[0];
+  report('a row says what the style matches, in words rather than as a regex',
+         firstRow.getElementsByClassName('cssEditor-style-row-where')[0].textContent ===
+             'styleMatchDescRegex:wikipedia\\.org\\/wiki\\/',
+         firstRow.getElementsByClassName('cssEditor-style-row-where')[0].textContent);
+  report('a row that applies to every capture says so',
+         rows()[3].getElementsByClassName('cssEditor-style-row-where')[0].textContent ===
+             'styleAppliesEveryPage');
+  report('a row is badged with where the style came from',
+         firstRow.getElementsByClassName('cssEditor-badge')[0].textContent === 'styleOriginBuiltin' &&
+         rows()[1].getElementsByClassName('cssEditor-badge')[0].textContent === 'styleOriginUser');
+  report('a switched-off style has an unchecked box, not a missing row',
+         rows()[2].getElementsByClassName('cssEditor-style-toggle')[0].checked === false &&
+         rows()[1].getElementsByClassName('cssEditor-style-toggle')[0].checked === true);
+
+  // ---- search and the filter chips ----
+  var search = document.getElementById('cssEditor-search');
+  search.value = 'wikipedia';
+  search.dispatchEvent(new Event('input'));
+  report('search covers the name and the pattern', rowNames().join('|') === 'Wikipedia Article',
+         rowNames().join('|'));
+
+  search.value = 'font-family';
+  search.dispatchEvent(new Event('input'));
+  report('search covers the CSS body', rowNames().join('|') === 'Serif Reading',
+         rowNames().join('|'));
+
+  search.value = 'no such style';
+  search.dispatchEvent(new Event('input'));
+  report('a search that finds nothing says so', rows().length === 0 &&
+         document.getElementById('cssEditor-listEmpty').textContent === 'styleListEmpty');
+
+  search.value = '';
+  search.dispatchEvent(new Event('input'));
+
+  click('cssEditor-filter-theme');
+  report('the every-page chip shows only the styles that apply to every capture',
+         rowNames().join('|') === 'Serif Reading', rowNames().join('|'));
+
+  click('cssEditor-filter-site');
+  report('the site chip shows only pattern-matched styles', rows().length === 4,
+         rowNames().join('|'));
+
+  click('cssEditor-filter-enabled');
+  report('the on chip shows only what is switched on',
+         rowNames().join('|') === 'Wikipedia Article|Example Site|Elsewhere', rowNames().join('|'));
+
+  click('cssEditor-filter-builtin');
+  report('the built-in chip shows the bundled styles nobody has edited',
+         rowNames().join('|') === 'Wikipedia Article|Serif Reading', rowNames().join('|'));
+
+  click('cssEditor-filter-mine');
+  report('the mine chip shows the rest',
+         rowNames().join('|') === 'Example Site|Switched Off|Elsewhere', rowNames().join('|'));
+
+  // The question the old regex box could not answer: what runs on this page.
+  click('cssEditor-filter-matches');
+  report('the applies-here chip is about the page the popup was opened on',
+         rowNames().join('|') === 'Example Site|Switched Off|Serif Reading', rowNames().join('|'));
+
+  click('cssEditor-filter-all');
+
+  // ---- the detail pane ----
+  report('nothing is selected to begin with',
+         document.getElementById('cssEditor-noSelection').style.display === 'block' &&
+         document.getElementById('cssEditor-styleEditor').style.display === 'none' &&
+         document.getElementById('cssEditor-saveStyle').style.display === 'none');
+
+  click('cssEditor-row-ex');
+  report('clicking a row opens that style',
+         document.getElementById('cssEditor-styleEditor').style.display === 'flex' &&
+         document.getElementById('cssEditor-styleName').value === 'Example Site' &&
+         document.getElementById('cssEditor-matchType').value === 'domain' &&
+         document.getElementById('cssEditor-matchUrl').value === 'example.com' &&
+         document.getElementById('cssEditor-styleContent').value === '.ad {display: none}');
+  report('the selected row is marked as selected',
+         document.getElementById('cssEditor-row-ex').className.indexOf('cssEditor-style-row-on') > -1);
+
+  report('the test url is prefilled with the page the popup was opened on',
+         document.getElementById('cssEditor-testUrl').value === TARGET_URL);
+  report('the pattern is reported as matching that url',
+         document.getElementById('cssEditor-matchResult').textContent === 'styleTestMatches' &&
+         document.getElementById('cssEditor-matchResult').className === 'cssEditor-match-yes',
+         document.getElementById('cssEditor-matchResult').textContent);
+
+  var pattern = document.getElementById('cssEditor-matchUrl');
+  pattern.value = 'other.test';
+  pattern.dispatchEvent(new Event('input'));
+  report('a pattern that does not cover the url says that, and not that it is wrong',
+         document.getElementById('cssEditor-matchResult').textContent === 'styleTestNoMatch');
+
+  // A half-typed regex matches nothing, so "does not match" would be a fact about
+  // the pattern dressed up as a fact about the url.
+  document.getElementById('cssEditor-matchType').value = 'regex';
+  document.getElementById('cssEditor-matchType').dispatchEvent(new Event('change'));
+  pattern.value = 'example\\.com\\/[';
+  pattern.dispatchEvent(new Event('input'));
+  report('a pattern that cannot compile is called out as such',
+         document.getElementById('cssEditor-matchResult').textContent === 'styleTestInvalid' &&
+         document.getElementById('cssEditor-matchResult').className === 'cssEditor-match-bad');
+
+  click('cssEditor-saveStyle');
+  report('a style with an unusable regex is not saved', saved.length === 0 &&
+         alerts.join('|') === 'invalidRegex', alerts.join('|'));
+
+  // A style that applies to every capture has no pattern to show.
+  var scope = document.getElementById('cssEditor-styleScope');
+  scope.value = 'theme';
+  scope.dispatchEvent(new Event('change'));
+  report('the match fields go away for an every-page style',
+         document.getElementById('cssEditor-matchHolder').style.display === 'none');
+  scope.value = 'site';
+  scope.dispatchEvent(new Event('change'));
+  report('and come back', document.getElementById('cssEditor-matchHolder').style.display === 'block');
+
+  // ---- writing ----
+  alerts = [];
+  document.getElementById('cssEditor-matchType').value = 'domain';
+  document.getElementById('cssEditor-matchType').dispatchEvent(new Event('change'));
+  pattern.value = '';
+  pattern.dispatchEvent(new Event('input'));
+  click('cssEditor-saveStyle');
+  report('a site style with no pattern is not saved either',
+         saved.length === 0 && alerts.join('|') === 'styleNeedsPattern', alerts.join('|'));
+
+  alerts = [];
+  pattern.value = 'example.com';
+  pattern.dispatchEvent(new Event('input'));
+  document.getElementById('cssEditor-styleContent').value = '.ad, .promo {display: none}';
+  click('cssEditor-saveStyle');
+  report('saving writes the whole library, with the edit in it',
+         saved.length === 1 && savedEntry('ex').css === '.ad, .promo {display: none}' &&
+         lastSaved().entries.length === 5 && alerts.join('|') === 'styleSaved',
+         alerts.join('|'));
+
+  // The checkbox is not part of the draft: it is answered where it is clicked.
+  rows()[1].getElementsByClassName('cssEditor-style-toggle')[0].click();
+  report('a checkbox writes straight away',
+         saved.length === 2 && savedEntry('ex').enabled === false);
+  report('and the row it was clicked on shows it',
+         rows()[1].getElementsByClassName('cssEditor-style-toggle')[0].checked === false);
+
+  // ---- built-ins ----
+  click('cssEditor-row-builtin-wikipedia-article');
+  report('a bundled style says it is one, and offers nothing to reset to',
+         document.getElementById('cssEditor-originBadge').textContent === 'styleOriginBuiltin' &&
+         document.getElementById('cssEditor-resetStyle').style.display === 'none');
+
+  document.getElementById('cssEditor-styleContent').value = '#mw-panel {display: none} p {color: red}';
+  click('cssEditor-saveStyle');
+  report('editing a bundled style makes it the user\'s copy of it',
+         savedEntry('builtin-wikipedia-article').origin === 'user' &&
+         savedEntry('builtin-wikipedia-article').builtinId === 'wikipedia-article');
+  report('and it can now be reset',
+         document.getElementById('cssEditor-resetStyle').style.display === 'inline-block' &&
+         document.getElementById('cssEditor-originBadge').textContent === 'styleOriginForked');
+
+  click('cssEditor-resetStyle');
+  report('resetting asks first, then puts the bundled style back',
+         confirms.join('|') === 'styleResetConfirm' &&
+         savedEntry('builtin-wikipedia-article').css === '#mw-panel {display: none}' &&
+         savedEntry('builtin-wikipedia-article').origin === 'builtin',
+         confirms.join('|'));
+
+  // ---- duplicate, new, delete ----
+  confirms = [];
+  var before = rows().length;
+  click('cssEditor-duplicateStyle');
+  report('a duplicate sits next to the style it came from, as the user\'s own',
+         rows().length === before + 1 &&
+         rowNames()[1] === 'styleCopyTitle:Wikipedia Article' &&
+         lastSaved().entries[1].builtinId === null &&
+         lastSaved().entries[1].origin === 'user',
+         rowNames().join('|'));
+  report('the copy is what is now being edited',
+         document.getElementById('cssEditor-styleName').value === 'styleCopyTitle:Wikipedia Article');
+
+  click('cssEditor-newSiteStyle');
+  report('a new site style is prefilled with the domain of that page',
+         document.getElementById('cssEditor-matchType').value === 'domain' &&
+         document.getElementById('cssEditor-matchUrl').value === 'example.com' &&
+         document.getElementById('cssEditor-styleName').value === 'newStyleTitle',
+         document.getElementById('cssEditor-matchUrl').value);
+  report('and it is in the library, not a draft beside it',
+         rowNames().indexOf('newStyleTitle') > -1);
+
+  click('cssEditor-newThemeStyle');
+  report('a new every-page style has no pattern fields',
+         document.getElementById('cssEditor-styleScope').value === 'theme' &&
+         document.getElementById('cssEditor-matchHolder').style.display === 'none');
+
+  confirms = [];
+  var rowsBeforeDelete = rows().length;
+  click('cssEditor-removeStyle');
+  report('deleting asks first, and removes what was selected',
+         confirms.join('|') === 'confirmDeleteStyle' && rows().length === rowsBeforeDelete - 1 &&
+         document.getElementById('cssEditor-styleEditor').style.display === 'none',
+         confirms.join('|'));
+
+  confirmAnswer = false;
+  confirms = [];
+  click('cssEditor-row-other');
+  var keptRows = rows().length;
+  click('cssEditor-removeStyle');
+  report('a delete that is not confirmed leaves the style alone',
+         rows().length === keptRows && !!document.getElementById('cssEditor-row-other'));
+
+  // An unsaved edit is the one thing on this page that can be lost, so it is the
+  // one thing that asks.
+  document.getElementById('cssEditor-styleContent').value = '.unsaved {}';
+  document.getElementById('cssEditor-styleContent').dispatchEvent(new Event('input'));
+  confirms = [];
+  click('cssEditor-row-ex');
+  report('selecting another style with unsaved changes asks, and stays put when refused',
+         confirms.join('|') === 'styleDiscardEditsConfirm' &&
+         document.getElementById('cssEditor-styleContent').value === '.unsaved {}',
+         confirms.join('|'));
+
+  confirmAnswer = true;
+  click('cssEditor-row-ex');
+  report('and moves on when allowed',
+         document.getElementById('cssEditor-styleName').value === 'Example Site');
+
+  // Deleting a bundled style has to be remembered, or the catalog hands it back.
+  click('cssEditor-row-serif');
+  click('cssEditor-removeStyle');
+  report('a deleted bundled style is remembered as deleted',
+         lastSaved().removedBuiltins.indexOf('theme-serif-reading') > -1,
+         JSON.stringify(lastSaved().removedBuiltins));
+
   report('editor css not disabled',
          Array.prototype.every.call(document.styleSheets, function (s) { return !s.disabled; }));
   report('page stylesheets left enabled (no global disable)',
          document.styleSheets.length > 0);
 
-  document.title = 'DONE';
+  // The preview frame loads its srcdoc asynchronously, and the picker only
+  // exists once it has - so the rest runs after it.
+  setTimeout(previewChecks, 400);
 }, 300);
+
+// run-dom-tests.sh reads the results a line at a time, so a detail carrying a
+// newline loses the assertion it belongs to - and css is full of them.
+function oneLine(text) {
+  return String(text).replace(/\s+/g, ' ').trim();
+}
+
+function previewFrameDocument() {
+  var frame = document.getElementById('cssEditor-previewFrame');
+  return frame ? frame.contentDocument : null;
+}
+
+function frameComputed(selector, property) {
+  var doc = previewFrameDocument();
+  var elem = doc ? doc.querySelector(selector) : null;
+  return elem ? doc.defaultView.getComputedStyle(elem)[property] : '';
+}
+
+function frameStyleText(id) {
+  var doc = previewFrameDocument();
+  var elem = doc ? doc.getElementById(id) : null;
+  return elem ? elem.textContent : '';
+}
+
+// A pointer moving onto an element in the frame and clicking it. The picker
+// listens on the frame document with capture, so an event raised on the element
+// and allowed to bubble is the same thing a real pointer produces.
+function pointAt(element) {
+  element.dispatchEvent(new MouseEvent('mousemove', {bubbles: true}));
+}
+function clickIn(element) {
+  element.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+}
+
+function previewChecks() {
+  var doc = previewFrameDocument();
+
+  report('the captured page was asked for', sent.indexOf('get style snapshot') > -1);
+  report('the preview says which page it is showing',
+         document.getElementById('cssEditor-previewSource').textContent ===
+             'stylePreviewOf:' + TARGET_URL,
+         document.getElementById('cssEditor-previewSource').textContent);
+  report('the captured page is rendered in a frame', !!doc && !!doc.body);
+
+  // The contract snapshot mode exists for: a style is written against the page's
+  // own names, so those are what the frame has to hold. A normal capture would
+  // have replaced them with the generated ones.
+  report('the page\'s own class names and ids survived into the snapshot',
+         !!doc && doc.querySelectorAll('aside.sidebar').length === 1 &&
+         doc.querySelectorAll('#comments').length === 1 &&
+         doc.querySelectorAll('p.body-text').length === 2,
+         doc ? doc.body.innerHTML.substring(0, 120) : 'no frame');
+
+  // ---- the styles being previewed ----
+  click('cssEditor-row-ex');
+  var css = document.getElementById('cssEditor-styleContent');
+  css.value = 'aside.sidebar {display: none}';
+  css.dispatchEvent(new Event('input'));
+  report('typing a rule takes effect in the frame as it is typed',
+         frameComputed('aside.sidebar', 'display') === 'none',
+         frameComputed('aside.sidebar', 'display'));
+  report('and it went into the site style sheet, not the chapter\'s',
+         frameStyleText('sae-preview-site-css').indexOf('aside.sidebar') > -1 &&
+         frameStyleText('sae-preview-chapter-css').indexOf('aside.sidebar') < 0);
+  report('the pane names the styles it is showing',
+         document.getElementById('cssEditor-previewApplied').textContent
+             .indexOf('Example Site') > -1,
+         document.getElementById('cssEditor-previewApplied').textContent);
+
+  // The list is rebuilt by every write, so the row is looked up again each time.
+  // The assertions above left this style switched off.
+  function exToggle() {
+    return document.getElementById('cssEditor-row-ex')
+                   .getElementsByClassName('cssEditor-style-toggle')[0];
+  }
+  function setEx(on) {
+    if (exToggle().checked !== on) {
+      exToggle().click();
+    }
+  }
+
+  // A checkbox writes to storage as it is clicked. The box beside it is a draft,
+  // and is not what was being answered.
+  exToggle().click();
+  exToggle().click();
+  report('a checkbox does not throw away what is being typed',
+         css.value === 'aside.sidebar {display: none}', oneLine(css.value));
+
+  // Stored and then left, so that what follows is about a style being switched
+  // off rather than about a draft: the style being edited is previewed whether
+  // it is switched on or not, because it is the one being looked at.
+  click('cssEditor-saveStyle');
+  click('cssEditor-row-other');
+
+  setEx(true);
+  report('a style that is switched on is applied to the preview',
+         frameComputed('aside.sidebar', 'display') === 'none',
+         frameComputed('aside.sidebar', 'display'));
+  setEx(false);
+  report('and switching it off takes it out again',
+         frameComputed('aside.sidebar', 'display') !== 'none',
+         frameComputed('aside.sidebar', 'display'));
+
+  // ---- recipes ----
+  css.value = '';
+  css.dispatchEvent(new Event('input'));
+  click('cssEditor-recipe-hideImages');
+  report('a recipe writes a rule into the box',
+         css.value.indexOf('img') > -1 && css.value.indexOf('display: none') > -1,
+         oneLine(css.value));
+  click('cssEditor-recipe-biggerText');
+  report('and a second one is added to the first, not put in its place',
+         css.value.indexOf('img') > -1 && css.value.indexOf('font-size') > -1);
+
+  // ---- the element picker ----
+  css.value = '';
+  css.dispatchEvent(new Event('input'));
+  click('cssEditor-pickElement');
+  report('picking is off until it is turned on, and then on',
+         document.getElementById('cssEditor-pickElement').className
+             .indexOf('cssEditor-chip-on') > -1);
+
+  var aside = doc.querySelector('aside.sidebar');
+  pointAt(aside);
+  report('what a click would hide is shown before it is clicked',
+         document.getElementById('cssEditor-pickTarget').textContent ===
+             'stylePickTarget:aside.sidebar',
+         document.getElementById('cssEditor-pickTarget').textContent);
+  report('and the element under the pointer is highlighted',
+         aside.className.indexOf('sae-pick-hover') > -1, aside.className);
+
+  clickIn(aside);
+  // The selector has to be about the site, not about this snapshot of it: the
+  // class extraction added is minted afresh by every capture, and the one the
+  // site's build tool minted is gone at its next deploy.
+  report('clicking writes a rule naming the page\'s own class, not a generated one',
+         css.value.indexOf('aside.sidebar {') > -1 &&
+         css.value.indexOf('display: none !important') > -1 &&
+         css.value.indexOf('sae-c-') < 0 && css.value.indexOf('css-1x9fk2') < 0,
+         oneLine(css.value));
+  report('and the preview shows what it did',
+         frameComputed('aside.sidebar', 'display') === 'none');
+
+  // An element with a usable id is named by it - the shortest thing that still
+  // means the same after the site is rebuilt.
+  var comments = doc.querySelector('#comments');
+  pointAt(comments);
+  report('an element with an id is named by it',
+         document.getElementById('cssEditor-pickTarget').textContent ===
+             'stylePickTarget:#comments',
+         document.getElementById('cssEditor-pickTarget').textContent);
+
+  // One of two identical paragraphs: no selector names it alone, so the one
+  // written covers both, and that is said rather than hidden.
+  pointAt(doc.querySelectorAll('p.body-text')[0]);
+  report('a selector that covers more than one element says how many',
+         document.getElementById('cssEditor-pickTarget').textContent ===
+             'stylePickTargetShared:article.post p.body-text,2',
+         document.getElementById('cssEditor-pickTarget').textContent);
+
+  // Widening is what gets from a paragraph to the block around it.
+  click('cssEditor-pickWiden');
+  report('select parent widens what a click would take',
+         document.getElementById('cssEditor-pickTarget').textContent ===
+             'stylePickTarget:article.post',
+         document.getElementById('cssEditor-pickTarget').textContent);
+  click('cssEditor-pickNarrow');
+  report('and select child narrows it again',
+         document.getElementById('cssEditor-pickTarget').textContent ===
+             'stylePickTargetShared:article.post p.body-text,2');
+
+  click('cssEditor-pickElement');
+  report('turning picking off drops the highlight',
+         doc.querySelectorAll('.sae-pick-hover').length === 0);
+
+  // ---- discarding the snapshot ----
+  confirmAnswer = true;
+  confirms = [];
+  click('cssEditor-previewClear');
+  report('discarding the captured page asks, then leaves the library usable',
+         confirms.join('|') === 'stylePreviewClearConfirm' &&
+         sent.indexOf('clear style snapshot') > -1 &&
+         !document.getElementById('cssEditor-previewFrame') &&
+         !!document.getElementById('cssEditor-previewEmpty') &&
+         !!document.getElementById('cssEditor-styleList'),
+         confirms.join('|'));
+
+  report('nothing threw in the preview half either', errors.length === 0,
+         errors.join(' | '));
+
+  document.title = 'DONE';
+}
 </script>
 </body>
 </html>

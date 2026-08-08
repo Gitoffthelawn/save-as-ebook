@@ -185,7 +185,10 @@ function newReadState() {
         marks: new Map(),
         // live elements carrying a marker, so it can be taken off again
         markedElements: [],
-        css: null
+        css: null,
+        // A capture for the style library to preview and pick selectors in,
+        // rather than one to put in a book - see SNAPSHOT_CLASS_PREFIX.
+        styleSnapshot: false
     };
 }
 
@@ -344,7 +347,7 @@ function readMathMl(state) {
 
 // Returns the class name standing for this computed style, reusing the name of
 // an earlier element that computed to exactly the same declarations.
-function classNameForComputedStyle(computedStyle) {
+function classNameForComputedStyle(computedStyle, prefix) {
     let declarations = {};
     for (let cssTagName of supportedCss) {
         addComputedDeclarations(declarations, computedStyle, cssTagName);
@@ -360,7 +363,7 @@ function classNameForComputedStyle(computedStyle) {
         return existing;
     }
 
-    let className = generateRandomTag(2) + classNameToCss.size;
+    let className = (prefix || '') + generateRandomTag(2) + classNameToCss.size;
     cssToClassName.set(key, className);
     classNameToCss.set(className, declarations);
     return className;
@@ -383,7 +386,8 @@ function readVisibilityAndCss(state, includeStyle, appliedStyles) {
             if (tagName === 'svg') return;
 
             getMark(state, elem).cssClassName =
-                classNameForComputedStyle(window.getComputedStyle(elem));
+                classNameForComputedStyle(window.getComputedStyle(elem),
+                                          state.styleSnapshot ? SNAPSHOT_CLASS_PREFIX : '');
         });
         state.css = jsonToCss(Object.fromEntries(classNameToCss));
         return;
@@ -406,12 +410,13 @@ function readVisibilityAndCss(state, includeStyle, appliedStyles) {
     });
 
     if (appliedStyles && appliedStyles.length > 0) {
-        state.css = appliedStyles.reduce((all, applied) => all + applied.style, '');
+        state.css = appliedStyles.reduce((all, applied) => all + applied.css, '');
     }
 }
 
-function readLivePage(includeStyle, appliedStyles) {
+function readLivePage(includeStyle, appliedStyles, styleSnapshot) {
     let state = newReadState();
+    state.styleSnapshot = !!styleSnapshot;
     try {
         readIFrames(state);
         readCanvases(state);
@@ -685,7 +690,19 @@ function applyReadState(cloneRoot, state) {
             return;
         }
         if (mark.cssClassName) {
-            elem.setAttribute('data-class', mark.cssClassName);
+            // A snapshot keeps both: the page's own class names, which are what a
+            // site style is written against, and the generated one carrying the
+            // computed style, which is what makes the preview look like the page
+            // rather than like bare markup. Everywhere else the page's class
+            // attribute must not survive, so the generated name goes somewhere
+            // the sanitizer reads it from instead.
+            if (state.styleSnapshot) {
+                let own = elem.getAttribute('class');
+                elem.setAttribute('class', own && own.trim() !== '' ?
+                                           own + ' ' + mark.cssClassName : mark.cssClassName);
+            } else {
+                elem.setAttribute('data-class', mark.cssClassName);
+            }
         }
         if (mark.replaceWithHtml) {
             // no-op when the element was already dropped with an ancestor
@@ -780,14 +797,19 @@ function sameDocumentFragment(href) {
 //
 // The editor answers the same questions without a page - see sanitizeOptions()
 // in sanitizeHtml.js, whose defaults are exactly that.
-function extractionSanitizeOptions() {
+function extractionSanitizeOptions(state) {
     return sanitizeOptions({
         resolveImageSrc: getImageSrc,
         resolveLinkHref: linkHref,
         resolveUrl: citeUrl,
         // the class attribute on a clone is still the page's own; the generated
-        // name is what applyReadState() wrote into data-class
-        classAttribute: 'data-class',
+        // name is what applyReadState() wrote into data-class.
+        //
+        // A style snapshot is the exception, and the reason it is a mode rather
+        // than an ordinary capture: the page's class names are what the styles
+        // being previewed select on, so there they are read from where they
+        // already are - with the generated name appended to them.
+        classAttribute: state && state.styleSnapshot ? 'class' : 'data-class',
         usedIds: usedElementIds
     });
 }
@@ -804,7 +826,7 @@ function getContent(htmlContent, state) {
         // where a stray <td> or <tr> - what a selection inside a table produces -
         // is dropped. Parsed on its own it is parsed "in template", which keeps
         // table cells intact.
-        return '<div>' + parseHTML(tmp.innerHTML, extractionSanitizeOptions()) + '</div>';
+        return '<div>' + parseHTML(tmp.innerHTML, extractionSanitizeOptions(state)) + '</div>';
     } catch (e) {
         console.log('Error:', e);
         // Never hand back the node itself - it ends up spliced into the xhtml page
@@ -1232,7 +1254,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // rewrite it while the images download
     let pageMetadata = readPageMetadata();
 
-    let state = readLivePage(request.includeStyle, request.appliedStyles);
+    let state = readLivePage(request.includeStyle, request.appliedStyles, request.styleSnapshot);
     try {
         // clone while the markers are still on the live elements
         let clones = [];

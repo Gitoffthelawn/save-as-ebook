@@ -1,3 +1,11 @@
+// The shared style matcher. Chrome loads only the single file named by
+// background.service_worker, so it has to be pulled in here; Firefox runs the
+// background.scripts list, which already names it, and has no importScripts in
+// an event page.
+if (typeof importScripts === 'function') {
+    importScripts('styleLibrary.js');
+}
+
 // Firefox's `chrome` namespace is callback-only - those calls return undefined,
 // so anything promise-based has to go through `browser`. Chrome has no
 // `browser`, and there `chrome` is promise-based under MV3.
@@ -61,126 +69,11 @@ let jobClaimPending = false
 // the user turns it on without reloading.
 const CONTENT_SCRIPTS = ['libs/jszip.js', 'libs/readability.js', 'utils.js', 'sanitizeHtml.js', 'extractHtml.js', 'saveEbook.js']
 
-var defaultStyles = [
-    {
-        title: 'Reddit Comments',
-        url: 'reddit\\.com\\/r\\/[^\\/]+\\/comments',
-        style: `.side {
-display: none;
-}
-#header {
-display: none;
-}
-.arrow, .expand, .score, .live-timestamp, .flat-list, .buttons, .morecomments, .footer-parent, .icon {
-display: none !important;
-}
-`
-    },{
-        title: 'Wikipedia Article',
-        url: 'wikipedia\\.org\\/wiki\\/',
-        style: `#mw-navigation {
-display: none;
-}
-#footer {
-display: none;
-}
-#mw-panel {
-display: none;
-}
-#mw-head {
-display: none;
-}
-`
-    },{
-        title: 'YCombinator News Comments',
-        url: 'news\\.ycombinator\\.com\\/item\\?id=[0-9]+',
-        style: `#hnmain > tbody > tr:nth-child(1) > td > table {
-display: none;
-}
-* {
-background-color: white;
-}
-.title, .storylink {
-text-align: left;
-font-weight: bold;
-font-size: 20px;
-}
-.score {
-display: none;
-}
-.age {
-display: none;
-}
-.hnpast {
-display: none;
-}
-.togg {
-display: none;
-}
-.votelinks, .rank {
-display: none;
-}
-.votearrow {
-display: none;
-}
-.yclinks {
-display: none;
-}
-form {
-display: none;
-}
-a.hnuser {
-font-weight: bold;
-color: black !important;
-padding: 3px;
-}
-.subtext > span, .subtext > a:not(:nth-child(2)) {
-display: none;
-}
-`
-    },{
-        title: 'Medium Article',
-        url: 'medium\\.com',
-        style: `.metabar {
-display: none !important;
-}
-header.container {
-display: none;
-}
-.js-postShareWidget {
-display: none;
-}
-footer, canvas {
-display: none !important;
-}
-.u-fixed, .u-bottom0 {
-display: none;
-}
-`
-    },{
-        title: 'Twitter',
-        url: 'twitter\\.com\\/.+',
-        style: `.topbar {
-display: none !important;
-}
-.ProfileCanopy, .ProfileCanopy-inner {
-display: none;
-}
-.ProfileSidebar {
-display: none;
-}
-.ProfileHeading {
-display: none !important;
-}
-.ProfileTweet-actionList {
-display: none;
-}
-`
-    }
+// The styles that ship with the extension live in styles/catalog.json, read
+// through loadStyleCatalog() below. They used to be an array here, which meant a
+// new one could only reach a user who had never saved a style of their own.
 
-];
-
-// job: {tabId, startedAt, lastHeartbeat, injectedCss}
+// job: {tabId, startedAt, lastHeartbeat, injectedCss: [css, ...]}
 function getJob(callback) {
     chrome.storage.session.get('job', (data) => {
         let job = data && data.job ? data.job : null
@@ -200,7 +93,7 @@ function isBusy(callback) {
 function startJob(tabId, callback) {
     let now = Date.now()
     chrome.storage.session.set({
-        'job': {tabId: tabId, startedAt: now, lastHeartbeat: now, injectedCss: null}
+        'job': {tabId: tabId, startedAt: now, lastHeartbeat: now, injectedCss: []}
     }, () => {
         chrome.action.setBadgeBackgroundColor({color: "red"})
         chrome.action.setBadgeText({text: "Busy"})
@@ -263,6 +156,30 @@ function updateJob(fields, callback) {
     })
 }
 
+// The sheets a job put on the page, as a list. A job recorded before the layered
+// injection landed can still be in session storage across an extension update,
+// and that one holds a single string.
+function injectedSheets(injectedCss) {
+    if (typeof injectedCss === 'string') {
+        return injectedCss === '' ? [] : [injectedCss]
+    }
+    if (!Array.isArray(injectedCss)) {
+        return []
+    }
+    return injectedCss.filter((css) => typeof css === 'string' && css !== '')
+}
+
+// removeCSS matches on the text that was inserted, so each sheet has to be
+// taken off with the exact string it went on with.
+function removeStyleSheets(tabId, sheets) {
+    for (let css of sheets) {
+        ext.scripting.removeCSS({
+            target: {tabId: tabId},
+            css: css
+        }).catch(() => {})
+    }
+}
+
 // Clears a job already read from storage. Keeping cleanup in one place also
 // lets getJob dispose of an expired record before a replacement is started.
 //
@@ -275,11 +192,8 @@ function finishJob(job, closePopup, callback) {
 
         // the styles the extension injected for this site are the page's problem
         // once the job is over - leaving them applied silently restyles the page
-        if (job && job.injectedCss && job.tabId != null) {
-            ext.scripting.removeCSS({
-                target: {tabId: job.tabId},
-                css: job.injectedCss
-            }).catch(() => {})
+        if (job && job.tabId != null) {
+            removeStyleSheets(job.tabId, injectedSheets(job.injectedCss))
         }
 
         // a service worker has no window handles - chrome.extension.getViews() does
@@ -380,6 +294,8 @@ function executeCommand(command) {
                     dispatch(tab, 'extract-page', true, []);
                 } else if (command.type === 'add-selection') {
                     dispatch(tab, 'extract-selection', true, []);
+                } else if (command.type === 'style-snapshot') {
+                    dispatchStyleSnapshot(tab);
                 } else {
                     endJob();
                 }
@@ -389,20 +305,98 @@ function executeCommand(command) {
 }
 
 function dispatch(tab, action, justAddToBuffer, appliedStyles) {
-    if (!justAddToBuffer) {
-        _execRequest({type: 'remove'});
-    }
-
-    isIncludeStyles((result) => {
-        let isIncludeStyle = result.includeStyle
-        isReaderMode((readerResult) => {
-            isReviewBeforeSaving((reviewResult) => {
-                prepareStyles(tab, isIncludeStyle, appliedStyles, (tmpAppliedStyles) => {
-                    applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles,
-                        readerResult.readerMode, reviewResult.reviewBeforeSaving)
+    // a save starts a new book, so the previous one is cleared first - and the
+    // extraction only starts once it is gone, or the chapter it produces could
+    // be written before the removal it was supposed to follow
+    let start = () => {
+        isIncludeStyles((result) => {
+            let isIncludeStyle = result.includeStyle
+            isReaderMode((readerResult) => {
+                isReviewBeforeSaving((reviewResult) => {
+                    prepareStyles(tab, isIncludeStyle, appliedStyles, (tmpAppliedStyles) => {
+                        applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles,
+                            readerResult.readerMode, reviewResult.reviewBeforeSaving)
+                    })
                 })
             })
         })
+    }
+
+    if (justAddToBuffer) {
+        start()
+    } else {
+        clearEbook(start)
+    }
+}
+
+// "Style this page ..." in the popup: a capture of the page in front of the user
+// that is kept for the library to render, and never becomes a chapter.
+//
+// It is the same extraction the commands run - which is the point, since what the
+// library previews has to be what a capture would produce - with three
+// deliberate differences:
+//
+//   No site style is injected first. The snapshot has to hold what an enabled
+//   style hides, or switching that style off in the library would have nothing to
+//   show; the styles are applied to the rendering instead, where they can be
+//   changed without capturing the page again.
+//
+//   Reader mode is off, whatever the checkbox says. A style is written against
+//   the page, and Readability hands back an article that is no longer it.
+//
+//   styleSnapshot, which keeps the page's own class names on the markup - see
+//   extractionSanitizeOptions(). Nothing else has any use for them.
+//
+// The buffered chapters are not touched: styling a page is not saving one.
+function dispatchStyleSnapshot(tab) {
+    isIncludeStyles((result) => {
+        chrome.tabs.sendMessage(tab[0].id, {
+            type: 'extract-page',
+            includeStyle: result.includeStyle,
+            appliedStyles: [],
+            readerMode: false,
+            styleSnapshot: true
+        }, (response) => {
+            void chrome.runtime.lastError;
+
+            if (!response || !response.content || response.content.trim() === '') {
+                endJob()
+                chrome.tabs.sendMessage(tab[0].id,
+                    {'alert': 'Save as eBook could not read this page to style it!'}, (r) => {
+                    void chrome.runtime.lastError;
+                });
+                return;
+            }
+
+            storeStyleSnapshot({
+                url: tab[0].url || '',
+                title: response.title || '',
+                capturedAt: Date.now(),
+                page: response
+            }, () => {
+                endJob()
+                chrome.tabs.create({url: chrome.runtime.getURL(styleLibraryUrl(tab[0].url))})
+            })
+        });
+    })
+}
+
+// The library page, told which page it is being opened about. Same query
+// parameter the popup's "Edit Site Styles" uses - see the note in menu.js on why
+// the url is handed over rather than looked up.
+function styleLibraryUrl(url) {
+    return 'styles.html' + (url ? '?for=' + encodeURIComponent(url) : '');
+}
+
+// One snapshot at a time, replaced rather than accumulated: it holds a page's
+// images as base64 and there is only one preview pane to render it in. Kept out
+// of clearEbook's list on purpose - it belongs to the styles, which outlive any
+// one book.
+function storeStyleSnapshot(snapshot, callback) {
+    chrome.storage.local.set({'styleSnapshot': snapshot}, () => {
+        if (callback) {
+            callback()
+        }
     })
 }
 
@@ -439,96 +433,161 @@ function isReviewBeforeSaving(callback) {
     });
 }
 
+// The bundled catalog, read from styles/catalog.json once per worker start and
+// kept for as long as the worker lives. It is a file that ships with the
+// extension, so it cannot change while it is cached, and the read is behind
+// every style the capture path applies - doing it once matters.
+//
+// Callers that arrive while the first read is in flight are queued rather than
+// starting a read of their own: two captures at once would otherwise both fetch
+// and both migrate.
+let styleCatalog = null;
+let styleCatalogWaiting = null;
+
+function loadStyleCatalog(callback) {
+    if (styleCatalog) {
+        callback(styleCatalog)
+        return
+    }
+    if (styleCatalogWaiting) {
+        styleCatalogWaiting.push(callback)
+        return
+    }
+
+    styleCatalogWaiting = [callback];
+    // `keep` is what separates a file that was read from one that was not: only
+    // the first is cached, so a read that failed is tried again on the next call
+    // rather than leaving the worker with no bundled styles until it restarts.
+    let finish = (catalog, keep) => {
+        if (keep) {
+            styleCatalog = catalog;
+        }
+        let waiting = styleCatalogWaiting;
+        styleCatalogWaiting = null;
+        for (let waiter of waiting) {
+            waiter(catalog)
+        }
+    };
+
+    fetch(chrome.runtime.getURL('styles/catalog.json'))
+        .then((response) => response.json())
+        .then((catalog) => {
+            let usable = catalog && typeof catalog === 'object';
+            finish(usable ? catalog : {entries: []}, usable)
+        })
+        .catch(() => {
+            // A catalog that cannot be read is an empty one for now: the bundled
+            // styles are missing for this call, and the user's own are untouched.
+            // Storing that emptiness would be worse - the merge would read it as
+            // "this release ships no styles" and leave nothing behind.
+            finish({entries: []}, false)
+        });
+}
+
+// The style library: what is stored, migrated from the v1 'styles' array the
+// first time it is read, with the bundled catalog laid over it. The v1 key is
+// deliberately left where it is: a user who has to go back to the previous
+// release still finds their styles in it.
+//
+// The merge happens on every read rather than once at install, because that is
+// what makes the catalog a tier instead of a seed: a style added in a later
+// release appears, one the user has edited stays edited, and one they deleted
+// stays deleted.
+function getStyleLibrary(callback) {
+    loadStyleCatalog((catalog) => {
+        chrome.storage.local.get(['styleLibrary', 'styles'], (data) => {
+            let migrated = migrateStyleLibrary(
+                data ? data.styleLibrary : null,
+                data ? data.styles : null,
+                catalogToV1Builtins(catalog));
+            let merged = mergeCatalogIntoLibrary(migrated.library, catalog);
+
+            // The catalog goes to the caller as well as into the merge: the
+            // library page needs it to say what a fork can be reset to, and
+            // asking for it separately would be a second read of the same file.
+            if (!migrated.changed && !merged.changed) {
+                callback(merged.library, catalog)
+                return
+            }
+
+            chrome.storage.local.set({'styleLibrary': merged.library}, () => {
+                callback(merged.library, catalog)
+            });
+        });
+    });
+}
+
+function setStyleLibrary(library, callback) {
+    chrome.storage.local.set({'styleLibrary': library}, () => {
+        if (callback) {
+            callback()
+        }
+    });
+}
+
+// Puts the selected styles on the page in the order selectStylesForUrl returned
+// them in. One insertCSS at a time, and the next only after the last resolved:
+// the sheets are a cascade, and issued together they would land in whatever
+// order they happened to finish in, which is the opposite of a rule.
+function insertStyleSheets(tabId, styles, appliedStyles, callback) {
+    let inserted = [];
+
+    let finish = () => {
+        if (inserted.length === 0) {
+            callback(appliedStyles)
+            return
+        }
+
+        // remembered so endJob() can take them off the page again
+        updateJob({injectedCss: inserted.map((style) => style.css)}, (updated) => {
+            if (updated) {
+                for (let style of inserted) {
+                    appliedStyles.push(style);
+                }
+            } else {
+                // The tab or a timeout ended the job while CSS was being
+                // inserted, so there is no later endJob to clean it up.
+                removeStyleSheets(tabId, inserted.map((style) => style.css));
+            }
+            callback(appliedStyles)
+        });
+    };
+
+    let step = (index) => {
+        if (index >= styles.length) {
+            finish()
+            return
+        }
+        ext.scripting.insertCSS({
+            target: {tabId: tabId},
+            css: styles[index].css
+        }).then(() => {
+            inserted.push(styles[index]);
+            step(index + 1)
+        }).catch(() => {
+            // one sheet the tab refused is no reason to drop the rest
+            step(index + 1)
+        });
+    };
+
+    step(0);
+}
+
 function prepareStyles(tab, includeStyle, appliedStyles, callback) {
     if (!includeStyle) {
         callback(appliedStyles)
         return
     }
 
-    chrome.storage.local.get('styles', (data) => {
-        let styles = defaultStyles;
-        if (data && data.styles) {
-            styles = data.styles;
-        }
-        let currentUrl = tab[0].url;
-        let currentStyle = null;
-
-        if (!styles) {
-            callback(appliedStyles)
-            return
-        }
+    getStyleLibrary((library) => {
+        let styles = selectStylesForUrl(tab[0].url, library);
 
         if (styles.length === 0) {
             callback(appliedStyles)
             return
         }
 
-        let allMatchingStyles = [];
-
-        for (let i = 0; i < styles.length; i++) {
-            currentUrl = currentUrl.replace(/(http[s]?:\/\/|www\.)/i, '').toLowerCase();
-            let styleUrl = styles[i].url;
-            let styleUrlRegex = null;
-
-            try {
-                styleUrlRegex = new RegExp(styleUrl, 'i');
-            } catch (e) {
-            }
-
-            if (styleUrlRegex && styleUrlRegex.test(currentUrl)) {
-                allMatchingStyles.push({
-                    index: i,
-                    length: styleUrl.length
-                });
-            }
-        }
-
-        if (allMatchingStyles.length === 0) {
-            callback(appliedStyles)
-            return
-        }
-    
-        allMatchingStyles.sort((a, b) => b.length - a.length);
-        let selStyle = allMatchingStyles[0];
-
-        if (!selStyle) {
-            callback(appliedStyles)
-            return
-        }
-
-        currentStyle = styles[selStyle.index];
-
-        if (!currentStyle) {
-            callback(appliedStyles)
-            return
-        }
-
-        if (!currentStyle.style) {
-            callback(appliedStyles)
-            return
-        }
-
-        ext.scripting.insertCSS({
-            target: {tabId: tab[0].id},
-            css: currentStyle.style
-        }).then(() => {
-            // remembered so endJob() can take it off the page again
-            updateJob({injectedCss: currentStyle.style}, (updated) => {
-                if (updated) {
-                    appliedStyles.push(currentStyle);
-                } else {
-                    // The tab or a timeout ended the job while CSS was being
-                    // inserted, so there is no later endJob to clean it up.
-                    ext.scripting.removeCSS({
-                        target: {tabId: tab[0].id},
-                        css: currentStyle.style
-                    }).catch(() => {})
-                }
-                callback(appliedStyles)
-            });
-        }).catch(() => {
-            callback(appliedStyles)
-        });
+        insertStyleSheets(tab[0].id, styles, appliedStyles, callback);
     });
 }
 
@@ -627,8 +686,38 @@ function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, 
     });
 }
 
+// Discards the book being assembled: the chapters and everything written about
+// them. One remove call, so the callback runs with the last key already gone -
+// a caller that clears the book and immediately writes a new one must not have
+// its first chapter removed by a clearing that was still in flight.
+function clearEbook(callback) {
+    chrome.storage.local.remove([
+        'allPages',
+        'title',
+        // the identifier belongs to the discarded set of chapters - the next
+        // ebook is a different book and must not reuse it
+        'uuid',
+        // and so does the stylesheet written for them. The style library is not
+        // touched: those styles belong to the sites, not to this book.
+        'bookCss',
+        // ...and what the user said the book was called by, written about the
+        // chapters that are going
+        'bookMetadata'
+    ], () => {
+        if (callback) {
+            callback()
+        }
+    })
+}
+
 chrome.runtime.onMessage.addListener(_execRequest);
 
+// Every branch answers, and the ones that answer from a storage callback are the
+// only ones that return true. A listener that returns true without ever calling
+// sendResponse leaves the sender's callback pending until the channel is torn
+// down, which is what Chrome reports as "a listener indicated an asynchronous
+// response ... but the message channel closed" - and every setter below is
+// called with a callback somewhere (see utils.js).
 function _execRequest(request, sender, sendResponse) {
     if (request.type === 'get') {
         chrome.storage.local.get('allPages', function (data) {
@@ -638,22 +727,19 @@ function _execRequest(request, sender, sendResponse) {
             }
             sendResponse({allPages: data.allPages});
         })
+        return true;
     }
     if (request.type === 'set') {
-        chrome.storage.local.set({'allPages': request.pages});
+        chrome.storage.local.set({'allPages': request.pages}, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     if (request.type === 'remove') {
-        chrome.storage.local.remove('allPages');
-        chrome.storage.local.remove('title');
-        // the identifier belongs to the discarded set of chapters - the next
-        // ebook is a different book and must not reuse it
-        chrome.storage.local.remove('uuid');
-        // and so does the stylesheet written for them. The per-site styles under
-        // 'styles' are not touched: those belong to the sites, not to this book.
-        chrome.storage.local.remove('bookCss');
-        // ...and what the user said the book was called by, written about the
-        // chapters that are going
-        chrome.storage.local.remove('bookMetadata');
+        clearEbook(function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     // Minted on first use and kept until the ebook is discarded, so rebuilding
     // after editing chapters produces the same dc:identifier. The service worker
@@ -669,6 +755,7 @@ function _execRequest(request, sender, sendResponse) {
                 sendResponse({uuid: uuid});
             });
         })
+        return true;
     }
     if (request.type === 'get title') {
         chrome.storage.local.get('title', function (data) {
@@ -678,9 +765,13 @@ function _execRequest(request, sender, sendResponse) {
                 sendResponse({title: data.title});
             }
         })
+        return true;
     }
     if (request.type === 'set title') {
-        chrome.storage.local.set({'title': request.title});
+        chrome.storage.local.set({'title': request.title}, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     // The book-wide stylesheet. Empty until somebody writes one, which is what
     // every book built before the editor had a box for it had.
@@ -688,9 +779,15 @@ function _execRequest(request, sender, sendResponse) {
         chrome.storage.local.get('bookCss', function (data) {
             sendResponse({css: data && typeof data.bookCss === 'string' ? data.bookCss : ''});
         })
+        return true;
     }
     if (request.type === 'set book css') {
-        chrome.storage.local.set({'bookCss': typeof request.css === 'string' ? request.css : ''});
+        chrome.storage.local.set({
+            'bookCss': typeof request.css === 'string' ? request.css : ''
+        }, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     // What the user stated about the book itself - authors, language, publisher,
     // description, date. Absent until somebody fills a box in, which is what
@@ -699,24 +796,47 @@ function _execRequest(request, sender, sendResponse) {
         chrome.storage.local.get('bookMetadata', function (data) {
             sendResponse({metadata: data && data.bookMetadata ? data.bookMetadata : null});
         })
+        return true;
     }
     if (request.type === 'set book metadata') {
         chrome.storage.local.set({
             'bookMetadata': request.metadata && typeof request.metadata === 'object' ?
                             request.metadata : null
+        }, function () {
+            sendResponse({ok: true});
         });
+        return true;
     }
-    if (request.type === 'get styles') {
-        chrome.storage.local.get('styles', function (data) {
-            if (!data || !data.styles) {
-                sendResponse({styles: defaultStyles});
-            } else {
-                sendResponse({styles: data.styles});
-            }
+    // The whole library, and the catalog it was merged from beside it - see
+    // getStyleLibrary.
+    if (request.type === 'get style library') {
+        getStyleLibrary(function (library, catalog) {
+            sendResponse({library: library, catalog: catalog});
         });
+        return true;
     }
-    if (request.type === 'set styles') {
-        chrome.storage.local.set({'styles': request.styles});
+    // Written whole, by the one page that edits it. Normalized on the way in
+    // rather than trusted: this is the shape the capture path reads, and a field
+    // the page got wrong would be a style that matches nothing or everything.
+    if (request.type === 'set style library') {
+        setStyleLibrary(normalizeStyleLibrary(request.library), function () {
+            sendResponse({ok: true});
+        });
+        return true;
+    }
+    // The page the library previews styles against, or null when nobody has taken
+    // one. Read by the library page only; the capture path has the live page.
+    if (request.type === 'get style snapshot') {
+        chrome.storage.local.get('styleSnapshot', function (data) {
+            sendResponse({snapshot: data && data.styleSnapshot ? data.styleSnapshot : null});
+        });
+        return true;
+    }
+    if (request.type === 'clear style snapshot') {
+        chrome.storage.local.remove('styleSnapshot', function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     if (request.type === 'get current style') {
         chrome.storage.local.get('currentStyle', function (data) {
@@ -726,9 +846,13 @@ function _execRequest(request, sender, sendResponse) {
                 sendResponse({currentStyle: data.currentStyle});
             }
         });
+        return true;
     }
     if (request.type === 'set current style') {
-        chrome.storage.local.set({'currentStyle': request.currentStyle});
+        chrome.storage.local.set({'currentStyle': request.currentStyle}, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     if (request.type === 'get include style') {
         chrome.storage.local.get('includeStyle', function (data) {
@@ -738,9 +862,13 @@ function _execRequest(request, sender, sendResponse) {
                 sendResponse({includeStyle: data.includeStyle});
             }
         });
+        return true;
     }
     if (request.type === 'set include style') {
-        chrome.storage.local.set({'includeStyle': request.includeStyle});
+        chrome.storage.local.set({'includeStyle': request.includeStyle}, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     if (request.type === 'get reader mode') {
         chrome.storage.local.get('readerMode', function (data) {
@@ -750,9 +878,13 @@ function _execRequest(request, sender, sendResponse) {
                 sendResponse({readerMode: data.readerMode});
             }
         });
+        return true;
     }
     if (request.type === 'set reader mode') {
-        chrome.storage.local.set({'readerMode': request.readerMode});
+        chrome.storage.local.set({'readerMode': request.readerMode}, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     // A preference rather than part of a book, so it is not among the keys
     // 'remove' discards - it has to still be set for the save after this one.
@@ -764,25 +896,44 @@ function _execRequest(request, sender, sendResponse) {
                 sendResponse({reviewBeforeSaving: data.reviewBeforeSaving});
             }
         });
+        return true;
     }
     if (request.type === 'set review before saving') {
-        chrome.storage.local.set({'reviewBeforeSaving': request.reviewBeforeSaving});
+        chrome.storage.local.set({
+            'reviewBeforeSaving': request.reviewBeforeSaving
+        }, function () {
+            sendResponse({ok: true});
+        });
+        return true;
     }
     if (request.type === 'is busy?') {
         isBusy((busy) => {
             sendResponse({isBusy: busy})
         })
+        return true;
     }
     // the extraction is still running - see JOB_TIMEOUT
     if (request.type === 'job-heartbeat') {
         touchJob()
+        sendResponse({ok: true});
+        return false;
     }
+    // Answered before the command runs, not after: the work reaches into the
+    // page and ends in a download, far longer than a popup that closes as soon
+    // as the command starts stays alive to hear about it.
     if (request.type === 'save-page' || request.type === 'save-selection' ||
-        request.type === 'add-page' || request.type === 'add-selection') {
+        request.type === 'add-page' || request.type === 'add-selection' ||
+        request.type === 'style-snapshot') {
+        sendResponse({started: true});
         executeCommand({type: request.type})
+        return false;
     }
     if (request.type === 'done') {
+        sendResponse({ok: true});
         endJob()
+        return false;
     }
-    return true;
+    // an unknown type still has a sender waiting on a callback
+    sendResponse({});
+    return false;
 }

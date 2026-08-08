@@ -1,7 +1,3 @@
-var allStyles = [];
-var currentStyle = null;
-var appliedStyles = [];
-
 // create menu labels - the translations are plain text, so textContent both
 // renders them correctly and keeps the store's "unsafe innerHTML" check quiet
 document.getElementById('menuTitle').textContent = chrome.i18n.getMessage('extName');
@@ -13,6 +9,9 @@ document.getElementById('reviewBeforeSaving').textContent = chrome.i18n.getMessa
 // what "review" means here - which two actions change, and where they stop -
 // does not fit on the line
 document.getElementById('reviewBeforeSavingOption').title = chrome.i18n.getMessage('reviewBeforeSavingHint');
+document.getElementById('styleThisPage').textContent = chrome.i18n.getMessage('styleThisPage');
+// what it does that "Edit Site Styles" does not - it captures the page first
+document.getElementById('styleThisPage').title = chrome.i18n.getMessage('styleThisPageHint');
 document.getElementById('editStyles').textContent = chrome.i18n.getMessage('editStyles');
 document.getElementById('savePageLabel').textContent = chrome.i18n.getMessage('savePage');
 document.getElementById('saveSelectionLabel').textContent = chrome.i18n.getMessage('saveSelection');
@@ -28,10 +27,14 @@ chrome.runtime.onMessage.addListener((request) => {
     }
 });
 
-function removeEbook() {
+function removeEbook(callback) {
     chrome.runtime.sendMessage({
         type: "remove"
-    }, function(response) {});
+    }, function(response) {
+        if (callback) {
+            callback();
+        }
+    });
 }
 
 chrome.runtime.sendMessage({
@@ -44,65 +47,10 @@ chrome.runtime.sendMessage({
     }
 });
 
-chrome.runtime.sendMessage({
-    type: "get styles"
-}, function(response) {
-    createStyleList(response.styles);
-});
-
-function createStyleList(styles) {
-    allStyles = styles;
-    chrome.tabs.query({'active': true}, function (tabs) {
-        let currentUrl = tabs[0].url;
-
-        if (!styles || styles.length === 0) {
-            return;
-        }
-
-        let foundMatchingUrl = false;
-
-        // if multiple URL regexes match, select the longest one
-        let allMatchingStyles = [];
-
-        for (let i = 0; i < styles.length; i++) {
-            let listItem = document.createElement('option');
-            listItem.id = 'option_' + i;
-            listItem.className = 'cssEditor-chapter-item';
-            listItem.value = 'option_' + i;
-            listItem.innerText = styles[i].title;
-
-            currentUrl = currentUrl.replace(/(http[s]?:\/\/|www\.)/i, '').toLowerCase();
-            let styleUrl = styles[i].url;
-            let styleUrlRegex = null;
-
-            try {
-                styleUrlRegex =  new RegExp(styleUrl, 'i');
-            } catch (e) {
-            }
-
-            if (styleUrlRegex && styleUrlRegex.test(currentUrl)) {
-                allMatchingStyles.push({
-                    index: i,
-                    length: styleUrl.length
-                });
-            }
-        }
-
-        if (allMatchingStyles.length >= 1) {
-            allMatchingStyles.sort(function (a, b) {
-                return b.length - a.length;
-            });
-            let selStyle = allMatchingStyles[0];
-            currentStyle = styles[selStyle.index];
-
-            chrome.runtime.sendMessage({
-                type: "set current style",
-                currentStyle: currentStyle
-            }, function(response) {
-            });
-        }
-    });
-}
+// The popup used to run its own copy of the URL matching here, to write the
+// style it picked into storage under 'currentStyle'. Nothing ever read it - the
+// capture path works the match out for itself - so both the copy and the key it
+// fed are gone; selectStylesForUrl in styleLibrary.js is now the only matcher.
 
 function createIncludeStyle(data) {
     let includeStyleCheck = document.getElementById('includeStyleCheck');
@@ -176,25 +124,50 @@ function openEditor(page) {
     window.close();
 }
 
+// The library is asked "which of these apply here, and does this pattern match?"
+// about the page the user was looking at - and once it is a tab of its own, it is
+// the page the user is looking at. So the popup hands the url over, while it
+// still has activeTab for the tab it was opened on: an extension page cannot ask
+// which tab was in front of it, and being able to would need the tabs permission.
 document.getElementById("editStyles").onclick = function() {
-    openEditor('styles.html');
+    chrome.tabs.query({active: true, currentWindow: true}, function (tabs) {
+        let url = tabs && tabs[0] && tabs[0].url ? tabs[0].url : '';
+        openEditor('styles.html' + (url === '' ? '' : '?for=' + encodeURIComponent(url)));
+    });
 };
 
 document.getElementById("editChapters").onclick = function() {
     openEditor('chapters.html');
 };
 
+// Captures this page and opens the library on it, so that a style can be written
+// against something visible instead of against a guess. It is a capture, so it
+// takes as long as saving the page does and goes through the same busy state -
+// and the background is the one that opens the library, once it has a page to
+// show there.
+document.getElementById("styleThisPage").onclick = function() {
+    dispatch('style-snapshot', true);
+};
+
+// The wait message stays up for as long as this popup lives: the background
+// answers as soon as the command has started, not when the ebook is finished,
+// and it is the one that closes the popup once the job ends (see finishJob).
+//
+// A save starts a new book, so the old chapters go first - and only once the
+// removal is confirmed, or the command would race the storage write.
 function dispatch(commandType, justAddToBuffer) {
     document.getElementById('busy').style.display = 'block';
-    if (!justAddToBuffer) {
-        removeEbook();
+    let start = function () {
+        chrome.runtime.sendMessage({
+            type: commandType
+        }, function(response) {
+        });
+    };
+    if (justAddToBuffer) {
+        start();
+    } else {
+        removeEbook(start);
     }
-    chrome.runtime.sendMessage({
-        type: commandType
-    }, function(response) {
-        //FIXME - hidden before done
-        document.getElementById('busy').style.display = 'none';
-    });
 }
 
 document.getElementById('savePage').onclick = function() {

@@ -8,6 +8,15 @@
 <body>
     <!-- see chapters.html -->
     <script src="utils.js"></script>
+    <script src="styleLibrary.js"></script>
+    <!-- The preview pane renders a captured page through the same functions that
+         write a chapter, so it needs what those are built on. Nothing here builds
+         an ebook, which is why jszip is not in the list. -->
+    <script src="sanitizeHtml.js"></script>
+    <script src="saveEbook.js"></script>
+    <script src="chapterPreview.js"></script>
+    <!-- pointing at something in that preview instead of writing a selector -->
+    <script src="stylePicker.js"></script>
     <script src="cssEditor.js"></script>
 </body>
 </html>

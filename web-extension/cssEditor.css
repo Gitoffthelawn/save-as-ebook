@@ -1,91 +1,59 @@
-#cssEditor-removeStyle {
-    display: none;
-}
-#cssEditor-saveStyle {
-    display: none;
-}
-#cssEditor-selectStyle {
-    padding: 3px;
-    cursor: pointer;
-    font-size: 15px;
-    font-family: sans-serif;
-}
-#cssEditor-selectStyle > option {
-    padding: 3px;
-    font-size: 1em;
-    cursor: pointer;
-    font-size: 15px;
-    font-family: sans-serif;
-}
-#cssEditor-orLabel {
-    padding: 3px;
-    margin: 0 3px;
-    font-size: 15px;
-    font-family: sans-serif;
-}
-#cssEditor-createNewStyle {
-    padding: 3px;
-    cursor: pointer;
-    font-size: 15px;
-    font-family: sans-serif;
-}
-.cssEditor-field-label-holder {
-    margin-top: 10px;
-    font-size: 15px;
-    font-family: sans-serif;
-    display: flex;
-    justify-content: space-between;
-    width: 90%;
-}
-.cssEditor-field-holder {
-    padding: 3px;
-    width: 90%;
-}
-.cssEditor-field-label {
-    padding: 0 3px;
-    margin-top: 5px;
+/* styles.html - the site style library. The shell (header, list, footer, the
+   text and footer buttons) is deliberately the same furniture as
+   chapterEditor.css: they are two pages of one extension, opened from the same
+   popup.
+
+   The layout the old one-style-at-a-time editor had is gone: three panes, the
+   library on the left at a fixed width, then the style being edited, then the
+   page it is being tried on. Each scrolls on its own, so a long css body cannot
+   push the list off the page. The third one is only there when a snapshot has
+   been taken. */
+
+#cssEditor-Modal {
+    position: fixed;
+    z-index: 1;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(210, 210, 210, 1);
 }
 
-#cssEditor-styleEditor {
-    display: flex;
-    flex-flow: row;
-}
-
-.cssEditor-left-panel {
-    width: 48%;
+#cssEditor-modalContent {
+    z-index: 2;
+    background-color: #fff;
+    margin: 2% auto;
+    padding: 0;
+    width: 96%;
+    max-width: 2000px;
     display: flex;
     flex-flow: column;
+    max-height: 96%;
 }
 
-.cssEditor-right-panel {
-    width: 48%;
+#cssEditor-modalHeader {
+    display: block;
+    overflow: hidden;
+    padding: 20px;
+    flex: 0 0 auto;
+}
+/* A flex column rather than a block, and every box down to the list is a flex
+   item with min-height: 0. The height that bounds the list comes from the
+   max-height on the content above, which is not a height anything below can ask
+   for as a percentage - a `height: 100%` here resolves to auto, and the list
+   grows past the footer instead of scrolling inside it. */
+#cssEditor-modalList {
     display: flex;
     flex-flow: column;
+    padding: 0 20px 20px 20px;
+    flex: 1 1 auto;
+    min-height: 0;
 }
-
-#cssEditor-styleName {
-    width: 100%;
-    min-width: 100%;
-    padding: 5px;
-    border: solid rgba(0, 0, 0, 0.25) 1px;
-    font-size: 15px;
-    font-family: sans-serif;
-}
-#cssEditor-matchUrl {
-    width: 100%;
-    min-width: 100%;
-    padding: 5px;
-    border: solid rgba(0, 0, 0, 0.25) 1px;
-    font-size: 15px;
-    font-family: sans-serif;
-}
-#cssEditor-styleContent {
-    width: 100%;
-    height: 150px;
-    padding: 5px;
-    border: solid rgba(0, 0, 0, 0.25) 1px;
-    font-size: 15px;
-    font-family: sans-serif;
+#cssEditor-modalFooter {
+    display: block;
+    overflow: hidden;
+    flex: 0 0 auto;
 }
 
 #cssEditor-Title {
@@ -96,26 +64,367 @@
     font-family: sans-serif;
 }
 
-#cssEditor-ebookTitleHolder {
-    background-color: #eee;
-    padding: 10px 20px;
-    margin-bottom: 10px;
+#cssEditor-panels {
+    display: flex;
+    flex-flow: row;
+    gap: 20px;
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
-#cssEditor-modalHeader {
-    display: block;
+/* ---- left: the library ---- */
+
+#cssEditor-libraryPanel {
+    flex: 0 0 340px;
+    display: flex;
+    flex-flow: column;
+    min-height: 0;
+    background-color: #eee;
+    padding: 10px;
+    box-sizing: border-box;
+}
+
+#cssEditor-search {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px;
+    border: solid rgba(0, 0, 0, 0.25) 1px;
+    font-size: 15px;
+    font-family: sans-serif;
+}
+
+#cssEditor-filters {
+    display: flex;
+    flex-flow: row wrap;
+    gap: 4px;
+    margin: 8px 0;
+    flex: 0 0 auto;
+}
+
+.cssEditor-chip {
+    border: solid rgba(0, 0, 0, 0.25) 1px;
+    background-color: #fff;
+    font-size: 12px;
+    font-family: sans-serif;
+    padding: 3px 7px;
+    cursor: pointer;
+    outline: none;
+}
+.cssEditor-chip:hover {
+    background-color: #ddd;
+}
+.cssEditor-chip-on {
+    background-color: #000;
+    border-color: #000;
+    color: #fff;
+}
+.cssEditor-chip-on:hover {
+    background-color: #000;
+}
+
+#cssEditor-styleList {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    background-color: #fff;
+    border: solid rgba(0, 0, 0, 0.15) 1px;
+}
+
+.cssEditor-style-row {
+    display: flex;
+    flex-flow: row;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 8px;
+    border-bottom: solid rgba(0, 0, 0, 0.08) 1px;
+    cursor: pointer;
+    font-family: sans-serif;
+}
+.cssEditor-style-row:hover {
+    background-color: #f4f4f4;
+}
+.cssEditor-style-row-on {
+    background-color: #fff8b0;
+}
+.cssEditor-style-row-on:hover {
+    background-color: #fff8b0;
+}
+
+.cssEditor-style-toggle {
+    flex: 0 0 auto;
+    cursor: pointer;
+}
+
+.cssEditor-style-row-text {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.cssEditor-style-row-name {
+    font-size: 14px;
     overflow: hidden;
-    padding: 20px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
-#cssEditor-modalList {
-    display: block;
-    padding: 20px;
-    padding-top: 0;
+.cssEditor-style-row-where {
+    font-size: 11px;
+    color: #555;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
-#cssEditor-modalFooter {
-    display: block;
+
+.cssEditor-badge {
+    flex: 0 0 auto;
+    font-size: 10px;
+    font-family: sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #444;
+    border: solid rgba(0, 0, 0, 0.2) 1px;
+    padding: 1px 4px;
+}
+
+#cssEditor-listEmpty {
+    padding: 12px;
+    font-size: 13px;
+    font-family: sans-serif;
+    color: #555;
+}
+
+#cssEditor-newButtons {
+    display: flex;
+    flex-flow: row wrap;
+    gap: 4px;
+    margin-top: 8px;
+    flex: 0 0 auto;
+}
+
+/* ---- right: one style ---- */
+
+#cssEditor-detailPanel {
+    flex: 1 1 380px;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+#cssEditor-noSelection {
+    font-size: 15px;
+    font-family: sans-serif;
+    color: #555;
+    padding: 20px 0;
+}
+
+#cssEditor-styleEditor {
+    display: none;
+    flex-flow: column;
+}
+
+#cssEditor-originRow {
+    display: flex;
+    flex-flow: row;
+    align-items: center;
+    gap: 8px;
+}
+#cssEditor-originBadge {
+    font-size: 10px;
+    font-family: sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #444;
+    border: solid rgba(0, 0, 0, 0.2) 1px;
+    padding: 1px 4px;
+}
+
+.cssEditor-field-label-holder {
+    margin-top: 10px;
+    font-size: 15px;
+    font-family: sans-serif;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    width: 100%;
+}
+.cssEditor-field-holder {
+    padding: 3px 0;
+    width: 100%;
+}
+.cssEditor-field-label {
+    padding: 0 3px;
+    margin-top: 5px;
+}
+.cssEditor-field-hint {
+    font-size: 12px;
+    color: #555;
+    padding: 0 3px;
+    text-align: right;
+}
+
+#cssEditor-styleName,
+#cssEditor-styleDescription,
+#cssEditor-matchUrl,
+#cssEditor-testUrl {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 5px;
+    border: solid rgba(0, 0, 0, 0.25) 1px;
+    font-size: 15px;
+    font-family: sans-serif;
+}
+#cssEditor-matchUrl,
+#cssEditor-testUrl {
+    font-family: monospace;
+}
+
+#cssEditor-styleScope,
+#cssEditor-matchType {
+    padding: 3px;
+    cursor: pointer;
+    font-size: 15px;
+    font-family: sans-serif;
+}
+
+#cssEditor-matchResult {
+    font-size: 13px;
+    font-family: sans-serif;
+    padding: 3px;
+    min-height: 1.3em;
+}
+.cssEditor-match-none {
+    color: #555;
+}
+.cssEditor-match-yes {
+    color: #0a6b28;
+    font-weight: bold;
+}
+.cssEditor-match-no {
+    color: #555;
+}
+.cssEditor-match-bad {
+    color: #b00020;
+    font-weight: bold;
+}
+
+#cssEditor-styleContent {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 220px;
+    padding: 5px;
+    border: solid rgba(0, 0, 0, 0.25) 1px;
+    font-size: 14px;
+    font-family: monospace;
+}
+
+#cssEditor-recipes {
+    display: flex;
+    flex-flow: row wrap;
+    gap: 4px;
+    margin: 4px 0;
+}
+
+/* ---- right: the page the styles are being tried on ---- */
+
+/* The widest of the three: it is a page being read, not a form, and it takes the
+   larger share of whatever room is left after the fixed-width library. */
+#cssEditor-previewPanel {
+    flex: 1.7 1 640px;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-flow: column;
+    background-color: #eee;
+    padding: 10px;
+    box-sizing: border-box;
+}
+
+#cssEditor-previewHeader {
+    display: flex;
+    flex-flow: row;
+    align-items: baseline;
+    justify-content: space-between;
+    flex: 0 0 auto;
+}
+
+#cssEditor-previewTitle {
+    font-size: 15px;
+    font-weight: bold;
+    font-family: sans-serif;
+}
+
+#cssEditor-previewSource,
+#cssEditor-previewApplied {
+    font-size: 11px;
+    font-family: sans-serif;
+    color: #555;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 0 0 auto;
+}
+
+#cssEditor-pickerBar {
+    display: flex;
+    flex-flow: row wrap;
+    gap: 4px;
+    margin: 8px 0 4px 0;
+    flex: 0 0 auto;
+}
+
+.cssEditor-chip:disabled {
+    color: #999;
+    cursor: default;
+}
+.cssEditor-chip:disabled:hover {
+    background-color: #fff;
+}
+
+#cssEditor-pickTarget {
+    font-size: 11px;
+    font-family: monospace;
+    color: #555;
+    min-height: 1.4em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 0 0 auto;
+}
+/* A selector that takes more than one element with it is usually what was meant
+   and occasionally a surprise, so it is called out rather than warned about. */
+.cssEditor-pick-shared {
+    color: #8a5000;
+    font-weight: bold;
+}
+
+#cssEditor-previewBody {
+    flex: 1 1 auto;
+    min-height: 220px;
+    background-color: #fff;
+    border: solid rgba(0, 0, 0, 0.15) 1px;
     overflow: hidden;
 }
+
+#cssEditor-previewFrame {
+    width: 100%;
+    height: 100%;
+    border: none;
+    display: block;
+}
+
+#cssEditor-previewEmpty {
+    padding: 12px;
+    font-size: 13px;
+    font-family: sans-serif;
+    color: #555;
+}
+
+#cssEditor-previewNote {
+    font-size: 11px;
+    font-family: sans-serif;
+    color: #555;
+    padding-top: 6px;
+    flex: 0 0 auto;
+}
+
+/* ---- shared furniture ---- */
 
 .cssEditor-text-button {
     border: none;
@@ -140,6 +449,13 @@
 }
 .cssEditor-float-right {
     float: right;
+}
+
+#cssEditor-removeStyle {
+    display: none;
+}
+#cssEditor-saveStyle {
+    display: none;
 }
 
 .cssEditor-footer-button {
@@ -177,14 +493,35 @@
     }
 }
 
-@media (max-width: 1100px) {
-    .cssEditor-chapter-item {
-        line-height: 30px;
-        height: 60px;
-        padding: 4px 0;
-        font-size: 14px;
+/* Three panes need the room for three panes. Below this the preview goes under
+   the style being edited, which is still two columns of usable width. */
+@media (max-width: 1450px) {
+    #cssEditor-panels {
+        flex-flow: row wrap;
     }
-    .cssEditor-chapter-item > input[type="text"] {
-        width: 90%;
+    #cssEditor-detailPanel {
+        flex: 1 1 380px;
+    }
+    #cssEditor-previewPanel {
+        flex: 1 1 100%;
+        min-height: 420px;
+    }
+}
+
+/* Narrow enough that a 340px list beside a css editor leaves neither usable:
+   the panes stack, and the page scrolls as one. */
+@media (max-width: 900px) {
+    #cssEditor-modalContent {
+        width: 96%;
+        max-height: none;
+    }
+    #cssEditor-panels {
+        flex-flow: column;
+    }
+    #cssEditor-libraryPanel {
+        flex: 0 0 auto;
+    }
+    #cssEditor-styleList {
+        max-height: 260px;
     }
 }

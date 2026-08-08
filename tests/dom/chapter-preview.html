@@ -118,10 +118,17 @@ setTimeout(function () {
 
   var styles = doc.querySelectorAll('style');
   report('both stylesheets are inlined, book css first',
-         styles.length === 2 &&
+         styles.length === 3 &&
          styles[0].textContent === 'body{margin:2em}' &&
          styles[1].textContent === '.sae-one{color:rgb(1, 2, 3)}',
          styles.length + ' style elements');
+  // The slot the style library fills when it previews a captured page against a
+  // site style. A chapter of a book has no site style, so it is here and empty -
+  // and it is last, because that is where an injected sheet lands on a real page.
+  report('the site style slot is there, empty, and after the chapter\'s own',
+         styles.length === 3 && styles[2].id === 'sae-preview-site-css' &&
+         styles[2].textContent === '',
+         styles.length === 3 ? styles[2].id + '=' + styles[2].textContent : '');
 
   report('the chapter language reaches the preview',
          doc.documentElement.getAttribute('lang') === 'fr',

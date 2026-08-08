@@ -128,12 +128,19 @@ function previewStyleText(css) {
     return String(css || '').replace(/<\/(style)/gi, '<\\/$1');
 }
 
-// The two stylesheets the preview inlines, named so that a caller editing css
-// can replace one of them in the open frame instead of rebuilding the document.
+// The stylesheets the preview inlines, named so that a caller editing css can
+// replace one of them in the open frame instead of rebuilding the document.
 // Rebuilding it would reload the frame, and reloading it would throw away the
 // edit session and every unsaved change in it.
 var PREVIEW_BOOK_CSS_ID = 'sae-preview-book-css';
 var PREVIEW_CHAPTER_CSS_ID = 'sae-preview-chapter-css';
+// The site styles the library page is trying out on a snapshot. Empty for the
+// chapter editor, which previews a chapter of a book and not a page being
+// captured. Last of the three because that is where it lands on a real page:
+// scripting.insertCSS puts an author sheet on after everything the page brought
+// with it, and a preview that let the captured css win would answer a different
+// question from the one being asked.
+var PREVIEW_SITE_CSS_ID = 'sae-preview-site-css';
 
 // Live update of one of them. textContent rather than innerHTML, so the string
 // cannot become markup and previewStyleText() has nothing to guard against here.
@@ -181,6 +188,8 @@ function buildChapterPreview(page, options) {
         previewStyleText(sanitizeStylesheet(options.bookCss)) + '</style>' +
         '<style id="' + PREVIEW_CHAPTER_CSS_ID + '">' +
         previewStyleText(chapterStyleContent(chapter)) + '</style>' +
+        '<style id="' + PREVIEW_SITE_CSS_ID + '">' +
+        previewStyleText(sanitizeStylesheet(options.siteCss)) + '</style>' +
         '</head>' +
         body +
         '</html>';

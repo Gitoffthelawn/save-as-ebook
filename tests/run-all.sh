@@ -13,6 +13,10 @@ echo "### pure utilities"
 node utils.js || status=1
 
 echo
+echo "### style matching and the v1 style migration"
+node style-library.js || status=1
+
+echo
 echo "### background jobs and message state"
 node background.js || status=1
 

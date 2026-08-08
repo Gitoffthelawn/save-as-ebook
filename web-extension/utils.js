@@ -30,19 +30,49 @@ function getCurrentStyle(callback) {
     });
 }
 
-function getStyles(callback) {
+// The site style library, and the bundled catalog it was merged from - the
+// library page needs both: the catalog is what a built-in can be reset to. Not
+// to be confused with the book stylesheet below.
+function getStyleLibrary(callback) {
     chrome.runtime.sendMessage({
-        type: "get styles"
+        type: "get style library"
     }, function(response) {
-        callback(response.styles);
+        callback(response && response.library ? response.library : null,
+                 response && response.catalog ? response.catalog : null);
     });
 }
 
-function setStyles(styles) {
+// Written whole. The library page holds all of it, so a partial write would only
+// be a way for two of its own edits to lose each other.
+function saveStyleLibrary(library, callback) {
     chrome.runtime.sendMessage({
-        type: "set styles",
-        styles: styles
+        type: "set style library",
+        library: library
     }, function(response) {
+        if (callback) {
+            callback();
+        }
+    });
+}
+
+// The captured page the library renders its styles against, or null when nobody
+// has taken one - see dispatchStyleSnapshot(). One at a time, and taken by the
+// popup, because only the popup has activeTab for the page being styled.
+function getStyleSnapshot(callback) {
+    chrome.runtime.sendMessage({
+        type: "get style snapshot"
+    }, function(response) {
+        callback(response && response.snapshot ? response.snapshot : null);
+    });
+}
+
+function clearStyleSnapshot(callback) {
+    chrome.runtime.sendMessage({
+        type: "clear style snapshot"
+    }, function(response) {
+        if (callback) {
+            callback();
+        }
     });
 }
 
@@ -64,8 +94,8 @@ function saveEbookTitle(title) {
 
 // The book-wide stylesheet, kept beside the title and the identifier because it
 // belongs to the book being assembled rather than to any one chapter - and is
-// discarded with them. Not to be confused with the per-site styles behind
-// getStyles(): those are applied to a page while it is being captured and
+// discarded with them. Not to be confused with the site styles behind
+// getStyleLibrary(): those are applied to a page while it is being captured and
 // outlive any single book.
 function getBookCss(callback) {
     chrome.runtime.sendMessage({
@@ -248,6 +278,19 @@ function normalizeDate(raw) {
     }
     return parsed.toISOString().replace(/\.[0-9]+Z$/, 'Z');
 }
+
+// What a generated class name starts with in a style snapshot, and nowhere else.
+//
+// A snapshot keeps the page's own class attribute - see extractionSanitizeOptions()
+// - so that a style written against the live page (".sidebar", "#comments") means
+// the same thing in the preview frame as it will mean during a real capture. The
+// generated names carrying the computed styles then sit in that same attribute
+// beside the page's own, and this prefix is what tells the two apart.
+//
+// Lives here rather than in extractHtml.js because the two ends have to agree on
+// it exactly: extraction writes the names, and the element picker on the library
+// page - which never loads the content scripts - is what has to skip them.
+var SNAPSHOT_CLASS_PREFIX = 'sae-c-';
 
 // An id has to be an XML name to be addressable at all. Ids only need to be
 // unique within one xhtml file, and a chapter is exactly one file, so nothing

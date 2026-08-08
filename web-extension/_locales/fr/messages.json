@@ -216,25 +216,296 @@
     "styleEditor": {
         "message": "Éditeur de styles de site"
     },
-    "selectExistingCSS": {
-        "message": "Sélectionner un style existant"
-    },
-    "orLabel": {
-        "message": "ou"
-    },
-    "createNewStyle": {
-        "message": "Créer un nouveau style"
-    },
     "styleNameLabel": {
         "message": "Nom"
-    },
-    "howToWriteRegexLabel": {
-        "message": "Comment écrire une expression régulière"
     },
     "removeStyle": {
         "message": "Supprimer le style"
     },
     "saveStyle": {
         "message": "Enregistrer le style"
+    },
+    "styleSearchPlaceholder": {
+        "message": "Rechercher un nom, un motif ou du CSS"
+    },
+    "styleFilterAll": {
+        "message": "Tous"
+    },
+    "styleFilterMatches": {
+        "message": "S'applique ici"
+    },
+    "styleFilterSite": {
+        "message": "Styles de site"
+    },
+    "styleFilterTheme": {
+        "message": "Toutes les pages"
+    },
+    "styleFilterEnabled": {
+        "message": "Actifs"
+    },
+    "styleFilterMine": {
+        "message": "Les miens"
+    },
+    "styleFilterBuiltin": {
+        "message": "Intégrés"
+    },
+    "newSiteStyle": {
+        "message": "Nouveau style de site"
+    },
+    "newThemeStyle": {
+        "message": "Nouveau style global"
+    },
+    "newStyleTitle": {
+        "message": "Nouveau style"
+    },
+    "untitledStyle": {
+        "message": "Style sans nom"
+    },
+    "styleListEmpty": {
+        "message": "Aucun style ne correspond à cette recherche."
+    },
+    "styleLibraryEmpty": {
+        "message": "La bibliothèque est vide. Créez un style pour commencer."
+    },
+    "styleNoSelection": {
+        "message": "Choisissez un style à gauche pour voir ce qu'il fait, ou créez-en un."
+    },
+    "styleDescriptionLabel": {
+        "message": "Note"
+    },
+    "styleDescriptionPlaceholder": {
+        "message": "À quoi sert ce style"
+    },
+    "styleScopeLabel": {
+        "message": "S'applique à"
+    },
+    "styleScopeSite": {
+        "message": "Aux pages correspondant à un motif"
+    },
+    "styleScopeTheme": {
+        "message": "À toutes les pages capturées"
+    },
+    "styleMatchTypeLabel": {
+        "message": "Correspondance par"
+    },
+    "styleMatchDomain": {
+        "message": "Domaine et ses sous-domaines"
+    },
+    "styleMatchPrefix": {
+        "message": "L'URL commence par"
+    },
+    "styleMatchGlob": {
+        "message": "Motif d'URL (* remplace n'importe quoi)"
+    },
+    "styleMatchRegex": {
+        "message": "Expression régulière"
+    },
+    "stylePatternLabel": {
+        "message": "Motif"
+    },
+    "stylePatternHintDomain": {
+        "message": "example.com"
+    },
+    "stylePatternHintPrefix": {
+        "message": "example.com/blog/"
+    },
+    "stylePatternHintGlob": {
+        "message": "example.com/*/comments"
+    },
+    "stylePatternHintRegex": {
+        "message": "example\\.com\\/[0-9]+"
+    },
+    "stylePatternMissing": {
+        "message": "Aucun motif - ne correspond à rien."
+    },
+    "styleTestUrlLabel": {
+        "message": "Tester avec une URL"
+    },
+    "styleTestUrlPlaceholder": {
+        "message": "https://example.com/une-page"
+    },
+    "styleTestMatches": {
+        "message": "Correspond à cette URL."
+    },
+    "styleTestNoMatch": {
+        "message": "Ne correspond pas à cette URL."
+    },
+    "styleTestInvalid": {
+        "message": "Expression régulière inutilisable - elle ne correspond à rien."
+    },
+    "styleTestNoUrl": {
+        "message": "Collez une URL ci-dessus pour vérifier le motif."
+    },
+    "styleAppliesEveryPage": {
+        "message": "Toutes les pages capturées"
+    },
+    "styleMatchDescDomain": {
+        "message": "$pattern$ et ses sous-domaines",
+        "placeholders": {
+            "pattern": {
+                "content": "$1",
+                "example": "example.com"
+            }
+        }
+    },
+    "styleMatchDescPrefix": {
+        "message": "URL commençant par $pattern$",
+        "placeholders": {
+            "pattern": {
+                "content": "$1",
+                "example": "example.com/blog/"
+            }
+        }
+    },
+    "styleMatchDescGlob": {
+        "message": "URL de la forme $pattern$",
+        "placeholders": {
+            "pattern": {
+                "content": "$1",
+                "example": "example.com/*/comments"
+            }
+        }
+    },
+    "styleMatchDescRegex": {
+        "message": "URL correspondant à $pattern$",
+        "placeholders": {
+            "pattern": {
+                "content": "$1",
+                "example": "example\\.com"
+            }
+        }
+    },
+    "styleOriginBuiltin": {
+        "message": "Intégré"
+    },
+    "styleOriginForked": {
+        "message": "Intégré modifié"
+    },
+    "styleOriginImported": {
+        "message": "Importé"
+    },
+    "styleOriginUser": {
+        "message": "Le vôtre"
+    },
+    "styleEnabledHint": {
+        "message": "Appliquer ce style pendant la capture d'une page"
+    },
+    "styleCssHint": {
+        "message": "Appliqué à la page lors de la capture, pas au livre"
+    },
+    "styleDuplicate": {
+        "message": "Dupliquer"
+    },
+    "styleCopyTitle": {
+        "message": "$title$ (copie)",
+        "placeholders": {
+            "title": {
+                "content": "$1",
+                "example": "Wikipedia Article"
+            }
+        }
+    },
+    "styleResetToBuiltin": {
+        "message": "Rétablir le style intégré"
+    },
+    "styleResetConfirm": {
+        "message": "Remplacer votre version par le style intégré ?"
+    },
+    "styleNeedsPattern": {
+        "message": "Un style limité à certaines pages a besoin d'un motif. Ajoutez-en un, ou appliquez-le à toutes les pages."
+    },
+    "styleDiscardEditsConfirm": {
+        "message": "Ce style a des modifications non enregistrées. Les abandonner ?"
+    },
+    "styleThisPage": {
+        "message": "Styliser cette page ..."
+    },
+    "styleThisPageHint": {
+        "message": "Capturer cette page et ouvrir la bibliothèque de styles dessus, pour écrire un style face à ce qui sera réellement enregistré."
+    },
+    "stylePreviewTitle": {
+        "message": "Aperçu"
+    },
+    "stylePreviewClear": {
+        "message": "Abandonner"
+    },
+    "stylePreviewClearConfirm": {
+        "message": "Abandonner la page capturée affichée dans cet aperçu ?"
+    },
+    "stylePreviewOf": {
+        "message": "Capturée depuis $url$",
+        "placeholders": {
+            "url": {
+                "content": "$1",
+                "example": "https://example.com/a-page"
+            }
+        }
+    },
+    "stylePreviewApplied": {
+        "message": "Affiché : $styles$",
+        "placeholders": {
+            "styles": {
+                "content": "$1",
+                "example": "Wikipedia Article + Serif Reading"
+            }
+        }
+    },
+    "stylePreviewNothingApplies": {
+        "message": "Aucun style ne s'applique encore à cette page."
+    },
+    "stylePreviewHowTo": {
+        "message": "Aucune page capturée. Ouvrez l'extension sur une page à styliser et choisissez « Styliser cette page ... » pour y tester vos styles."
+    },
+    "stylePreviewNote": {
+        "message": "La page capturée avec les styles ci-dessus, rendue comme l'eBook l'affichera. Une règle qui masque un élément ici l'exclut de l'eBook ; les polices et les marges appartiennent à la liseuse."
+    },
+    "stylePickElement": {
+        "message": "Choisir un élément"
+    },
+    "stylePickHint": {
+        "message": "Pointez un élément de l'aperçu pour le masquer."
+    },
+    "stylePickTarget": {
+        "message": "Masque $selector$",
+        "placeholders": {
+            "selector": {
+                "content": "$1",
+                "example": "aside.sidebar"
+            }
+        }
+    },
+    "stylePickTargetShared": {
+        "message": "Masque $selector$ - $count$ éléments sur cette page",
+        "placeholders": {
+            "selector": {
+                "content": "$1",
+                "example": "div.promo"
+            },
+            "count": {
+                "content": "$2",
+                "example": "4"
+            }
+        }
+    },
+    "stylePickNeedsStyle": {
+        "message": "Choisissez d'abord un style à gauche : l'élément cliqué y sera écrit."
+    },
+    "styleRecipeHideImages": {
+        "message": "Masquer les images"
+    },
+    "styleRecipeHideSidebars": {
+        "message": "Masquer les barres latérales"
+    },
+    "styleRecipeUnstickHeaders": {
+        "message": "Défixer les en-têtes"
+    },
+    "styleRecipeHideComments": {
+        "message": "Masquer les commentaires"
+    },
+    "styleRecipeSingleColumn": {
+        "message": "Colonne unique"
+    },
+    "styleRecipeBiggerText": {
+        "message": "Texte plus grand"
     }
 }
