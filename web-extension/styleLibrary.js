@@ -125,6 +125,21 @@ function styleSpecificity(match) {
     };
 }
 
+// Whether a style is about this url at all, leaving aside whether it is switched
+// on: a theme is about every page, and a site style is about the ones its
+// pattern covers. Being off is not the same as not applying - the popup and the
+// library's "applies here" filter both list what a page could take and let the
+// user switch it on there.
+function styleAppliesToUrl(entry, normalizedUrl) {
+    if (!entry) {
+        return false;
+    }
+    if (entry.scope === 'theme') {
+        return true;
+    }
+    return !!normalizedUrl && styleMatchesUrl(entry.match, normalizedUrl);
+}
+
 // The styles to inject for one url, in the order they must be inserted.
 //
 // A stylesheet later in the document wins over an earlier one at equal
@@ -138,6 +153,18 @@ function styleSpecificity(match) {
 // A style with no CSS in it is skipped: injecting an empty sheet only gives
 // endJob something to take off the page again.
 function selectStylesForUrl(url, library) {
+    return orderStylesForUrl(url, library, false);
+}
+
+// The same list, plus the styles that are switched off or still empty. This is
+// what a page *could* apply, in the order it would apply it - which is what the
+// popup lists under "Site Styles" and what the library's "applies here" filter
+// shows. Only the injection path wants the shorter answer.
+function styleCandidatesForUrl(url, library) {
+    return orderStylesForUrl(url, library, true);
+}
+
+function orderStylesForUrl(url, library, includeInactive) {
     let entries = library && Array.isArray(library.entries) ? library.entries : [];
     let normalizedUrl = normalizeUrlForMatch(url);
     let themes = [];
@@ -145,17 +172,22 @@ function selectStylesForUrl(url, library) {
 
     for (let index = 0; index < entries.length; index++) {
         let entry = entries[index];
-        if (!entry || entry.enabled === false) {
+        if (!entry) {
             continue;
         }
-        if (typeof entry.css !== 'string' || entry.css.trim() === '') {
-            continue;
+        if (!includeInactive) {
+            if (entry.enabled === false) {
+                continue;
+            }
+            if (typeof entry.css !== 'string' || entry.css.trim() === '') {
+                continue;
+            }
         }
         if (entry.scope === 'theme') {
             themes.push({entry: entry, index: index});
             continue;
         }
-        if (normalizedUrl && styleMatchesUrl(entry.match, normalizedUrl)) {
+        if (styleAppliesToUrl(entry, normalizedUrl)) {
             sites.push({entry: entry, index: index});
         }
     }
@@ -353,21 +385,63 @@ function migrateStyleLibrary(storedLibrary, legacyStyles, builtinStyles) {
 // ---- the bundled catalog --------------------------------------------------
 //
 // styles/catalog.json holds the styles the extension ships with, in the v2
-// shape plus two fields of its own: builtinId, which is what identifies one of
-// them across releases, and v1, which marks the five that shipped before there
-// was a library at all.
+// shape plus three fields of its own: builtinId, which is what identifies one of
+// them across releases, v1, which marks the five that shipped before there was a
+// library at all, and retired, which marks one the extension has stopped
+// shipping - see retiredBuiltinIds.
 //
 // The catalog is not stored. It is merged over the stored library every time
-// that library is read, which is what lets a release add styles to it without
-// touching - or being able to lose - anything the user has done.
+// that library is read, which is what lets a release add a style to it - or take
+// one back - without touching, or being able to lose, anything the user has done.
 
-function catalogEntries(catalog) {
+// Every entry in the file, retired ones included. Only the migration reads this
+// far: what the extension offers today is catalogEntries.
+function allCatalogEntries(catalog) {
     let entries = catalog && Array.isArray(catalog.entries) ? catalog.entries : [];
     // an entry with no builtinId cannot be tracked across releases: it would be
     // added again, under a new id, on every read
     return entries.filter((entry) => entry && typeof entry === 'object' &&
                                      typeof entry.builtinId === 'string' &&
                                      entry.builtinId !== '');
+}
+
+// The styles the catalog has withdrawn - a preset written for a site that has
+// since rebuilt itself, and that now hides the wrong things or nothing at all.
+//
+// Deleting the entry from the file is not enough to be rid of one. The merge
+// only adds and refreshes, so a style already in a stored library would simply
+// stay there, still marked builtin but with no catalog entry left to correct it:
+// unmaintained css that no release can reach. Naming it here is what takes it
+// back out of those libraries.
+//
+// Two ways to say it, because a retired style is not always free to leave the
+// file. The five v1 styles are how the migration recognizes a v1 user's own
+// copies - by their title, pattern and css, see catalogToV1Builtins - so those
+// stay exactly as they shipped, marked "retired": true. Anything else is deleted
+// outright and leaves its builtinId in the top-level "retiredBuiltins" list.
+function retiredBuiltinIds(catalog) {
+    let ids = {};
+    let listed = catalog && Array.isArray(catalog.retiredBuiltins) ?
+                 catalog.retiredBuiltins : [];
+    for (let builtinId of listed) {
+        if (typeof builtinId === 'string' && builtinId !== '') {
+            ids[builtinId] = true;
+        }
+    }
+    for (let entry of allCatalogEntries(catalog)) {
+        if (entry.retired === true) {
+            ids[entry.builtinId] = true;
+        }
+    }
+    return ids;
+}
+
+// What the extension offers this release. This is the list the merge adds from
+// and refreshes against, and the list "reset to built-in" reads: a fork of a
+// retired style is the user's own now, with nothing left to go back to.
+function catalogEntries(catalog) {
+    let retired = retiredBuiltinIds(catalog);
+    return allCatalogEntries(catalog).filter((entry) => !retired[entry.builtinId]);
 }
 
 function catalogEntryById(catalog, builtinId) {
@@ -384,8 +458,14 @@ function catalogEntryById(catalog, builtinId) {
 // that actually shipped in v1, because only those can have a copy in a v1
 // 'styles' array. Handing it the whole catalog would make every style added
 // since look like one the user had deleted.
+//
+// Retired entries count here, and this is why they stay in the file: a v1 user's
+// untouched copy of one has to be recognized as the bundled style it is, so that
+// the merge can then retire it. Read from the offered styles instead and that
+// copy would migrate as a style of the user's own - the very css this release is
+// withdrawing, kept forever, unmaintainable and impossible to reset.
 function catalogToV1Builtins(catalog) {
-    return catalogEntries(catalog)
+    return allCatalogEntries(catalog)
         .filter((entry) => entry.v1 === true)
         .map((entry) => ({
             builtinId: entry.builtinId,
@@ -398,8 +478,18 @@ function catalogToV1Builtins(catalog) {
 // Ids for bundled styles are derived from the builtinId rather than minted, so
 // that a style the catalog owns has the same id in every install and across the
 // migration - a user's fork of one is the thing with an id of its own.
+//
+// The prefix is what makes such an id recognizable on its own, which import
+// needs: an id every install shares is the one id a style arriving from outside
+// must not be allowed to keep. See readStyleImport.
+var BUILTIN_STYLE_ID_PREFIX = 'builtin-';
+
 function builtinStyleId(builtinId) {
-    return 'builtin-' + builtinId;
+    return BUILTIN_STYLE_ID_PREFIX + builtinId;
+}
+
+function isBuiltinStyleId(id) {
+    return typeof id === 'string' && id.indexOf(BUILTIN_STYLE_ID_PREFIX) === 0;
 }
 
 function entryFromCatalogEntry(catalogEntry) {
@@ -433,7 +523,8 @@ function sameStoredEntry(left, right) {
 // Three cases, and the middle one is the point of the whole tier:
 //   no entry for this builtinId  - a style this release adds, unless the user
 //                                  has deleted it before (removedBuiltins)
-//   an entry still marked builtin - untouched, so refreshed from the catalog
+//   an entry still marked builtin - untouched, so refreshed from the catalog,
+//                                   or dropped if the catalog has retired it
 //   anything else                 - the user's fork, which shadows the catalog
 //                                   until they reset it
 function mergeCatalogIntoLibrary(library, catalog) {
@@ -443,6 +534,23 @@ function mergeCatalogIntoLibrary(library, catalog) {
     // adding this release's entries to it could put back a style it retired.
     if (merged.version > STYLE_LIBRARY_VERSION) {
         return {library: merged, changed: false};
+    }
+
+    let changed = false;
+
+    // Retirements first, so that what the rest of the merge sees is a library of
+    // styles the catalog still speaks to. Only an untouched copy goes: a fork is
+    // the user's own work, and withdrawing the style it grew out of is no reason
+    // to take it. Nor does a retirement touch removedBuiltins - that list is the
+    // record of what the *user* deleted, and a retired style is not on offer to
+    // be handed back in the first place.
+    let retired = retiredBuiltinIds(catalog);
+    let kept = merged.entries.filter((entry) => !(entry.origin === 'builtin' &&
+                                                  entry.builtinId &&
+                                                  retired[entry.builtinId]));
+    if (kept.length !== merged.entries.length) {
+        merged.entries = kept;
+        changed = true;
     }
 
     let removed = {};
@@ -460,7 +568,6 @@ function mergeCatalogIntoLibrary(library, catalog) {
         }
     }
 
-    let changed = false;
     for (let catalogEntry of catalogEntries(catalog)) {
         if (removed[catalogEntry.builtinId]) {
             continue;
@@ -486,8 +593,8 @@ function mergeCatalogIntoLibrary(library, catalog) {
 
 // Undoes a fork: the bundled style again, keeping where it sits in the library
 // and whether it is switched on. Null when there is nothing to go back to -
-// a style the user wrote themselves, or one whose builtin has since been
-// dropped from the catalog.
+// a style the user wrote themselves, or one whose builtin the catalog has since
+// retired.
 function resetEntryToBuiltin(entry, catalog) {
     if (!entry || !entry.builtinId) {
         return null;
@@ -569,4 +676,229 @@ function removeStyleEntry(library, id) {
         updated.removedBuiltins.push(entry.builtinId);
     }
     return updated;
+}
+
+// ---- sharing a style ------------------------------------------------------
+//
+// A style is a few fields and a block of css, so a file holding some is the
+// obvious way to move one between two installs or hand it to somebody else. Both
+// ends of that live here rather than on the library page, because what may cross
+// the boundary is a question about the model: what a style file is allowed to
+// say, and what it is not allowed to say about *this* library.
+
+var STYLE_EXPORT_KIND = 'save-as-ebook-styles';
+
+// What is written out is what a style is, not what this install has done with
+// it. origin, builtinId and updatedAt are all facts about the library the style
+// came out of - see readStyleImport for why carrying them would be worse than
+// dropping them.
+function exportableStyleEntry(entry) {
+    let normalized = normalizeStyleEntry(entry);
+    return {
+        id: normalized.id,
+        title: normalized.title,
+        description: normalized.description,
+        scope: normalized.scope,
+        match: {type: normalized.match.type, pattern: normalized.match.pattern},
+        css: normalized.css,
+        enabled: normalized.enabled,
+        priority: normalized.priority,
+        tags: normalized.tags
+    };
+}
+
+// One style or a whole library, in the same envelope: a file holding one is a
+// file holding a list of one, so import has a single shape to read.
+function styleExportDocument(entries) {
+    return {
+        kind: STYLE_EXPORT_KIND,
+        version: STYLE_LIBRARY_VERSION,
+        exportedAt: Date.now(),
+        entries: (Array.isArray(entries) ? entries : [entries]).map(exportableStyleEntry)
+    };
+}
+
+// A filename from the style's own name, so a folder of exports can be read
+// without opening them. Anything that is not a plain word becomes a dash, since
+// this string reaches a filesystem the extension knows nothing about.
+function styleExportFileName(title) {
+    let slug = String(title === undefined || title === null ? '' : title)
+        .trim().toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .substring(0, 60);
+    return 'save-as-ebook-style' + (slug === '' ? 's' : '-' + slug) + '.json';
+}
+
+// ---- what an imported stylesheet is not allowed to do ----------------------
+//
+// Imported css is somebody else's, and it is injected into real pages as they
+// are captured - so a url() or an @import pointing at a remote host is a request
+// that host receives, carrying the visitor's address, every time the style runs.
+// That is a tracking beacon fired by a file the user was invited to trust, and
+// there is nothing a site style needs a remote resource for.
+//
+// saveEbook.js removes the same two constructs from the stylesheets that go into
+// a book, for reasons of its own (an epub has to read offline, and a remote
+// reference has to be declared). The rules are deliberately spelled out again
+// here rather than shared: that file writes ebooks and is not loaded by the
+// service worker, and this one has to report what it took out so that the user
+// is told rather than quietly protected.
+
+var STYLE_IMPORT_REGEX = /@import\b(?:[^;{}'"]|'[^']*'|"[^"]*")*(?:;|(?=\})|$)/gi;
+var STYLE_URL_REGEX = /\burl\(\s*(?:"([^"]*)"|'([^']*)'|([^)"'\s]*))\s*\)/gi;
+
+// Anything with a scheme, plus the scheme-relative "//host/path" form. A data:
+// url is the resource itself rather than an address to fetch it from, and a
+// relative one cannot leave the page the style is running on.
+function isRemoteStyleUrl(target) {
+    let value = String(target === undefined || target === null ? '' : target).trim();
+    if (/^data:/i.test(value)) {
+        return false;
+    }
+    return /^(?:[a-z][a-z0-9+.\-]*:|\/\/)/i.test(value);
+}
+
+// The css with those references gone, and the list of what went - the second
+// half being the point: a style that quietly does less than the file said is
+// worse than one that says what was dropped from it.
+//
+// A removed url() becomes 'none' rather than nothing, for the reason saveEbook.js
+// gives: an empty value takes the whole declaration - and any fallback beside it
+// - down with it.
+function stripRemoteCssReferences(css) {
+    let removed = [];
+    let note = (reference) => {
+        let text = String(reference).replace(/\s+/g, ' ').trim();
+        if (text !== '' && removed.indexOf(text) < 0) {
+            removed.push(text);
+        }
+    };
+
+    let cleaned = String(css === undefined || css === null ? '' : css)
+        .replace(STYLE_IMPORT_REGEX, (rule) => {
+            note(rule);
+            return '';
+        })
+        .replace(STYLE_URL_REGEX, (rule, quoted, single, bare) => {
+            let target = quoted !== undefined ? quoted :
+                         single !== undefined ? single : bare;
+            if (!isRemoteStyleUrl(target)) {
+                return rule;
+            }
+            note(target);
+            return 'none';
+        });
+
+    return {css: cleaned, removed: removed};
+}
+
+// The styles in a file somebody was given, or in text they pasted.
+//
+// Four shapes are accepted, because all four are things a person will reasonably
+// paste: what styleExportDocument writes, a whole stored library, a bare array of
+// styles, and a single style on its own.
+//
+// Two things are taken away from every entry on the way in:
+//
+//   builtinId, and any id the catalog owns. Those name a slot in *this*
+//   install's library that the bundled catalog fills and refreshes. A style
+//   arriving from outside that claimed one would either be overwritten by the
+//   next catalog read or leave the built-in with nowhere to go - so an imported
+//   style is always the user's own, exactly as a duplicate is.
+//
+//   remote url() and @import - see stripRemoteCssReferences.
+//
+// The id is otherwise kept, which is what makes importing a newer copy of a
+// style an update to the one already here rather than a second copy of it.
+//
+// `error` is a code rather than a sentence: this file has no messages in it.
+function readStyleImport(text) {
+    let parsed = null;
+    try {
+        parsed = JSON.parse(String(text === undefined || text === null ? '' : text));
+    } catch (e) {
+        return {error: 'unreadable', entries: [], stripped: []};
+    }
+
+    let source = null;
+    if (Array.isArray(parsed)) {
+        source = parsed;
+    } else if (parsed && typeof parsed === 'object') {
+        source = Array.isArray(parsed.entries) ? parsed.entries : [parsed];
+    } else {
+        // a number, a string, a bare null - json, but not a style
+        return {error: 'unreadable', entries: [], stripped: []};
+    }
+
+    let entries = [];
+    let stripped = [];
+    for (let raw of source) {
+        if (!raw || typeof raw !== 'object') {
+            continue;
+        }
+        let entry = normalizeStyleEntry(raw);
+        let clean = stripRemoteCssReferences(entry.css);
+
+        entry.css = clean.css;
+        entry.origin = 'imported';
+        entry.builtinId = null;
+        entry.updatedAt = Date.now();
+        if (isBuiltinStyleId(entry.id)) {
+            entry.id = newStyleId();
+        }
+        entries.push(entry);
+
+        if (clean.removed.length > 0) {
+            stripped.push({title: entry.title, references: clean.removed});
+        }
+    }
+
+    if (entries.length === 0) {
+        return {error: 'empty', entries: [], stripped: []};
+    }
+    return {error: '', entries: entries, stripped: stripped};
+}
+
+// What importing these would do to this library, so that it can be said before
+// it is done. A collision is a style already here under the same id - the same
+// style, from an earlier copy of the same file - and it is the only thing an
+// import can take away, so it is the only thing worth asking about.
+function planStyleImport(library, entries) {
+    let existing = normalizeStyleLibrary(library).entries;
+    let byId = {};
+    for (let entry of existing) {
+        byId[entry.id] = entry;
+    }
+
+    let additions = [];
+    let collisions = [];
+    for (let entry of entries) {
+        if (Object.prototype.hasOwnProperty.call(byId, entry.id)) {
+            collisions.push({incoming: entry, existing: byId[entry.id]});
+        } else {
+            additions.push(entry);
+        }
+    }
+    return {additions: additions, collisions: collisions};
+}
+
+// Writes them in. `replaceExisting` is the answer to the collisions above: the
+// imported style takes the place of the one already here, or is added beside it
+// as a style in its own right. Anything that is not a collision is simply added
+// either way.
+//
+// The styles come back as they were stored - a copy has an id of its own by
+// then - so that the caller can point at what it just wrote.
+function applyStyleImport(library, entries, replaceExisting) {
+    let updated = normalizeStyleLibrary(library);
+    let stored = [];
+    for (let entry of entries) {
+        let collides = updated.entries.some((existing) => existing.id === entry.id);
+        let written = collides && !replaceExisting ?
+                      Object.assign({}, entry, {id: newStyleId()}) : entry;
+        updated = putStyleEntry(updated, written);
+        stored.push(written);
+    }
+    return {library: updated, entries: stored};
 }

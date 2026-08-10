@@ -29,7 +29,6 @@ window.chrome = {
       if (msg.type === 'get') reply = {allPages: FIXTURE_PAGES};
       if (msg.type === 'get title') reply = {title: 'My Book'};
       if (msg.type === 'get uuid') reply = {uuid: 'fixture-uuid'};
-      if (msg.type === 'get current style') reply = {currentStyle: 0};
       if (msg.type === 'get include style') reply = {includeStyle: true};
       if (cb) setTimeout(function(){ cb(reply); }, 0);
     }

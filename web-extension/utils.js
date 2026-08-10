@@ -14,22 +14,6 @@ function getIncludeStyle(callback) {
     });
 }
 
-function setCurrentStyle(currentStyle) {
-    chrome.runtime.sendMessage({
-        type: "set current style",
-        currentStyle: currentStyle
-    }, function(response) {
-    });
-}
-
-function getCurrentStyle(callback) {
-    chrome.runtime.sendMessage({
-        type: "get current style"
-    }, function(response) {
-        callback(response.currentStyle);
-    });
-}
-
 // The site style library, and the bundled catalog it was merged from - the
 // library page needs both: the catalog is what a built-in can be reset to. Not
 // to be confused with the book stylesheet below.
@@ -184,10 +168,18 @@ function saveEbookPages(pages) {
     }, function(response) {});
 }
 
-function removeEbook() {
+// Discards the chapters, the title, the identifier and the stylesheet written
+// for them. The callback matters to anyone who follows it with a write: the
+// removal is a storage operation, and a chapter stored before it lands is a
+// chapter the clearing takes with it.
+function removeEbook(callback) {
     chrome.runtime.sendMessage({
         type: "remove"
-    }, function(response) {});
+    }, function(response) {
+        if (callback) {
+            callback();
+        }
+    });
 }
 
 function checkIfBusy(callback) {

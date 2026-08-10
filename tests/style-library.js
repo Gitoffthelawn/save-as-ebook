@@ -153,6 +153,36 @@ test('a domain is broader than a path rule that spells out the same host', () =>
     ]), ['domain', 'prefix']);
 });
 
+// The popup lists what a page *could* take, so that a style written for the site
+// can be switched on from where the page is saved. Same order as the cascade -
+// it is the same question, asked before the answer is filtered.
+test('the candidates for a url are the selected ones plus the inactive ones', () => {
+    const entries = [
+        siteEntry('off', 'domain', 'example.com', {enabled: false}),
+        siteEntry('blank', 'domain', 'example.com', {css: '   '}),
+        siteEntry('elsewhere', 'domain', 'other.test'),
+        siteEntry('on', 'prefix', 'example.com/a'),
+        {id: 'themeOff', scope: 'theme', enabled: false}
+    ];
+    assert.deepStrictEqual(
+        lib.styleCandidatesForUrl('https://example.com/a', library(entries))
+           .map((entry) => entry.id),
+        ['themeOff', 'off', 'blank', 'on'],
+        'a style that is off or still empty is one this page could take');
+    assert.deepStrictEqual(selected('https://example.com/a', entries), ['on']);
+});
+
+test('what applies to a url is asked of one entry at a time as well', () => {
+    const site = lib.normalizeStyleEntry(siteEntry('s', 'domain', 'example.com'));
+    const theme = lib.normalizeStyleEntry({id: 't', scope: 'theme'});
+    assert.strictEqual(lib.styleAppliesToUrl(site, 'example.com/a'), true);
+    assert.strictEqual(lib.styleAppliesToUrl(site, 'other.test/a'), false);
+    assert.strictEqual(lib.styleAppliesToUrl(theme, 'anything.test'), true);
+    assert.strictEqual(lib.styleAppliesToUrl(theme, ''), true,
+        'an every-page style is about every page, including one with no url');
+    assert.strictEqual(lib.styleAppliesToUrl(site, ''), false);
+});
+
 test('priority breaks a specificity tie, and storage order breaks that', () => {
     assert.deepStrictEqual(selected('https://example.com/a', [
         siteEntry('third', 'domain', 'example.com', {priority: 5}),
@@ -329,6 +359,27 @@ function builtinEntry(builtinId, extra) {
     return Object.assign(lib.entryFromCatalogEntry(source), extra || {});
 }
 
+function shippedInV1(builtinId) {
+    const entry = catalog.entries.find((entry) => entry.builtinId === builtinId);
+    return !!(entry && entry.v1);
+}
+
+// The same catalog with some of it withdrawn, said the two ways the file can say
+// it: a style that shipped in v1 stays where it is and marks itself retired,
+// because the migration still has to recognize a user's copy of it, while one
+// added later simply leaves and names its id on the way out.
+function catalogRetiring(builtinIds) {
+    const isRetired = (builtinId) => builtinIds.indexOf(builtinId) > -1;
+    return {
+        version: catalog.version,
+        retiredBuiltins: builtinIds.filter((builtinId) => !shippedInV1(builtinId)),
+        entries: catalog.entries
+            .filter((entry) => !isRetired(entry.builtinId) || entry.v1 === true)
+            .map((entry) => isRetired(entry.builtinId) ?
+                            Object.assign({}, entry, {retired: true}) : entry)
+    };
+}
+
 test('the migration is only shown the bundled styles that existed in v1', () => {
     assert.deepStrictEqual(lib.catalogToV1Builtins(catalog), [
         {builtinId: 'wiki', title: 'Wikipedia Article',
@@ -415,6 +466,86 @@ test('merging the same catalog again changes nothing', () => {
     const twice = lib.mergeCatalogIntoLibrary(once.library, catalog);
     assert.strictEqual(twice.changed, false,
         'every read merges, so a merge that always changed something would write on every read');
+    assert.deepStrictEqual(twice.library, once.library);
+});
+
+// ---- retiring a bundled style ----------------------------------------------
+//
+// The other direction: a preset written for a site that has since rebuilt itself
+// has to be able to leave, and leaving the file is not enough - the merge would
+// simply stop speaking to the copy every existing library already holds.
+
+test('a retired style is not offered to a library that never had it', () => {
+    const result = lib.mergeCatalogIntoLibrary(lib.normalizeStyleLibrary(null),
+                                               catalogRetiring(['wiki', 'gh']));
+    assert.deepStrictEqual(result.library.entries.map((entry) => entry.builtinId),
+                           ['hn', 'serif']);
+});
+
+test('a retired style is taken back out of a library that has it', () => {
+    const stored = lib.normalizeStyleLibrary({
+        version: lib.STYLE_LIBRARY_VERSION,
+        entries: [
+            {id: 'own', css: '.own {}', match: {type: 'domain', pattern: 'a.test'}},
+            builtinEntry('wiki'),
+            builtinEntry('gh', {enabled: false, priority: 5})
+        ],
+        removedBuiltins: []
+    });
+    const result = lib.mergeCatalogIntoLibrary(stored, catalogRetiring(['wiki', 'gh']));
+
+    assert.strictEqual(result.changed, true, 'the library has to be written back without them');
+    assert.deepStrictEqual(result.library.entries.map((entry) => entry.id),
+                           ['own', 'builtin-hn', 'builtin-serif'],
+        'an untouched copy is the extension\'s to withdraw, and switching one off is not editing it');
+    assert.deepStrictEqual(result.library.removedBuiltins, [],
+        'that list is what the user deleted; a retired style is not on offer to be handed back');
+});
+
+test('retiring a style leaves the user\'s fork of it alone', () => {
+    const fork = builtinEntry('gh', {origin: 'user', title: 'My GitHub', css: '.mine {}'});
+    const retiring = catalogRetiring(['gh']);
+    const result = lib.mergeCatalogIntoLibrary(
+        lib.normalizeStyleLibrary({entries: [fork]}), retiring);
+    const kept = result.library.entries.filter((entry) => entry.builtinId === 'gh');
+
+    assert.strictEqual(kept.length, 1);
+    assert.strictEqual(kept[0].css, '.mine {}',
+        'they wrote it, so withdrawing what it grew out of cannot take it');
+    assert.strictEqual(lib.resetEntryToBuiltin(kept[0], retiring), null,
+        'but there is nothing behind it any more, so the library page offers no reset');
+});
+
+test('a v1 style is retired through the copy the migration recognizes', () => {
+    const retiring = catalogRetiring(['wiki']);
+    assert.deepStrictEqual(lib.catalogToV1Builtins(retiring).map((entry) => entry.builtinId),
+                           ['wiki', 'hn'],
+        'read the offered styles instead and an untouched v1 copy migrates as the user\'s own');
+
+    // a v1 user: an untouched copy of the retired style, one they edited, one of
+    // their own - and the untouched one is the only thing retirement may take
+    const migrated = lib.migrateStyleLibrary(null, [
+        {title: 'Wikipedia Article', url: 'wikipedia\\.org\\/wiki\\/',
+         style: '#mw-panel {display: none}'},
+        {title: 'YCombinator News Comments', url: 'news\\.ycombinator\\.com',
+         style: '.votearrow {display: none}\n.age {display: none}'},
+        {title: 'Mine', url: 'my\\.example', style: 'p{}'}
+    ], lib.catalogToV1Builtins(retiring));
+    const result = lib.mergeCatalogIntoLibrary(migrated.library, retiring);
+
+    assert.deepStrictEqual(result.library.entries.map((entry) => entry.title),
+                           ['YCombinator News Comments', 'Mine', 'GitHub', 'Serif Reading']);
+    assert.strictEqual(result.library.entries[0].origin, 'user',
+        'they had changed it, so it is theirs and stays');
+});
+
+test('a retired style stays gone on every read after it', () => {
+    const retiring = catalogRetiring(['wiki', 'gh']);
+    const once = lib.mergeCatalogIntoLibrary(
+        lib.normalizeStyleLibrary({entries: [builtinEntry('wiki')]}), retiring);
+    const twice = lib.mergeCatalogIntoLibrary(once.library, retiring);
+
+    assert.strictEqual(twice.changed, false);
     assert.deepStrictEqual(twice.library, once.library);
 });
 
@@ -512,19 +643,213 @@ test('deleting a bundled style remembers it; deleting your own does not', () => 
     assert.deepStrictEqual(lib.removeStyleEntry(before, 'no such id').entries.length, 2);
 });
 
+// ---- exporting and importing ----------------------------------------------
+//
+// A style file comes from outside the extension: from another install, from a
+// forum post, from a text box. What matters is that reading one cannot do
+// anything to this library that the user was not shown first, and that a
+// stylesheet arriving in one cannot reach off the machine when it runs.
+
+test('an export says what a style is, not what this install has done with it', () => {
+    const document = lib.styleExportDocument([builtinEntry('gh', {enabled: false, priority: 3})]);
+    assert.strictEqual(document.kind, 'save-as-ebook-styles');
+    assert.strictEqual(document.version, lib.STYLE_LIBRARY_VERSION);
+    assert.ok(document.exportedAt > 0);
+    assert.deepStrictEqual(Object.keys(document.entries[0]).sort(),
+        ['css', 'description', 'enabled', 'id', 'match', 'priority', 'scope', 'tags', 'title'],
+        'origin, builtinId and updatedAt are facts about the library it came out of');
+    assert.strictEqual(document.entries[0].enabled, false, 'switched off is part of the style');
+    assert.strictEqual(document.entries[0].priority, 3);
+});
+
+test('a single style and a whole library are written in the same envelope', () => {
+    assert.strictEqual(lib.styleExportDocument(builtinEntry('gh')).entries.length, 1,
+        'one style is a file holding a list of one, so import has one shape to read');
+    assert.strictEqual(lib.styleExportDocument(catalog.entries).entries.length, 4);
+});
+
+test('the file is named after the style, and named safely', () => {
+    assert.strictEqual(lib.styleExportFileName('Wikipedia Article'),
+                       'save-as-ebook-style-wikipedia-article.json');
+    assert.strictEqual(lib.styleExportFileName('  Hacker News: /r/../etc  '),
+                       'save-as-ebook-style-hacker-news-r-etc.json');
+    assert.strictEqual(lib.styleExportFileName(''), 'save-as-ebook-styles.json');
+    assert.strictEqual(lib.styleExportFileName('!!!'), 'save-as-ebook-styles.json',
+        'a title of nothing but punctuation leaves no slug behind');
+});
+
+test('what is exported can be read back as the same style', () => {
+    const before = lib.normalizeStyleEntry(siteEntry('mine', 'glob', 'example.com/a/*',
+        {title: 'Mine', description: 'about a section', css: '.ad {display: none}',
+         priority: 2, tags: ['x']}));
+    const after = lib.readStyleImport(JSON.stringify(lib.styleExportDocument([before]))).entries[0];
+
+    for (const field of ['id', 'title', 'description', 'scope', 'css', 'priority', 'enabled']) {
+        assert.deepStrictEqual(after[field], before[field], field);
+    }
+    assert.deepStrictEqual(after.match, before.match);
+    assert.strictEqual(after.origin, 'imported');
+});
+
+test('the four things a person might paste are all read as styles', () => {
+    const one = {title: 'One', scope: 'site', css: 'p{}',
+                 match: {type: 'domain', pattern: 'a.test'}};
+    const titles = (text) => lib.readStyleImport(text).entries.map((entry) => entry.title);
+
+    assert.deepStrictEqual(titles(JSON.stringify(lib.styleExportDocument([one]))), ['One'],
+        'an export file');
+    assert.deepStrictEqual(titles(JSON.stringify({version: 2, entries: [one], removedBuiltins: []})),
+                           ['One'], 'a whole stored library');
+    assert.deepStrictEqual(titles(JSON.stringify([one, one])), ['One', 'One'], 'a bare array');
+    assert.deepStrictEqual(titles(JSON.stringify(one)), ['One'], 'a single style');
+});
+
+test('a file that is not a style file is refused rather than half-read', () => {
+    assert.strictEqual(lib.readStyleImport('not json at all').error, 'unreadable');
+    assert.strictEqual(lib.readStyleImport('').error, 'unreadable');
+    assert.strictEqual(lib.readStyleImport('42').error, 'unreadable');
+    assert.strictEqual(lib.readStyleImport('null').error, 'unreadable');
+    assert.strictEqual(lib.readStyleImport('[]').error, 'empty');
+    assert.strictEqual(lib.readStyleImport('[null, "x", 3]').error, 'empty');
+    assert.deepStrictEqual(lib.readStyleImport('[]').entries, []);
+});
+
+test('an imported style is the user\'s own, and claims nothing the catalog owns', () => {
+    const result = lib.readStyleImport(JSON.stringify(
+        lib.styleExportDocument([builtinEntry('gh')])));
+    const entry = result.entries[0];
+
+    assert.strictEqual(entry.origin, 'imported');
+    assert.strictEqual(entry.builtinId, null);
+    assert.strictEqual(lib.isBuiltinStyleId(entry.id), false,
+        'that id is the same in every install - keeping it would take the built-in\'s slot');
+    assert.ok(entry.updatedAt > 0);
+
+    // and having taken nothing from the catalog, it cannot be reset to it
+    assert.strictEqual(lib.resetEntryToBuiltin(entry, catalog), null);
+    // ...while the catalog still gets to add its own copy of the style
+    const merged = lib.mergeCatalogIntoLibrary(
+        lib.normalizeStyleLibrary({entries: [entry]}), catalog);
+    assert.strictEqual(merged.library.entries.filter(
+        (existing) => existing.builtinId === 'gh').length, 1);
+});
+
+test('a stylesheet that reaches another site is stripped, and what went is reported', () => {
+    const css = '@import url("https://tracker.test/a.css");\n' +
+                '@import "//tracker.test/b.css";\n' +
+                'body {background: url(https://tracker.test/pixel.png) no-repeat;}\n' +
+                '.a {background-image: url("../local.png");}\n' +
+                '.b {background-image: url(data:image/gif;base64,R0lGOD);}\n' +
+                '.c {color: red;}';
+    const result = lib.readStyleImport(JSON.stringify([{title: 'Shared', css: css}]));
+    const clean = result.entries[0].css;
+
+    assert.strictEqual(clean.indexOf('tracker.test'), -1, 'the beacon is what has to go');
+    assert.ok(clean.indexOf('@import') < 0);
+    assert.ok(clean.indexOf('url("../local.png")') > -1,
+        'a relative url names a file on the page the style is running on');
+    assert.ok(clean.indexOf('data:image/gif') > -1, 'a data url is carried, not fetched');
+    assert.ok(clean.indexOf('.c {color: red;}') > -1, 'the rest of the stylesheet is untouched');
+    assert.ok(/background:\s*none no-repeat/.test(clean),
+        'an emptied value would take the whole declaration with it');
+
+    assert.deepStrictEqual(result.stripped, [{title: 'Shared', references: [
+        '@import url("https://tracker.test/a.css");',
+        '@import "//tracker.test/b.css";',
+        'https://tracker.test/pixel.png'
+    ]}], 'a style that quietly does less than the file said is worse than one that says so');
+});
+
+test('a stylesheet with nothing to strip is not reported as stripped', () => {
+    const result = lib.readStyleImport(JSON.stringify([{title: 'Clean', css: 'p {color: red}'}]));
+    assert.deepStrictEqual(result.stripped, []);
+    assert.strictEqual(result.entries[0].css, 'p {color: red}');
+});
+
+test('an import says what it would add and what it would land on top of', () => {
+    const before = lib.normalizeStyleLibrary({entries: [
+        {id: 'shared', title: 'Shared', scope: 'site', css: '.old {}',
+         match: {type: 'domain', pattern: 'a.test'}},
+        {id: 'untouched', title: 'Untouched', scope: 'site', css: '.x {}',
+         match: {type: 'domain', pattern: 'b.test'}}
+    ]});
+    const incoming = lib.readStyleImport(JSON.stringify([
+        {id: 'shared', title: 'Shared (newer)', scope: 'site', css: '.new {}',
+         match: {type: 'domain', pattern: 'a.test'}},
+        {id: 'fresh', title: 'Fresh', scope: 'site', css: '.y {}',
+         match: {type: 'domain', pattern: 'c.test'}}
+    ])).entries;
+    const plan = lib.planStyleImport(before, incoming);
+
+    assert.deepStrictEqual(plan.additions.map((entry) => entry.title), ['Fresh']);
+    assert.strictEqual(plan.collisions.length, 1);
+    assert.strictEqual(plan.collisions[0].existing.title, 'Shared');
+    assert.strictEqual(plan.collisions[0].incoming.title, 'Shared (newer)');
+});
+
+test('replacing takes the style\'s place; keeping both leaves it where it was', () => {
+    const before = lib.normalizeStyleLibrary({entries: [
+        {id: 'shared', title: 'Shared', scope: 'site', css: '.old {}',
+         match: {type: 'domain', pattern: 'a.test'}}
+    ]});
+    const incoming = [lib.normalizeStyleEntry(
+        {id: 'shared', title: 'Shared (newer)', scope: 'site', css: '.new {}',
+         match: {type: 'domain', pattern: 'a.test'}, origin: 'imported'})];
+
+    const replaced = lib.applyStyleImport(before, incoming, true);
+    assert.deepStrictEqual(replaced.library.entries.map((entry) => entry.title),
+                           ['Shared (newer)']);
+    assert.strictEqual(replaced.entries[0].id, 'shared');
+
+    const kept = lib.applyStyleImport(before, incoming, false);
+    assert.deepStrictEqual(kept.library.entries.map((entry) => entry.title),
+                           ['Shared', 'Shared (newer)']);
+    assert.notStrictEqual(kept.entries[0].id, 'shared',
+        'two entries under one id would make an edit land on whichever was found first');
+    assert.strictEqual(kept.library.entries[1].id, kept.entries[0].id,
+        'the caller has to be able to point at what it just wrote');
+});
+
+test('an import with nothing to collide with is added either way', () => {
+    const before = lib.normalizeStyleLibrary({entries: [{id: 'own', css: 'p{}'}]});
+    const incoming = [lib.normalizeStyleEntry({id: 'fresh', css: '.y {}', origin: 'imported'})];
+    for (const replace of [true, false]) {
+        const after = lib.applyStyleImport(before, incoming, replace);
+        assert.deepStrictEqual(after.library.entries.map((entry) => entry.id), ['own', 'fresh']);
+    }
+});
+
+test('importing over a bundled style is not something an import can do', () => {
+    // the file names the built-in's id, which every install shares
+    const before = lib.normalizeStyleLibrary({entries: [builtinEntry('gh')]});
+    const incoming = lib.readStyleImport(JSON.stringify([
+        {id: 'builtin-gh', title: 'Not GitHub', scope: 'site', css: '.evil {}',
+         match: {type: 'domain', pattern: 'github.com'}}
+    ])).entries;
+
+    assert.deepStrictEqual(lib.planStyleImport(before, incoming).collisions, [],
+        'the id was dropped on the way in, so there is nothing to replace');
+    const after = lib.applyStyleImport(before, incoming, true);
+    assert.deepStrictEqual(after.library.entries.map((entry) => entry.title),
+                           ['GitHub', 'Not GitHub']);
+    assert.strictEqual(after.library.entries[0].origin, 'builtin',
+        'and the bundled style is still the bundled style');
+});
+
 // ---- the catalog that actually ships --------------------------------------
 
 test('styles/catalog.json says what the merge and the library UI expect of it', () => {
     const shipped = JSON.parse(fs.readFileSync(
         path.join(__dirname, '..', 'web-extension', 'styles', 'catalog.json'), 'utf8'));
-    const entries = lib.catalogEntries(shipped);
+    const all = lib.allCatalogEntries(shipped);
+    const offered = lib.catalogEntries(shipped);
 
-    assert.strictEqual(entries.length, shipped.entries.length,
+    assert.strictEqual(all.length, shipped.entries.length,
         'an entry without a builtinId is silently ignored by the merge');
-    assert.strictEqual(new Set(entries.map((entry) => entry.builtinId)).size, entries.length,
+    assert.strictEqual(new Set(all.map((entry) => entry.builtinId)).size, all.length,
         'two entries under one builtinId would fight over the same library slot');
 
-    for (const entry of entries) {
+    for (const entry of offered) {
         const where = entry.builtinId;
         assert.ok(entry.title && entry.title.trim() !== '', where + ' has no title');
         assert.ok(entry.description && entry.description.trim() !== '',
@@ -547,9 +872,29 @@ test('styles/catalog.json says what the merge and the library UI expect of it', 
 
     // The five v1 styles are recognized by their text, so this is the guard on
     // editing them: change one and every untouched copy in the wild becomes a
-    // fork that no update can ever fix.
-    assert.deepStrictEqual(entries.filter((entry) => entry.v1).map((entry) => entry.builtinId),
+    // fork that no update can ever fix. Retiring one does not release it from
+    // that - the entry has to stay in the file, and stay as it shipped, for the
+    // migration to know an untouched copy when it sees one.
+    assert.deepStrictEqual(all.filter((entry) => entry.v1).map((entry) => entry.builtinId),
         ['reddit-comments', 'wikipedia-article', 'hn-comments', 'medium-article', 'twitter']);
+    for (const entry of lib.catalogToV1Builtins(shipped)) {
+        assert.ok(entry.title.trim() !== '' && entry.url.trim() !== '' && entry.style.trim() !== '',
+            entry.builtinId + ' has lost the text the v1 migration matches it by');
+    }
+
+    // The site presets this release withdrew: every one of them was written
+    // against markup the site has since replaced, so what they hide now is the
+    // wrong thing or nothing at all. See retiredBuiltinIds for the two ways of
+    // saying it, and why the v1 five are still in the file.
+    const retired = lib.retiredBuiltinIds(shipped);
+    assert.deepStrictEqual(Object.keys(retired).sort(), [
+        'arxiv-abs', 'github-repo', 'hn-comments', 'medium-article', 'reddit-comments',
+        'stackoverflow-question', 'substack-post', 'twitter', 'wikipedia-article'
+    ]);
+    assert.ok(all.filter((entry) => entry.v1).every((entry) => entry.retired === true),
+        'a v1 entry that is kept only for the migration has to say so, or it ships');
+    assert.deepStrictEqual(offered.filter((entry) => retired[entry.builtinId]), [],
+        'a retired style the catalog still offers would be added straight back');
 });
 
 console.log(failures === 0 ? '\nstyle library OK' : '\n' + failures + ' style library failure(s)');

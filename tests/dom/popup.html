@@ -1,0 +1,284 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+</head>
+<body>
+<script>
+// The popup. What is checked here is the half of it that says what the style
+// library would do to the page in front of the user: which styles are listed,
+// what a checkbox beside one writes, and what the master switch above them does
+// to that list. The matching rule itself is a node test - see
+// tests/style-library.js.
+
+var TARGET_URL = 'https://www.example.com/articles/42';
+
+function fixtureLibrary() {
+  return normalizeStyleLibrary({version: 2, entries: [
+    {id: 'ex', title: 'Example Site', origin: 'user', scope: 'site',
+     match: {type: 'domain', pattern: 'example.com'}, css: '.ad {display: none}'},
+    {id: 'section', title: 'Example Articles', origin: 'user', scope: 'site',
+     match: {type: 'prefix', pattern: 'example.com/articles'}, css: '.promo {}'},
+    // matches, but switched off: the popup is where it gets switched on again
+    {id: 'off', title: 'Switched Off', origin: 'user', scope: 'site', enabled: false,
+     match: {type: 'domain', pattern: 'example.com'}, css: '.x {}'},
+    {id: 'serifOn', title: 'Serif Reading', origin: 'builtin',
+     builtinId: 'theme-serif-reading', scope: 'theme', css: 'body {font-family: serif}'},
+    // every-page styles that nobody has switched on are not about this page in
+    // particular, and a library full of them would push the popup's buttons off
+    {id: 'serifOff', title: 'Large Print', origin: 'builtin', builtinId: 'theme-large-print',
+     scope: 'theme', enabled: false, css: 'body {font-size: 130%}'},
+    {id: 'other', title: 'Elsewhere', origin: 'user', scope: 'site',
+     match: {type: 'domain', pattern: 'other.test'}, css: '.y {}'}
+  ]});
+}
+
+var sent = [];
+var saved = [];
+var opened = [];
+var includeStyle = true;
+// What the background has on hand for the library to preview. Null unless a test
+// says otherwise - the checkbox that decides whether the library button captures
+// the page first is defaulted from this.
+var snapshot = null;
+
+window.chrome = {
+  runtime: {
+    onMessage: {addListener: function(){}},
+    lastError: null,
+    getURL: function(p){ return 'chrome-extension://fake/' + p; },
+    sendMessage: function(msg, cb) {
+      sent.push(msg.type);
+      var reply = {};
+      if (msg.type === 'is busy?') reply = {isBusy: false};
+      if (msg.type === 'get include style') reply = {includeStyle: includeStyle};
+      if (msg.type === 'set include style') { includeStyle = msg.includeStyle; reply = {ok: true}; }
+      if (msg.type === 'get reader mode') reply = {readerMode: false};
+      if (msg.type === 'get review before saving') reply = {reviewBeforeSaving: false};
+      // Read afresh for every write - see setStyleEnabled. The library page may
+      // be open in another tab, so what this popup holds is not the authority.
+      if (msg.type === 'get style library') {
+        reply = {library: saved.length === 0 ? fixtureLibrary() : saved[saved.length - 1],
+                 catalog: {entries: []}};
+      }
+      if (msg.type === 'set style library') { saved.push(msg.library); reply = {ok: true}; }
+      if (msg.type === 'get style snapshot') reply = {snapshot: snapshot};
+      if (cb) setTimeout(function(){ cb(reply); }, 0);
+    }
+  },
+  i18n: {getMessage: function(k, subs){ return subs ? k + ':' + subs.join(',') : k; }},
+  tabs: {query: function(q, cb){ setTimeout(function(){ cb([{id: 1, url: TARGET_URL}]); }, 0); },
+         create: function(options){ opened.push(options.url); }},
+  commands: {getAll: function(cb){ cb([]); }}
+};
+
+// window.close() is what both editor buttons call after opening a tab; a
+// fixture that let it run would take its own results with it.
+window.close = function(){};
+
+var errors = [];
+window.addEventListener('error', function(e){ errors.push(e.message); });
+</script>
+
+<script>
+// The popup's markup rather than a copy of it: menu.js addresses it by id, and a
+// second copy here would go stale the first time a row moves. The <script> tags
+// in it are skipped - the same files are loaded below, after the stubs above.
+var source = new XMLHttpRequest();
+source.open('GET', '../../web-extension/menu.html', false);
+source.send();
+var markup = new DOMParser().parseFromString(source.responseText, 'text/html');
+for (var node of Array.prototype.slice.call(markup.body.childNodes)) {
+  if (node.nodeName !== 'SCRIPT') {
+    document.body.appendChild(document.importNode(node, true));
+  }
+}
+</script>
+
+<!-- the same list menu.html loads, in the same order -->
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/styleLibrary.js"></script>
+<script src="../../web-extension/menu.js"></script>
+
+<script>
+function report(name, ok, detail) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' -- ' + detail : '');
+  document.getElementById('results').appendChild(li);
+}
+
+function styleRows() {
+  return Array.prototype.slice.call(document.getElementsByClassName('currentStyleRow'));
+}
+
+function rowNames() {
+  return styleRows().map(function (row) {
+    return row.getElementsByClassName('currentStyleName')[0].textContent;
+  });
+}
+
+function rowToggle(name) {
+  return styleRows().filter(function (row) {
+    return row.getElementsByClassName('currentStyleName')[0].textContent === name;
+  })[0].getElementsByTagName('input')[0];
+}
+
+function lastSaved() {
+  return saved[saved.length - 1];
+}
+
+function savedEntry(id) {
+  var library = lastSaved();
+  return library ? library.entries.filter(function (e) { return e.id === id; })[0] : null;
+}
+
+setTimeout(function () {
+  var out = document.createElement('ul');
+  out.id = 'results';
+  document.body.appendChild(out);
+
+  report('the popup ran without throwing', errors.length === 0, errors.join(' | '));
+  report('the markup it addresses is the popup\'s own',
+         !!document.getElementById('currentStyles') &&
+         !!document.getElementById('styleLibrary'));
+  report('it asked for the library and for the tab it was opened on',
+         sent.indexOf('get style library') > -1);
+
+  // In the order the styles would be laid on the page, which is the order the
+  // library page shows too: every-page styles first, then site styles from the
+  // broadest to the one written for this section of it.
+  report('the styles this page would take are listed, broadest first',
+         rowNames().join('|') === 'Serif Reading|Example Site|Switched Off|Example Articles',
+         rowNames().join('|'));
+  report('a style for another site is not one of them',
+         rowNames().indexOf('Elsewhere') < 0);
+  report('nor is an every-page style nobody has switched on',
+         rowNames().indexOf('Large Print') < 0, rowNames().join('|'));
+  report('a style that is off is listed with its box clear, not left out',
+         rowToggle('Switched Off').checked === false &&
+         rowToggle('Example Site').checked === true);
+
+  // ---- switching one off from here ----
+  rowToggle('Example Site').click();
+  setTimeout(afterToggle, 60);
+}, 200);
+
+function afterToggle() {
+  report('a checkbox writes the library with that style switched off',
+         saved.length === 1 && savedEntry('ex').enabled === false,
+         saved.length ? JSON.stringify(savedEntry('ex').enabled) : 'nothing was written');
+  report('and the rest of the library is written back untouched',
+         lastSaved().entries.length === 6 && savedEntry('off').enabled === false &&
+         savedEntry('serifOn').enabled === true);
+  report('the row it was clicked on shows it',
+         rowToggle('Example Site').checked === false && rowNames().length === 4);
+
+  // ---- the checkbox above the list is not a switch on the list ----
+  //
+  // It was once: the library was only injected when it was ticked, so a list of
+  // styles that would not run was greyed out and annotated. prepareStyles stopped
+  // asking, and the popup has to stop saying it - a note reading "none of these
+  // will run" over styles that all run is the one thing here that can be wrong
+  // without looking wrong.
+  var listedWhileOn = rowNames().join('|');
+
+  document.getElementById('includeStyleCheck').click();
+  report('turning off "keep the page\'s colours and fonts" says nothing about the styles',
+         rowNames().join('|') === listedWhileOn &&
+         document.getElementById('currentStyles').className === '' &&
+         document.getElementById('currentStyles').textContent.indexOf('stylesOff') < 0,
+         document.getElementById('currentStyles').textContent);
+  report('and it is what was written, so the capture reads it',
+         includeStyle === false);
+
+  document.getElementById('includeStyleCheck').click();
+  report('turning it back on leaves the list alone too',
+         rowNames().join('|') === listedWhileOn && includeStyle === true,
+         rowNames().join('|'));
+
+  // ---- the one way into the library ----
+  //
+  // Two buttons used to sit here, opening the same page from the same url and
+  // differing by one preparatory step. What is left is the button and the step.
+
+  // Nothing has been captured in this fixture, and until the background says
+  // otherwise the popup has to assume there is nothing to preview.
+  report('the box that decides whether the page is captured first starts ticked',
+         document.getElementById('captureFirstCheck').checked === true);
+
+  // The answer to that question, for a page a capture is already held of: a
+  // second one would cost what saving the page costs and show the same thing.
+  renderCaptureFirst(true);
+  report('a capture of this very page already on hand unticks it',
+         document.getElementById('captureFirstCheck').checked === false);
+  renderCaptureFirst(false);
+  report('a capture of some other page leaves it ticked',
+         document.getElementById('captureFirstCheck').checked === true);
+
+  document.getElementById('captureFirstCheck').click();
+  renderCaptureFirst(false);
+  report('an answer that arrives after the user has set the box does not overrule it',
+         document.getElementById('captureFirstCheck').checked === false);
+
+  var openedBefore = opened.length;
+  document.getElementById('captureFirstCheck').checked = true;
+  document.getElementById('styleLibrary').click();
+  report('ticked, the button captures this page instead of opening a tab itself',
+         sent.indexOf('style-snapshot') > -1 && opened.length === openedBefore,
+         opened.join('|'));
+
+  document.getElementById('captureFirstCheck').checked = false;
+  document.getElementById('styleLibrary').click();
+  report('clear, it opens the library on this page straight away',
+         opened.length === openedBefore + 1 &&
+         opened[opened.length - 1] === 'chrome-extension://fake/styles.html?for=' +
+                                       encodeURIComponent(TARGET_URL),
+         opened.join('|'));
+
+  // ---- a page nothing covers ----
+  //
+  // The real predicate against a different url, rather than a second fixture:
+  // what makes the list empty is that no style is about this page.
+  currentTabUrl = 'https://nothing-here.test/a';
+  renderCurrentStyles();
+  // The every-page style is still running here, so it is still listed - what is
+  // missing is a style written for this site, which is what the offer is about.
+  report('a page with no style of its own says so, and offers to start one',
+         rowNames().join('|') === 'Serif Reading' &&
+         !!document.getElementById('currentStylesNone') &&
+         document.getElementById('currentStylesNone').textContent === 'noStyleForThisSite',
+         rowNames().join('|'));
+
+  // The offer is the same way in as the button, checkbox and all - writing a
+  // style from nothing is exactly when a page to write it against is worth the
+  // wait, so it must not be the one path that quietly skips the capture.
+  document.getElementById('captureFirstCheck').checked = true;
+  var sentBefore = sent.length;
+  var openedSoFar = opened.length;
+  document.getElementById('currentStylesNone').click();
+  report('that offer captures the page first when the box is ticked',
+         sent.slice(sentBefore).indexOf('style-snapshot') > -1 &&
+         opened.length === openedSoFar,
+         sent.slice(sentBefore).join('|'));
+
+  document.getElementById('captureFirstCheck').checked = false;
+  document.getElementById('currentStylesNone').click();
+  report('and opens the library on that page when it is clear',
+         opened.length === openedSoFar + 1 &&
+         opened[opened.length - 1] === 'chrome-extension://fake/styles.html?for=' +
+                                       encodeURIComponent('https://nothing-here.test/a'),
+         opened.join('|'));
+
+  currentTabUrl = TARGET_URL;
+  renderCurrentStyles();
+  report('the list comes back for a page that does have styles, in its own order',
+         rowNames().join('|') === 'Serif Reading|Example Site|Switched Off|Example Articles' &&
+         !document.getElementById('currentStylesNone'),
+         rowNames().join('|'));
+
+  report('nothing threw', errors.length === 0, errors.join(' | '));
+  document.title = 'DONE';
+}
+</script>
+</body>
+</html>

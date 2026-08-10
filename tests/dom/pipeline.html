@@ -31,6 +31,10 @@ window.chrome = {
     <img src="https://example.com/img/logo.png"><img src="../img/logo.png">
     <svg width="10" height="10"><rect width="10" height="10"/></svg>
     <canvas id="c" width="8" height="8"></canvas>
+    <!-- what "Text Only" does to a drawing: both leave as an <img>, so being
+         hidden has to stop them before the substitution, not after it -->
+    <svg class="collapsed" width="10" height="10"><rect width="10" height="10"/></svg>
+    <canvas class="collapsed" id="c2" width="8" height="8"></canvas>
   </article>
   <aside><p class="title">sidebar paragraph</p></aside>
   <iframe id="f" srcdoc="<p>inside the frame</p>"></iframe>
@@ -87,7 +91,8 @@ window.addEventListener('load', function () {
   var inlineTypes = extractedImages.map(function (i) {
     return i.filename.split('.').pop();
   }).sort().join(',');
-  report('svg + canvas converted to inline images', extractedImages.length === 2,
+  report('svg + canvas converted to inline images, and the hidden pair dropped',
+         extractedImages.length === 2,
          'extractedImages=' + extractedImages.length + ' types=' + inlineTypes);
   report('no <svg> tag survived into output', content.indexOf('<svg') < 0);
   report('no <canvas> tag survived into output', content.indexOf('<canvas') < 0);

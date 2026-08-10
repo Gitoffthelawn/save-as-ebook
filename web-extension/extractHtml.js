@@ -376,14 +376,23 @@ function readVisibilityAndCss(state, includeStyle, appliedStyles) {
     if (includeStyle) {
         document.body.querySelectorAll('*').forEach((elem) => {
             let tagName = elem.tagName.toLowerCase();
-            if (allowedTags.indexOf(tagName) < 0) return;
             if (mathMLTags.indexOf(tagName) > -1) return;
+
+            // An svg and a canvas leave as an <img> - see readSvgs and
+            // readCanvases - so they have to be measured even though neither tag
+            // is one the ebook allows. Filtered out before the check instead,
+            // a hidden one is never marked, and is substituted anyway: the
+            // picture a style just took off the page arrives in the book as an
+            // image of zero by zero.
+            let replacedByImage = tagName === 'svg' || tagName === 'canvas';
+            if (!replacedByImage && allowedTags.indexOf(tagName) < 0) return;
 
             if (!isElementVisible(elem)) {
                 getMark(state, elem).hidden = true;
                 return;
             }
-            if (tagName === 'svg') return;
+            // the class would be written onto an element that no longer exists
+            if (replacedByImage) return;
 
             getMark(state, elem).cssClassName =
                 classNameForComputedStyle(window.getComputedStyle(elem),

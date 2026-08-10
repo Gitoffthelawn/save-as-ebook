@@ -4,7 +4,10 @@
         "description": "Nom de l'extension"
     },
     "includeStyle": {
-        "message": "Inclure le style"
+        "message": "Conserver les couleurs et les polices de la page"
+    },
+    "includeStyleHint": {
+        "message": "Reprendre l'apparence de la page dans le livre - couleurs, polices, bordures, listes et alignement - pour que le code, les tableaux et les citations gardent leur aspect. Décoché, le livre est du texte brut que la liseuse met en page à sa guise. La bibliothèque de styles fonctionne dans les deux cas : masquer un bandeau n'en dépend pas."
     },
     "readerMode": {
         "message": "Appliquer Readability.js"
@@ -18,14 +21,17 @@
     "reviewBeforeSavingHint": {
         "message": "Ouvrir « Enregistrer la page » et « Enregistrer la sélection » dans l'éditeur de chapitre au lieu de télécharger aussitôt, afin de prévisualiser, modifier et décrire le livre d'abord. C'est le bouton « Générer l'eBook » de l'éditeur qui enregistre le fichier."
     },
-    "styleLabel": {
-        "message": "Style personnalisé :"
+    "styleLibrary": {
+        "message": "Bibliothèque de styles ..."
     },
-    "applyStyle": {
-        "message": "Appliquer"
+    "styleLibraryHint": {
+        "message": "Écrire et activer le CSS appliqué aux pages pendant leur capture, pour que ce qui est enregistré soit la page sans ses bandeaux ni ses barres latérales. À ne pas confondre avec la feuille de style du livre produit, qui se trouve dans l'éditeur de chapitre."
     },
-    "editStyles": {
-        "message": "Éditer les styles de site..."
+    "captureFirst": {
+        "message": "Capturer d'abord cette page"
+    },
+    "captureFirstHint": {
+        "message": "Prendre une copie de cette page pour l'aperçu de la bibliothèque, afin d'écrire un style face à ce qui sera réellement enregistré - et de désigner un élément en cliquant dessus. C'est une capture : cela prend autant de temps qu'enregistrer la page. Décochez pour ouvrir la bibliothèque aussitôt, sur la dernière page capturée."
     },
     "savePage": {
         "message": "Enregistrer la page"
@@ -109,7 +115,7 @@
         "message": "Feuille de style du livre"
     },
     "bookCssHint": {
-        "message": "CSS appliqué à tout le livre enregistré. À ne pas confondre avec les styles de site, qui modifient les pages lors de leur capture."
+        "message": "CSS appliqué à tout le livre enregistré. À ne pas confondre avec la bibliothèque de styles, qui modifie les pages lors de leur capture."
     },
     "bookCssPlaceholder": {
         "message": "body { font-family: serif; }"
@@ -214,7 +220,7 @@
         "message": "Style enregistré !"
     },
     "styleEditor": {
-        "message": "Éditeur de styles de site"
+        "message": "Bibliothèque de styles"
     },
     "styleNameLabel": {
         "message": "Nom"
@@ -417,12 +423,6 @@
     "styleDiscardEditsConfirm": {
         "message": "Ce style a des modifications non enregistrées. Les abandonner ?"
     },
-    "styleThisPage": {
-        "message": "Styliser cette page ..."
-    },
-    "styleThisPageHint": {
-        "message": "Capturer cette page et ouvrir la bibliothèque de styles dessus, pour écrire un style face à ce qui sera réellement enregistré."
-    },
     "stylePreviewTitle": {
         "message": "Aperçu"
     },
@@ -454,7 +454,7 @@
         "message": "Aucun style ne s'applique encore à cette page."
     },
     "stylePreviewHowTo": {
-        "message": "Aucune page capturée. Ouvrez l'extension sur une page à styliser et choisissez « Styliser cette page ... » pour y tester vos styles."
+        "message": "Aucune page capturée. Ouvrez l'extension sur une page à styliser et choisissez « Bibliothèque de styles ... » en cochant « Capturer d'abord cette page », pour y tester vos styles."
     },
     "stylePreviewNote": {
         "message": "La page capturée avec les styles ci-dessus, rendue comme l'eBook l'affichera. Une règle qui masque un élément ici l'exclut de l'eBook ; les polices et les marges appartiennent à la liseuse."
@@ -507,5 +507,124 @@
     },
     "styleRecipeBiggerText": {
         "message": "Texte plus grand"
+    },
+    "styleExport": {
+        "message": "Exporter"
+    },
+    "styleExportHint": {
+        "message": "Enregistrer ce style dans un fichier, pour le conserver ou le transmettre"
+    },
+    "styleExportAll": {
+        "message": "Tout exporter"
+    },
+    "styleExportNothing": {
+        "message": "Aucun style à exporter."
+    },
+    "styleImport": {
+        "message": "Importer ..."
+    },
+    "styleImportTitle": {
+        "message": "Importer des styles"
+    },
+    "styleImportHint": {
+        "message": "Ouvrez un fichier de styles, ou collez-en un ci-dessous. Les styles importés sont ajoutés comme les vôtres - ils ne remplacent jamais un style fourni."
+    },
+    "styleImportFromFile": {
+        "message": "Ouvrir un fichier ..."
+    },
+    "styleImportPastePlaceholder": {
+        "message": "ou collez un fichier de styles ici"
+    },
+    "styleImportRead": {
+        "message": "Continuer"
+    },
+    "styleImportApply": {
+        "message": "Importer"
+    },
+    "styleImportKeepBoth": {
+        "message": "Garder les deux"
+    },
+    "styleImportReplace": {
+        "message": "Remplacer"
+    },
+    "styleImportNothingPasted": {
+        "message": "Rien à importer pour l'instant - ouvrez un fichier, ou collez-en un dans le cadre."
+    },
+    "styleImportNotAStyleFile": {
+        "message": "Ce n'est pas un fichier de styles."
+    },
+    "styleImportNoStyles": {
+        "message": "Ce fichier ne contient aucun style."
+    },
+    "styleImportUnreadableFile": {
+        "message": "Ce fichier n'a pas pu être lu."
+    },
+    "styleImportAdding": {
+        "message": "Nouveaux styles ($count$)",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "3"
+            }
+        }
+    },
+    "styleImportCollisions": {
+        "message": "Déjà dans votre bibliothèque ($count$)",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "2"
+            }
+        }
+    },
+    "styleImportHere": {
+        "message": "le vôtre : $title$ - $where$",
+        "placeholders": {
+            "title": {
+                "content": "$1",
+                "example": "Wikipedia Article"
+            },
+            "where": {
+                "content": "$2",
+                "example": "wikipedia.org et ses sous-domaines"
+            }
+        }
+    },
+    "styleImportIncoming": {
+        "message": "celui du fichier : $where$, $css$",
+        "placeholders": {
+            "where": {
+                "content": "$1",
+                "example": "wikipedia.org et ses sous-domaines"
+            },
+            "css": {
+                "content": "$2",
+                "example": "CSS différent"
+            }
+        }
+    },
+    "styleImportSameCss": {
+        "message": "même CSS"
+    },
+    "styleImportDifferentCss": {
+        "message": "CSS différent"
+    },
+    "styleImportStripped": {
+        "message": "Retiré du CSS importé"
+    },
+    "styleImportStrippedWhy": {
+        "message": "Ces références vont chercher un fichier sur un autre site à chaque capture de page, ce qui indique à ce site ce que vous lisez. Un style de site n'en a aucun besoin."
+    },
+    "styleImported": {
+        "message": "$count$ style(s) importé(s).",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "3"
+            }
+        }
+    },
+    "noStyleForThisSite": {
+        "message": "Aucun style pour ce site - en créer un"
     }
 }

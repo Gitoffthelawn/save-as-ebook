@@ -313,7 +313,7 @@ function dispatch(tab, action, justAddToBuffer, appliedStyles) {
             let isIncludeStyle = result.includeStyle
             isReaderMode((readerResult) => {
                 isReviewBeforeSaving((reviewResult) => {
-                    prepareStyles(tab, isIncludeStyle, appliedStyles, (tmpAppliedStyles) => {
+                    prepareStyles(tab, appliedStyles, (tmpAppliedStyles) => {
                         applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles,
                             readerResult.readerMode, reviewResult.reviewBeforeSaving)
                     })
@@ -573,12 +573,21 @@ function insertStyleSheets(tabId, styles, appliedStyles, callback) {
     step(0);
 }
 
-function prepareStyles(tab, includeStyle, appliedStyles, callback) {
-    if (!includeStyle) {
-        callback(appliedStyles)
-        return
-    }
-
+// The styles for this capture, on the page before it is read.
+//
+// This does not ask whether the includeStyle checkbox - "Keep the page's colours
+// and fonts" in the popup - is on. Most of what a style does is
+// hide something, and hiding is not styling: an element with no box is not
+// extracted at all - see readVisibilityAndCss - so a preset that takes the cookie
+// banner, the ad slots and the comment thread off a page is doing the same work
+// whether or not the page's own css is being carried into the book. Gating it on
+// the checkbox meant the cleanest capture the extension can make, plain semantic
+// markup with the web chrome removed, was the one combination it refused.
+//
+// What the checkbox still decides is what happens to the css: with it on the book
+// gets the computed style of what survived, with it off it gets these sheets and
+// nothing else.
+function prepareStyles(tab, appliedStyles, callback) {
     getStyleLibrary((library) => {
         let styles = selectStylesForUrl(tab[0].url, library);
 
@@ -838,22 +847,10 @@ function _execRequest(request, sender, sendResponse) {
         });
         return true;
     }
-    if (request.type === 'get current style') {
-        chrome.storage.local.get('currentStyle', function (data) {
-            if (!data || !data.currentStyle) {
-                sendResponse({currentStyle: 0});
-            } else {
-                sendResponse({currentStyle: data.currentStyle});
-            }
-        });
-        return true;
-    }
-    if (request.type === 'set current style') {
-        chrome.storage.local.set({'currentStyle': request.currentStyle}, function () {
-            sendResponse({ok: true});
-        });
-        return true;
-    }
+    // 'get current style' / 'set current style' were here. They fed a
+    // 'currentStyle' key the popup wrote and nothing read - the capture path
+    // always worked the match out for itself, and now selectStylesForUrl is the
+    // only thing that decides which styles a page takes.
     if (request.type === 'get include style') {
         chrome.storage.local.get('includeStyle', function (data) {
             if (!data) {
