@@ -37,6 +37,10 @@ var sent = [];
 var saved = [];
 var opened = [];
 var includeStyle = true;
+// What the background has on hand for the library to preview. Null unless a test
+// says otherwise - the checkbox that decides whether the library button captures
+// the page first is defaulted from this.
+var snapshot = null;
 
 window.chrome = {
   runtime: {
@@ -58,6 +62,7 @@ window.chrome = {
                  catalog: {entries: []}};
       }
       if (msg.type === 'set style library') { saved.push(msg.library); reply = {ok: true}; }
+      if (msg.type === 'get style snapshot') reply = {snapshot: snapshot};
       if (cb) setTimeout(function(){ cb(reply); }, 0);
     }
   },
@@ -135,7 +140,7 @@ setTimeout(function () {
   report('the popup ran without throwing', errors.length === 0, errors.join(' | '));
   report('the markup it addresses is the popup\'s own',
          !!document.getElementById('currentStyles') &&
-         !!document.getElementById('editStyles'));
+         !!document.getElementById('styleLibrary'));
   report('it asked for the library and for the tab it was opened on',
          sent.indexOf('get style library') > -1);
 
@@ -168,23 +173,67 @@ function afterToggle() {
   report('the row it was clicked on shows it',
          rowToggle('Example Site').checked === false && rowNames().length === 4);
 
-  // ---- the master switch above the list ----
-  report('nothing says the styles are off while they are on',
-         !document.getElementById('currentStylesNote'));
+  // ---- the checkbox above the list is not a switch on the list ----
+  //
+  // It was once: the library was only injected when it was ticked, so a list of
+  // styles that would not run was greyed out and annotated. prepareStyles stopped
+  // asking, and the popup has to stop saying it - a note reading "none of these
+  // will run" over styles that all run is the one thing here that can be wrong
+  // without looking wrong.
+  var listedWhileOn = rowNames().join('|');
 
   document.getElementById('includeStyleCheck').click();
-  report('turning the master switch off says so rather than emptying the list',
-         !!document.getElementById('currentStylesNote') &&
-         document.getElementById('currentStylesNote').textContent === 'stylesOffNote' &&
-         rowNames().length === 4,
+  report('turning off "keep the page\'s colours and fonts" says nothing about the styles',
+         rowNames().join('|') === listedWhileOn &&
+         document.getElementById('currentStyles').className === '' &&
+         document.getElementById('currentStyles').textContent.indexOf('stylesOff') < 0,
+         document.getElementById('currentStyles').textContent);
+  report('and it is what was written, so the capture reads it',
+         includeStyle === false);
+
+  document.getElementById('includeStyleCheck').click();
+  report('turning it back on leaves the list alone too',
+         rowNames().join('|') === listedWhileOn && includeStyle === true,
          rowNames().join('|'));
-  report('and the list is marked as not running',
-         document.getElementById('currentStyles').className === 'currentStylesOff');
 
-  document.getElementById('includeStyleCheck').click();
-  report('turning it back on takes the note away',
-         !document.getElementById('currentStylesNote') &&
-         document.getElementById('currentStyles').className === '');
+  // ---- the one way into the library ----
+  //
+  // Two buttons used to sit here, opening the same page from the same url and
+  // differing by one preparatory step. What is left is the button and the step.
+
+  // Nothing has been captured in this fixture, and until the background says
+  // otherwise the popup has to assume there is nothing to preview.
+  report('the box that decides whether the page is captured first starts ticked',
+         document.getElementById('captureFirstCheck').checked === true);
+
+  // The answer to that question, for a page a capture is already held of: a
+  // second one would cost what saving the page costs and show the same thing.
+  renderCaptureFirst(true);
+  report('a capture of this very page already on hand unticks it',
+         document.getElementById('captureFirstCheck').checked === false);
+  renderCaptureFirst(false);
+  report('a capture of some other page leaves it ticked',
+         document.getElementById('captureFirstCheck').checked === true);
+
+  document.getElementById('captureFirstCheck').click();
+  renderCaptureFirst(false);
+  report('an answer that arrives after the user has set the box does not overrule it',
+         document.getElementById('captureFirstCheck').checked === false);
+
+  var openedBefore = opened.length;
+  document.getElementById('captureFirstCheck').checked = true;
+  document.getElementById('styleLibrary').click();
+  report('ticked, the button captures this page instead of opening a tab itself',
+         sent.indexOf('style-snapshot') > -1 && opened.length === openedBefore,
+         opened.join('|'));
+
+  document.getElementById('captureFirstCheck').checked = false;
+  document.getElementById('styleLibrary').click();
+  report('clear, it opens the library on this page straight away',
+         opened.length === openedBefore + 1 &&
+         opened[opened.length - 1] === 'chrome-extension://fake/styles.html?for=' +
+                                       encodeURIComponent(TARGET_URL),
+         opened.join('|'));
 
   // ---- a page nothing covers ----
   //
@@ -200,11 +249,24 @@ function afterToggle() {
          document.getElementById('currentStylesNone').textContent === 'noStyleForThisSite',
          rowNames().join('|'));
 
+  // The offer is the same way in as the button, checkbox and all - writing a
+  // style from nothing is exactly when a page to write it against is worth the
+  // wait, so it must not be the one path that quietly skips the capture.
+  document.getElementById('captureFirstCheck').checked = true;
+  var sentBefore = sent.length;
+  var openedSoFar = opened.length;
   document.getElementById('currentStylesNone').click();
-  report('and that offer opens the library on that page',
-         opened.length === 1 &&
-         opened[0] === 'chrome-extension://fake/styles.html?for=' +
-                       encodeURIComponent('https://nothing-here.test/a'),
+  report('that offer captures the page first when the box is ticked',
+         sent.slice(sentBefore).indexOf('style-snapshot') > -1 &&
+         opened.length === openedSoFar,
+         sent.slice(sentBefore).join('|'));
+
+  document.getElementById('captureFirstCheck').checked = false;
+  document.getElementById('currentStylesNone').click();
+  report('and opens the library on that page when it is clear',
+         opened.length === openedSoFar + 1 &&
+         opened[opened.length - 1] === 'chrome-extension://fake/styles.html?for=' +
+                                       encodeURIComponent('https://nothing-here.test/a'),
          opened.join('|'));
 
   currentTabUrl = TARGET_URL;

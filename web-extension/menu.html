@@ -125,6 +125,29 @@
         color: gray;
     }
 
+    /* The whole difference between opening the library on this page and opening
+       it on a capture of this page - one preparatory step, so one checkbox on the
+       button that does both rather than a second button beside it. Indented to
+       that button's label and small, so it reads as part of the button rather
+       than as a fourth of the switches above. */
+    #captureFirstOption {
+        font-family: sans-serif;
+        font-size: 12px;
+        display: flex;
+        flex-flow: row;
+        align-items: center;
+        gap: 4px;
+        padding: 0 8px 4px 8px;
+    }
+    #captureFirstOption input {
+        flex: 0 0 auto;
+        margin: 0;
+        cursor: pointer;
+    }
+    #captureFirst {
+        cursor: pointer;
+    }
+
     /* What the style library would do to this page, under the button that opens
        it. Indented to the label text of the buttons above it, so it reads as
        something about them rather than as another menu entry. */
@@ -162,15 +185,6 @@
         color: #007fff;
         text-decoration: underline;
     }
-    #currentStylesNote {
-        color: #8a5000;
-        padding-top: 2px;
-    }
-    /* The master switch above is off, so nothing here runs. The list still says
-       what would, because that is what the switch is a switch on. */
-    .currentStylesOff .currentStyleName {
-        color: gray;
-    }
   </style>
 </head>
 
@@ -178,7 +192,7 @@
   <div class="menu-holder">
     <div id="menuTitle"></div>
     <hr/>
-    <div class="optionContainer">
+    <div class="optionContainer" id="includeStyleOption">
         <input type="checkbox" name="button" id="includeStyleCheck"></input><span id="includeStyle"></span>
     </div>
     <div class="optionContainer" id="readerModeOption">
@@ -187,8 +201,13 @@
     <div class="optionContainer" id="reviewBeforeSavingOption">
         <input type="checkbox" name="button" id="reviewBeforeSavingCheck"></input><span id="reviewBeforeSaving"></span>
     </div>
-    <button id="styleThisPage" type="button" name="button"></button>
-    <button id="editStyles" type="button" name="button"></button>
+    <button id="styleLibrary" type="button" name="button"></button>
+    <div id="captureFirstOption">
+        <!-- ticked in the markup, not by script: the popup can be clicked before
+             the answer to "is there already a capture of this page?" arrives, and
+             capturing when one was not needed only costs time - see menu.js -->
+        <input type="checkbox" id="captureFirstCheck" checked></input><label id="captureFirst" for="captureFirstCheck"></label>
+    </div>
     <div id="currentStyles"></div>
     <hr/>
     <button id="savePage" type="button" name="button">

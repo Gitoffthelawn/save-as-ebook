@@ -4,7 +4,11 @@
         "description": "Extension name"
     },
     "includeStyle": {
-        "message": "Include (Custom) Style"
+        "message": "Keep the page's colours and fonts",
+        "description": "Whether the computed style of what was captured is carried into the book. Not a switch on the Style Library, which runs either way."
+    },
+    "includeStyleHint": {
+        "message": "Carry the page's own look into the book - colours, fonts, borders, lists and alignment - so that code, tables and pull quotes still look like they did. Off, the book is plain text for the reading system to lay out as it likes. The Style Library runs either way: hiding a banner does not depend on this."
     },
     "readerMode": {
         "message": "Apply Readability.js"
@@ -18,9 +22,19 @@
     "reviewBeforeSavingHint": {
         "message": "Open Save Page and Save Selection in the chapter editor instead of downloading straight away, so the book can be previewed, edited and described first. The editor's Generate button saves the file."
     },
-    "editStyles": {
-        "message": "Site Styles ...",
-        "description": "Opens the style library. Per-site CSS applied to a page while it is captured - not the stylesheet of the book that comes out, which lives in the chapter editor. The styles this page would take are listed under the button."
+    "styleLibrary": {
+        "message": "Style Library ...",
+        "description": "Opens the style library on the page the popup was opened from. CSS applied to a page while it is captured - not the stylesheet of the book that comes out, which lives in the chapter editor. The styles this page would take are listed under the button."
+    },
+    "styleLibraryHint": {
+        "message": "Write and switch on the CSS applied to pages while they are captured, so that what is saved is the page without its banners and sidebars. Not the stylesheet of the book that comes out - that one is in the chapter editor."
+    },
+    "captureFirst": {
+        "message": "Capture this page first",
+        "description": "Checkbox under the Style Library button. Ticked, the library opens on a fresh copy of this page to preview styles against."
+    },
+    "captureFirstHint": {
+        "message": "Take a copy of this page for the library to preview, so a style can be written against what will actually be saved - and so an element can be picked out of it by clicking. This is a capture, so it takes as long as saving the page does. Clear it to open the library straight away, on the last page captured."
     },
     "savePage": {
         "message": "Save Page"
@@ -104,7 +118,7 @@
         "message": "eBook Stylesheet"
     },
     "bookCssHint": {
-        "message": "CSS for the whole saved book. Not the same as Site Styles, which change pages while they are captured."
+        "message": "CSS for the whole saved book. Not the same as the Style Library, which changes pages while they are captured."
     },
     "bookCssPlaceholder": {
         "message": "body { font-family: serif; }"
@@ -209,7 +223,7 @@
         "message": "Style saved!"
     },
     "styleEditor": {
-        "message": "Site Style Editor"
+        "message": "Style Library"
     },
     "styleNameLabel": {
         "message": "Name"
@@ -417,12 +431,6 @@
     "styleDiscardEditsConfirm": {
         "message": "This style has unsaved changes. Discard them?"
     },
-    "styleThisPage": {
-        "message": "Style This Page ..."
-    },
-    "styleThisPageHint": {
-        "message": "Capture this page and open the style library on it, so a style can be written against what will actually be saved."
-    },
     "stylePreviewTitle": {
         "message": "Preview"
     },
@@ -454,7 +462,7 @@
         "message": "No style applies to this page yet."
     },
     "stylePreviewHowTo": {
-        "message": "No page captured. Open the extension on a page you want to style and choose \"Style This Page ...\" to preview your styles against it."
+        "message": "No page captured. Open the extension on a page you want to style and choose \"Style Library ...\" with \"Capture this page first\" ticked, to preview your styles against it."
     },
     "stylePreviewNote": {
         "message": "The captured page with the styles above applied, rendered as the eBook will show it. A rule that hides an element here keeps it out of the eBook; fonts and margins are the reading system's."
@@ -630,10 +638,6 @@
     },
     "noStyleForThisSite": {
         "message": "No style for this site - make one",
-        "description": "Shown in the popup under the Site Styles button when nothing in the library covers the page"
-    },
-    "stylesOffNote": {
-        "message": "\"Include (Custom) Style\" is off, so none of these will run.",
-        "description": "Shown in the popup when styles match the page but the master switch above is unchecked"
+        "description": "Shown in the popup under the Style Library button when nothing in the library covers the page"
     }
 }

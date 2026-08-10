@@ -575,7 +575,8 @@ function insertStyleSheets(tabId, styles, appliedStyles, callback) {
 
 // The styles for this capture, on the page before it is read.
 //
-// This does not ask whether Include Style is on. Most of what a style does is
+// This does not ask whether the includeStyle checkbox - "Keep the page's colours
+// and fonts" in the popup - is on. Most of what a style does is
 // hide something, and hiding is not styling: an element with no box is not
 // extracted at all - see readVisibilityAndCss - so a preset that takes the cookie
 // banner, the ad slots and the comment thread off a page is doing the same work

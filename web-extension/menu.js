@@ -2,6 +2,9 @@
 // renders them correctly and keeps the store's "unsafe innerHTML" check quiet
 document.getElementById('menuTitle').textContent = chrome.i18n.getMessage('extName');
 document.getElementById('includeStyle').textContent = chrome.i18n.getMessage('includeStyle');
+// which of the page's look actually reaches the book, and - since this was once
+// the switch the whole library hung off - that the library runs either way
+document.getElementById('includeStyleOption').title = chrome.i18n.getMessage('includeStyleHint');
 document.getElementById('readerMode').textContent = chrome.i18n.getMessage('readerMode');
 // which of the four actions it applies to is not guessable from the label
 document.getElementById('readerModeOption').title = chrome.i18n.getMessage('readerModeHint');
@@ -9,10 +12,13 @@ document.getElementById('reviewBeforeSaving').textContent = chrome.i18n.getMessa
 // what "review" means here - which two actions change, and where they stop -
 // does not fit on the line
 document.getElementById('reviewBeforeSavingOption').title = chrome.i18n.getMessage('reviewBeforeSavingHint');
-document.getElementById('styleThisPage').textContent = chrome.i18n.getMessage('styleThisPage');
-// what it does that "Edit Site Styles" does not - it captures the page first
-document.getElementById('styleThisPage').title = chrome.i18n.getMessage('styleThisPageHint');
-document.getElementById('editStyles').textContent = chrome.i18n.getMessage('editStyles');
+document.getElementById('styleLibrary').textContent = chrome.i18n.getMessage('styleLibrary');
+// which of the two kinds of style this is - the pages, not the book - does not
+// fit the line
+document.getElementById('styleLibrary').title = chrome.i18n.getMessage('styleLibraryHint');
+document.getElementById('captureFirst').textContent = chrome.i18n.getMessage('captureFirst');
+// what the capture is for, and that it costs what saving the page costs
+document.getElementById('captureFirstOption').title = chrome.i18n.getMessage('captureFirstHint');
 document.getElementById('savePageLabel').textContent = chrome.i18n.getMessage('savePage');
 document.getElementById('saveSelectionLabel').textContent = chrome.i18n.getMessage('saveSelection');
 document.getElementById('pageChapterLabel').textContent = chrome.i18n.getMessage('pageChapter');
@@ -50,7 +56,6 @@ chrome.runtime.sendMessage({
 function createIncludeStyle(data) {
     let includeStyleCheck = document.getElementById('includeStyleCheck');
     includeStyleCheck.checked = data;
-    renderCurrentStyles();
 }
 
 chrome.runtime.sendMessage({
@@ -66,9 +71,11 @@ document.getElementById('includeStyleCheck').onclick = function () {
         includeStyle: includeStyleCheck.checked
     }, function(response) {
     });
-    // the list below is a list of what will run, and this is the switch that
-    // decides whether any of it does
-    renderCurrentStyles();
+    // The list below is not redrawn, because nothing in it depends on this. It
+    // used to: this was the switch the whole library hung off, so a list of
+    // styles that would not run was greyed out and annotated. prepareStyles
+    // stopped asking - hiding a cookie banner is worth doing whether or not the
+    // page's colours are being carried over - and the list is now unconditional.
 }
 
 /////
@@ -89,7 +96,33 @@ chrome.tabs.query({active: true, currentWindow: true}, function (tabs) {
         currentLibrary = library;
         renderCurrentStyles();
     });
+    // needs the url: a capture of some other page is not a capture of this one
+    getStyleSnapshot(function (snapshot) {
+        renderCaptureFirst(!!(snapshot && snapshot.url && snapshot.url === currentTabUrl));
+    });
 });
+
+// Whether the library button captures the page before opening. The default is
+// the only interesting part: capturing costs what saving the page costs, and the
+// library can only preview the capture it has - so it is worth doing exactly
+// once per page, and worth not repeating when it has already been done.
+//
+// The box starts ticked, because until the answer arrives the honest assumption
+// is that there is nothing to preview; the answer only ever unticks it. A user
+// quick enough to have set it themselves keeps their answer - the default is a
+// guess about what they want, and they have said.
+let captureFirstSet = false;
+
+function renderCaptureFirst(hasCaptureOfThisPage) {
+    if (captureFirstSet) {
+        return;
+    }
+    document.getElementById('captureFirstCheck').checked = !hasCaptureOfThisPage;
+}
+
+document.getElementById('captureFirstCheck').onclick = function () {
+    captureFirstSet = true;
+};
 
 // What this page would take, switched on or not - so that a style written for
 // the site can be turned on from here - minus the every-page styles that are
@@ -114,9 +147,7 @@ function renderCurrentStyles() {
         return;
     }
 
-    let includeStyle = document.getElementById('includeStyleCheck').checked;
     let entries = stylesForThisPage();
-    holder.className = includeStyle ? '' : 'currentStylesOff';
 
     for (let entry of entries) {
         let row = document.createElement('div');
@@ -151,16 +182,17 @@ function renderCurrentStyles() {
         none.id = 'currentStylesNone';
         none.type = 'button';
         none.textContent = chrome.i18n.getMessage('noStyleForThisSite');
-        none.onclick = openStyleLibrary;
+        // the same way in as the button above, checkbox and all: this is an offer
+        // to write a style from nothing, which is exactly when a page to write it
+        // against is worth the wait
+        none.onclick = openStyleLibraryForThisPage;
         holder.appendChild(none);
     }
 
-    if (!includeStyle) {
-        let note = document.createElement('div');
-        note.id = 'currentStylesNote';
-        note.textContent = chrome.i18n.getMessage('stylesOffNote');
-        holder.appendChild(note);
-    }
+    // A note used to be added here when the checkbox above was clear, saying that
+    // none of these would run, and the names were greyed out to match. Both were
+    // true of an older prepareStyles and are not true now - see the checkbox's
+    // handler. This list means "these run", with nothing above it to qualify it.
 }
 
 // Read again before writing rather than written from the copy this popup has
@@ -243,19 +275,30 @@ function openStyleLibrary() {
     openEditor('styles.html' + (url === '' ? '' : '?for=' + encodeURIComponent(url)));
 }
 
-document.getElementById("editStyles").onclick = openStyleLibrary;
+// The only way into the library from here. It used to be two buttons - "Style
+// This Page ..." beside "Site Styles ..." - which named an action and a place and
+// so read as two kinds of style; they opened the same page from the same url, and
+// differed by one preparatory step. That step is the checkbox.
+//
+// Ticked, the page is captured first, so that a style can be written against
+// something visible instead of against a guess. It is a capture, so it takes as
+// long as saving the page does and goes through the same busy state - and the
+// background is the one that opens the library, once it has a page to show there.
+//
+// Clear, the library opens on the url alone, and previews whatever capture it
+// already has.
+function openStyleLibraryForThisPage() {
+    if (document.getElementById('captureFirstCheck').checked) {
+        dispatch('style-snapshot', true);
+    } else {
+        openStyleLibrary();
+    }
+}
+
+document.getElementById("styleLibrary").onclick = openStyleLibraryForThisPage;
 
 document.getElementById("editChapters").onclick = function() {
     openEditor('chapters.html');
-};
-
-// Captures this page and opens the library on it, so that a style can be written
-// against something visible instead of against a guess. It is a capture, so it
-// takes as long as saving the page does and goes through the same busy state -
-// and the background is the one that opens the library, once it has a page to
-// show there.
-document.getElementById("styleThisPage").onclick = function() {
-    dispatch('style-snapshot', true);
 };
 
 // The wait message stays up for as long as this popup lives: the background

@@ -4,7 +4,10 @@
         "description": "Nome da extensão"
     },
     "includeStyle": {
-        "message": "Incuir estilo (personalizado)"
+        "message": "Manter as cores e fontes da página"
+    },
+    "includeStyleHint": {
+        "message": "Levar a aparência da própria página para o livro - cores, fontes, bordas, listas e alinhamento - para que código, tabelas e citações continuem com o mesmo aspecto. Desligado, o livro é texto simples que o leitor formata como quiser. A biblioteca de estilos funciona nos dois casos: ocultar um banner não depende disto."
     },
     "readerMode": {
         "message": "Aplicar Readability.js"
@@ -18,8 +21,17 @@
     "reviewBeforeSavingHint": {
         "message": "Abrir «Salvar Página» e «Salvar Selecão» no editor de capítulos em vez de baixar imediatamente, para que o livro possa ser pré-visualizado, editado e descrito antes. O botão «Gerar eBook» do editor é que salva o arquivo."
     },
-    "editStyles": {
-        "message": "Estilos do site ..."
+    "styleLibrary": {
+        "message": "Biblioteca de Estilos ..."
+    },
+    "styleLibraryHint": {
+        "message": "Escrever e ativar o CSS aplicado às páginas durante a captura, para que o que é salvo seja a página sem seus banners e barras laterais. Não confundir com a folha de estilo do livro resultante, que fica no editor de capítulos."
+    },
+    "captureFirst": {
+        "message": "Capturar esta página primeiro"
+    },
+    "captureFirstHint": {
+        "message": "Tirar uma cópia desta página para a pré-visualização da biblioteca, para escrever um estilo diante do que será realmente salvo - e para escolher um elemento clicando nele. É uma captura, então demora o mesmo que salvar a página. Desmarque para abrir a biblioteca imediatamente, na última página capturada."
     },
     "savePage": {
         "message": "Salvar Página"
@@ -103,7 +115,7 @@
         "message": "Folha de estilo do livro"
     },
     "bookCssHint": {
-        "message": "CSS aplicado a todo o livro salvo. Não confundir com os estilos do site, que alteram as páginas durante a captura."
+        "message": "CSS aplicado a todo o livro salvo. Não confundir com a biblioteca de estilos, que altera as páginas durante a captura."
     },
     "bookCssPlaceholder": {
         "message": "body { font-family: serif; }"
@@ -208,7 +220,7 @@
         "message": "Estilo salvo!"
     },
     "styleEditor": {
-        "message": "Editor de estilos do site"
+        "message": "Biblioteca de Estilos"
     },
     "styleNameLabel": {
         "message": "Nome"
@@ -411,12 +423,6 @@
     "styleDiscardEditsConfirm": {
         "message": "Este estilo tem alterações não salvas. Descartá-las?"
     },
-    "styleThisPage": {
-        "message": "Estilizar Esta Página ..."
-    },
-    "styleThisPageHint": {
-        "message": "Capturar esta página e abrir a biblioteca de estilos nela, para escrever um estilo diante do que será realmente salvo."
-    },
     "stylePreviewTitle": {
         "message": "Prévia"
     },
@@ -448,7 +454,7 @@
         "message": "Nenhum estilo se aplica a esta página ainda."
     },
     "stylePreviewHowTo": {
-        "message": "Nenhuma página capturada. Abra a extensão em uma página que queira estilizar e escolha \"Estilizar Esta Página ...\" para testar seus estilos nela."
+        "message": "Nenhuma página capturada. Abra a extensão em uma página que queira estilizar e escolha \"Biblioteca de Estilos ...\" com \"Capturar esta página primeiro\" marcado, para testar seus estilos nela."
     },
     "stylePreviewNote": {
         "message": "A página capturada com os estilos acima aplicados, renderizada como o eBook a mostrará. Uma regra que oculta um elemento aqui o mantém fora do eBook; fontes e margens são do leitor."
@@ -620,8 +626,5 @@
     },
     "noStyleForThisSite": {
         "message": "Nenhum estilo para este site - crie um"
-    },
-    "stylesOffNote": {
-        "message": "\"Incuir estilo (personalizado)\" está desligado, então nenhum destes será aplicado."
     }
 }

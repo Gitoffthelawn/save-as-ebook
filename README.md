@@ -38,10 +38,10 @@ or manually (tested on v. 50.0a2)
 3. Select the extension's directory
 ```
 
-## Site Styles
+## Style Library
 
 Some pages carry things a book should not: a sidebar, a cookie banner, a sticky
-header that reappears in the middle of a chapter. **Site Styles** is a library of
+header that reappears in the middle of a chapter. The **Style Library** holds the
 CSS that is applied to a page *while it is being captured*, so that what is saved
 is the page without them.
 
@@ -56,10 +56,13 @@ the book that comes out.
 | **Every-page style** | Applies to every capture - a serif face, larger text, no images. Ships switched off. |
 | **Built-in** | Bundled with the extension and kept up to date by it. Editing one makes it your own copy, which "Reset to built-in" undoes. |
 
-The library page also holds a preview: **Style This Page ...** in the popup
-captures the page you are on and renders it as the eBook will show it, with your
-styles applied as you type them. Pointing at something in that preview and
-clicking writes the rule that hides it.
+The library page also holds a preview. Opening it with **Capture this page
+first** ticked - the checkbox under the popup's button, ticked by default unless
+the page has already been captured - takes a copy of the page you are on and
+renders it as the eBook will show it, with your styles applied as you type them.
+Pointing at something in that preview and clicking writes the rule that hides it.
+Capturing takes as long as saving the page does, so leave the box clear to open
+the library straight away on the last page captured.
 
 Styles can be exported to a JSON file - one style or the whole library - and
 imported back. An import says what it would add and what it would land on top of

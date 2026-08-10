@@ -4,7 +4,10 @@
         "description": "Nom de l'extension"
     },
     "includeStyle": {
-        "message": "Inclure le style"
+        "message": "Conserver les couleurs et les polices de la page"
+    },
+    "includeStyleHint": {
+        "message": "Reprendre l'apparence de la page dans le livre - couleurs, polices, bordures, listes et alignement - pour que le code, les tableaux et les citations gardent leur aspect. Décoché, le livre est du texte brut que la liseuse met en page à sa guise. La bibliothèque de styles fonctionne dans les deux cas : masquer un bandeau n'en dépend pas."
     },
     "readerMode": {
         "message": "Appliquer Readability.js"
@@ -18,8 +21,17 @@
     "reviewBeforeSavingHint": {
         "message": "Ouvrir « Enregistrer la page » et « Enregistrer la sélection » dans l'éditeur de chapitre au lieu de télécharger aussitôt, afin de prévisualiser, modifier et décrire le livre d'abord. C'est le bouton « Générer l'eBook » de l'éditeur qui enregistre le fichier."
     },
-    "editStyles": {
-        "message": "Styles de site ..."
+    "styleLibrary": {
+        "message": "Bibliothèque de styles ..."
+    },
+    "styleLibraryHint": {
+        "message": "Écrire et activer le CSS appliqué aux pages pendant leur capture, pour que ce qui est enregistré soit la page sans ses bandeaux ni ses barres latérales. À ne pas confondre avec la feuille de style du livre produit, qui se trouve dans l'éditeur de chapitre."
+    },
+    "captureFirst": {
+        "message": "Capturer d'abord cette page"
+    },
+    "captureFirstHint": {
+        "message": "Prendre une copie de cette page pour l'aperçu de la bibliothèque, afin d'écrire un style face à ce qui sera réellement enregistré - et de désigner un élément en cliquant dessus. C'est une capture : cela prend autant de temps qu'enregistrer la page. Décochez pour ouvrir la bibliothèque aussitôt, sur la dernière page capturée."
     },
     "savePage": {
         "message": "Enregistrer la page"
@@ -103,7 +115,7 @@
         "message": "Feuille de style du livre"
     },
     "bookCssHint": {
-        "message": "CSS appliqué à tout le livre enregistré. À ne pas confondre avec les styles de site, qui modifient les pages lors de leur capture."
+        "message": "CSS appliqué à tout le livre enregistré. À ne pas confondre avec la bibliothèque de styles, qui modifie les pages lors de leur capture."
     },
     "bookCssPlaceholder": {
         "message": "body { font-family: serif; }"
@@ -208,7 +220,7 @@
         "message": "Style enregistré !"
     },
     "styleEditor": {
-        "message": "Éditeur de styles de site"
+        "message": "Bibliothèque de styles"
     },
     "styleNameLabel": {
         "message": "Nom"
@@ -411,12 +423,6 @@
     "styleDiscardEditsConfirm": {
         "message": "Ce style a des modifications non enregistrées. Les abandonner ?"
     },
-    "styleThisPage": {
-        "message": "Styliser cette page ..."
-    },
-    "styleThisPageHint": {
-        "message": "Capturer cette page et ouvrir la bibliothèque de styles dessus, pour écrire un style face à ce qui sera réellement enregistré."
-    },
     "stylePreviewTitle": {
         "message": "Aperçu"
     },
@@ -448,7 +454,7 @@
         "message": "Aucun style ne s'applique encore à cette page."
     },
     "stylePreviewHowTo": {
-        "message": "Aucune page capturée. Ouvrez l'extension sur une page à styliser et choisissez « Styliser cette page ... » pour y tester vos styles."
+        "message": "Aucune page capturée. Ouvrez l'extension sur une page à styliser et choisissez « Bibliothèque de styles ... » en cochant « Capturer d'abord cette page », pour y tester vos styles."
     },
     "stylePreviewNote": {
         "message": "La page capturée avec les styles ci-dessus, rendue comme l'eBook l'affichera. Une règle qui masque un élément ici l'exclut de l'eBook ; les polices et les marges appartiennent à la liseuse."
@@ -620,8 +626,5 @@
     },
     "noStyleForThisSite": {
         "message": "Aucun style pour ce site - en créer un"
-    },
-    "stylesOffNote": {
-        "message": "« Inclure le style » est désactivé : aucun de ces styles ne sera appliqué."
     }
 }
