@@ -123,6 +123,24 @@ window.chrome = {
 window.alert = function(message){ alerts.push(message); };
 window.confirm = function(message){ confirms.push(message); return confirmAnswer; };
 
+// Export ends in a download, which headless Chrome would actually try to
+// perform. What is being tested is what gets written, so the blob is kept and
+// read instead - downloadBlob is a global from utils.js, and cssEditor.js
+// resolves it when it calls it.
+var downloads = [];
+window.addEventListener('load', function () {
+  window.downloadBlob = function (blob, fileName) {
+    downloads.push({name: fileName, blob: blob});
+  };
+});
+
+// The text of the two files exported below, read once they exist - a blob is
+// read asynchronously, so the assertions on them run with the preview checks.
+var exported = null;
+// how many styles were in the library when it was exported - the filter chips
+// are all off by then, so the row count is the library
+var rowsAtExport = 0;
+
 var errors = [];
 window.addEventListener('error', function(e){ errors.push(e.message); });
 </script>
@@ -415,6 +433,143 @@ setTimeout(function () {
          lastSaved().removedBuiltins.indexOf('theme-serif-reading') > -1,
          JSON.stringify(lastSaved().removedBuiltins));
 
+  // ---- export ----
+  //
+  // What is written is covered by the node tests; what needs a page is that the
+  // buttons write the style the user is looking at rather than the stored one,
+  // and that the whole library goes out under one name.
+  confirmAnswer = true;
+  click('cssEditor-row-ex');
+  var name = document.getElementById('cssEditor-styleName');
+  name.value = 'Example Site (edited)';
+  name.dispatchEvent(new Event('input'));
+
+  click('cssEditor-exportStyle');
+  report('exporting one style writes a file named after it',
+         downloads.length === 1 &&
+         downloads[0].name === 'save-as-ebook-style-example-site-edited.json',
+         downloads.length ? downloads[0].name : 'nothing was downloaded');
+
+  rowsAtExport = rows().length;
+  click('cssEditor-exportAllStyles');
+  report('exporting the library writes one file holding all of it',
+         downloads.length === 2 && downloads[1].name === 'save-as-ebook-styles.json',
+         downloads.length > 1 ? downloads[1].name : 'nothing was downloaded');
+
+  // read once here, asserted after the frame checks - a blob is read
+  // asynchronously and there is nothing to wait on in the middle of this block
+  Promise.all(downloads.map(function (download) { return download.blob.text(); }))
+         .then(function (texts) { exported = texts; });
+
+  // the title above was never saved, and the import below would ask about it
+  click('cssEditor-row-other');
+  click('cssEditor-row-ex');
+
+  // ---- import ----
+  var IMPORTED_FILE = JSON.stringify({
+    kind: 'save-as-ebook-styles', version: 2, entries: [
+      // the same id as the style already in the library: a newer copy of one
+      // that was shared from here
+      {id: 'ex', title: 'Example Site (shared)', scope: 'site',
+       match: {type: 'domain', pattern: 'example.com'},
+       css: '.shared {display: none}\n' +
+            '.beacon {background: url("https://tracker.test/pixel.png");}'},
+      {id: 'brand-new', title: 'Brand New', scope: 'site',
+       match: {type: 'domain', pattern: 'new.test'}, css: '.n {display: none}'}
+    ]
+  });
+
+  function importSummaryText() {
+    return oneLine(document.getElementById('cssEditor-importSummary').textContent);
+  }
+
+  // Reading a file is not importing it: nothing below writes until one of the
+  // two buttons at the bottom of the panel is used.
+  var savedBeforeImport = saved.length;
+
+  click('cssEditor-importStyles');
+  report('the import panel opens asking for a file or some text',
+         document.getElementById('cssEditor-importOverlay').style.display === 'flex' &&
+         document.getElementById('cssEditor-importPickStep').style.display === 'block' &&
+         document.getElementById('cssEditor-importSummary').style.display === 'none' &&
+         document.getElementById('cssEditor-importApply').style.display === 'none');
+
+  click('cssEditor-importRead');
+  report('an empty box is not an import',
+         document.getElementById('cssEditor-importError').textContent ===
+             'styleImportNothingPasted' && saved.length === savedBeforeImport,
+         document.getElementById('cssEditor-importError').textContent);
+
+  document.getElementById('cssEditor-importText').value = 'this is not a style file';
+  click('cssEditor-importRead');
+  report('text that is not a style file is refused, and nothing is written',
+         document.getElementById('cssEditor-importError').textContent ===
+             'styleImportNotAStyleFile' &&
+         document.getElementById('cssEditor-importSummary').style.display === 'none' &&
+         saved.length === savedBeforeImport,
+         document.getElementById('cssEditor-importError').textContent);
+
+  document.getElementById('cssEditor-importText').value = IMPORTED_FILE;
+  click('cssEditor-importRead');
+  report('the panel says what would be added before anything is written',
+         importSummaryText().indexOf('styleImportAdding:1') > -1 &&
+         importSummaryText().indexOf('Brand New') > -1 &&
+         saved.length === savedBeforeImport,
+         importSummaryText());
+  report('and shows both sides of a style the library already has',
+         importSummaryText().indexOf('styleImportCollisions:1') > -1 &&
+         importSummaryText().indexOf('styleImportHere:Example Site,') > -1 &&
+         importSummaryText().indexOf('styleImportDifferentCss') > -1,
+         importSummaryText());
+  // Not a footnote: this is css the file asked to run on the user's own pages.
+  report('and what was taken out of the imported css, with the reason',
+         importSummaryText().indexOf('styleImportStripped') > -1 &&
+         importSummaryText().indexOf('https://tracker.test/pixel.png') > -1,
+         importSummaryText());
+  report('replacing is offered only because there is something to replace',
+         document.getElementById('cssEditor-importReplace').style.display === 'inline-block' &&
+         document.getElementById('cssEditor-importApply').textContent === 'styleImportKeepBoth');
+
+  alerts = [];
+  click('cssEditor-importApply');
+  report('keeping both adds the imported style beside the one already here',
+         savedEntry('ex').title === 'Example Site' &&
+         lastSaved().entries.filter(function (entry) {
+           return entry.title === 'Example Site (shared)';
+         }).length === 1 &&
+         alerts.join('|') === 'styleImported:2',
+         alerts.join('|'));
+  report('the imported css lost the address it would have fetched from',
+         lastSaved().entries.filter(function (entry) {
+           return entry.css.indexOf('tracker.test') > -1;
+         }).length === 0 &&
+         lastSaved().entries.filter(function (entry) {
+           return entry.css.indexOf('.shared {display: none}') > -1;
+         }).length === 1);
+  report('the panel closes and what arrived is what is being edited',
+         document.getElementById('cssEditor-importOverlay').style.display === 'none' &&
+         document.getElementById('cssEditor-styleName').value === 'Example Site (shared)',
+         document.getElementById('cssEditor-styleName').value);
+  report('an imported style is the user\'s own, whatever the file said',
+         savedEntry('brand-new').origin === 'imported' &&
+         savedEntry('brand-new').builtinId === null);
+
+  // The other answer to the same question.
+  click('cssEditor-importStyles');
+  document.getElementById('cssEditor-importText').value = IMPORTED_FILE;
+  click('cssEditor-importRead');
+  click('cssEditor-importReplace');
+  report('replacing puts the imported style in the place of the one it names',
+         savedEntry('ex').title === 'Example Site (shared)' &&
+         savedEntry('ex').css.indexOf('.shared') > -1,
+         savedEntry('ex') ? savedEntry('ex').title : 'gone');
+
+  click('cssEditor-importStyles');
+  document.onkeydown({keyCode: 27});
+  report('escape closes the import panel rather than the page',
+         document.getElementById('cssEditor-importOverlay').style.display === 'none' &&
+         !!document.getElementById('cssEditor-styleList'));
+
   report('editor css not disabled',
          Array.prototype.every.call(document.styleSheets, function (s) { return !s.disabled; }));
   report('page stylesheets left enabled (no global disable)',
@@ -610,6 +765,24 @@ function previewChecks() {
          !!document.getElementById('cssEditor-previewEmpty') &&
          !!document.getElementById('cssEditor-styleList'),
          confirms.join('|'));
+
+  // ---- what the exports actually held ----
+  var one = exported ? JSON.parse(exported[0]) : null;
+  var all = exported ? JSON.parse(exported[1]) : null;
+
+  report('an exported style is the one on screen, not the one last stored',
+         !!one && one.entries.length === 1 &&
+         one.entries[0].title === 'Example Site (edited)',
+         one ? JSON.stringify(one.entries.map(function (e) { return e.title; })) : 'not read');
+  report('and it carries what the style is without what this install did with it',
+         !!one && one.entries[0].origin === undefined &&
+         one.entries[0].builtinId === undefined &&
+         one.entries[0].match.pattern === 'example.com',
+         one ? Object.keys(one.entries[0]).sort().join(',') : 'not read');
+  report('exporting the library holds every style in it',
+         !!all && all.kind === 'save-as-ebook-styles' &&
+         all.entries.length === rowsAtExport,
+         all ? all.entries.length + ' of ' + rowsAtExport : 'not read');
 
   report('nothing threw in the preview half either', errors.length === 0,
          errors.join(' | '));

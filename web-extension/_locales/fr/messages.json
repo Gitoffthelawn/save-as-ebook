@@ -18,14 +18,8 @@
     "reviewBeforeSavingHint": {
         "message": "Ouvrir « Enregistrer la page » et « Enregistrer la sélection » dans l'éditeur de chapitre au lieu de télécharger aussitôt, afin de prévisualiser, modifier et décrire le livre d'abord. C'est le bouton « Générer l'eBook » de l'éditeur qui enregistre le fichier."
     },
-    "styleLabel": {
-        "message": "Style personnalisé :"
-    },
-    "applyStyle": {
-        "message": "Appliquer"
-    },
     "editStyles": {
-        "message": "Éditer les styles de site..."
+        "message": "Styles de site ..."
     },
     "savePage": {
         "message": "Enregistrer la page"
@@ -507,5 +501,127 @@
     },
     "styleRecipeBiggerText": {
         "message": "Texte plus grand"
+    },
+    "styleExport": {
+        "message": "Exporter"
+    },
+    "styleExportHint": {
+        "message": "Enregistrer ce style dans un fichier, pour le conserver ou le transmettre"
+    },
+    "styleExportAll": {
+        "message": "Tout exporter"
+    },
+    "styleExportNothing": {
+        "message": "Aucun style à exporter."
+    },
+    "styleImport": {
+        "message": "Importer ..."
+    },
+    "styleImportTitle": {
+        "message": "Importer des styles"
+    },
+    "styleImportHint": {
+        "message": "Ouvrez un fichier de styles, ou collez-en un ci-dessous. Les styles importés sont ajoutés comme les vôtres - ils ne remplacent jamais un style fourni."
+    },
+    "styleImportFromFile": {
+        "message": "Ouvrir un fichier ..."
+    },
+    "styleImportPastePlaceholder": {
+        "message": "ou collez un fichier de styles ici"
+    },
+    "styleImportRead": {
+        "message": "Continuer"
+    },
+    "styleImportApply": {
+        "message": "Importer"
+    },
+    "styleImportKeepBoth": {
+        "message": "Garder les deux"
+    },
+    "styleImportReplace": {
+        "message": "Remplacer"
+    },
+    "styleImportNothingPasted": {
+        "message": "Rien à importer pour l'instant - ouvrez un fichier, ou collez-en un dans le cadre."
+    },
+    "styleImportNotAStyleFile": {
+        "message": "Ce n'est pas un fichier de styles."
+    },
+    "styleImportNoStyles": {
+        "message": "Ce fichier ne contient aucun style."
+    },
+    "styleImportUnreadableFile": {
+        "message": "Ce fichier n'a pas pu être lu."
+    },
+    "styleImportAdding": {
+        "message": "Nouveaux styles ($count$)",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "3"
+            }
+        }
+    },
+    "styleImportCollisions": {
+        "message": "Déjà dans votre bibliothèque ($count$)",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "2"
+            }
+        }
+    },
+    "styleImportHere": {
+        "message": "le vôtre : $title$ - $where$",
+        "placeholders": {
+            "title": {
+                "content": "$1",
+                "example": "Wikipedia Article"
+            },
+            "where": {
+                "content": "$2",
+                "example": "wikipedia.org et ses sous-domaines"
+            }
+        }
+    },
+    "styleImportIncoming": {
+        "message": "celui du fichier : $where$, $css$",
+        "placeholders": {
+            "where": {
+                "content": "$1",
+                "example": "wikipedia.org et ses sous-domaines"
+            },
+            "css": {
+                "content": "$2",
+                "example": "CSS différent"
+            }
+        }
+    },
+    "styleImportSameCss": {
+        "message": "même CSS"
+    },
+    "styleImportDifferentCss": {
+        "message": "CSS différent"
+    },
+    "styleImportStripped": {
+        "message": "Retiré du CSS importé"
+    },
+    "styleImportStrippedWhy": {
+        "message": "Ces références vont chercher un fichier sur un autre site à chaque capture de page, ce qui indique à ce site ce que vous lisez. Un style de site n'en a aucun besoin."
+    },
+    "styleImported": {
+        "message": "$count$ style(s) importé(s).",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "3"
+            }
+        }
+    },
+    "noStyleForThisSite": {
+        "message": "Aucun style pour ce site - en créer un"
+    },
+    "stylesOffNote": {
+        "message": "« Inclure le style » est désactivé : aucun de ces styles ne sera appliqué."
     }
 }

@@ -19,8 +19,8 @@
         "message": "Open Save Page and Save Selection in the chapter editor instead of downloading straight away, so the book can be previewed, edited and described first. The editor's Generate button saves the file."
     },
     "editStyles": {
-        "message": "Edit Site Styles ...",
-        "description": "Per-site CSS applied to a page while it is captured - not the stylesheet of the book that comes out, which lives in the chapter editor"
+        "message": "Site Styles ...",
+        "description": "Opens the style library. Per-site CSS applied to a page while it is captured - not the stylesheet of the book that comes out, which lives in the chapter editor. The styles this page would take are listed under the button."
     },
     "savePage": {
         "message": "Save Page"
@@ -507,5 +507,133 @@
     },
     "styleRecipeBiggerText": {
         "message": "Bigger text"
+    },
+    "styleExport": {
+        "message": "Export"
+    },
+    "styleExportHint": {
+        "message": "Write this style to a file, to keep it or to give it to somebody else"
+    },
+    "styleExportAll": {
+        "message": "Export all"
+    },
+    "styleExportNothing": {
+        "message": "There is no style to export."
+    },
+    "styleImport": {
+        "message": "Import ..."
+    },
+    "styleImportTitle": {
+        "message": "Import styles"
+    },
+    "styleImportHint": {
+        "message": "Open a style file, or paste one below. Imported styles are added as your own - they never take the place of a built-in.",
+        "description": "Said above the file button and the paste box in the import panel"
+    },
+    "styleImportFromFile": {
+        "message": "Open file ..."
+    },
+    "styleImportPastePlaceholder": {
+        "message": "or paste a style file here"
+    },
+    "styleImportRead": {
+        "message": "Continue"
+    },
+    "styleImportApply": {
+        "message": "Import"
+    },
+    "styleImportKeepBoth": {
+        "message": "Keep both",
+        "description": "Import the styles that clash as new styles beside the ones already in the library, rather than over them"
+    },
+    "styleImportReplace": {
+        "message": "Replace"
+    },
+    "styleImportNothingPasted": {
+        "message": "Nothing to import yet - open a file, or paste one in the box."
+    },
+    "styleImportNotAStyleFile": {
+        "message": "This is not a style file."
+    },
+    "styleImportNoStyles": {
+        "message": "There is no style in this file."
+    },
+    "styleImportUnreadableFile": {
+        "message": "That file could not be read."
+    },
+    "styleImportAdding": {
+        "message": "New styles ($count$)",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "3"
+            }
+        }
+    },
+    "styleImportCollisions": {
+        "message": "Already in your library ($count$)",
+        "description": "Styles the file holds a copy of - the heading over the choice between replacing yours and keeping both",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "2"
+            }
+        }
+    },
+    "styleImportHere": {
+        "message": "yours: $title$ - $where$",
+        "placeholders": {
+            "title": {
+                "content": "$1",
+                "example": "Wikipedia Article"
+            },
+            "where": {
+                "content": "$2",
+                "example": "wikipedia.org and its subdomains"
+            }
+        }
+    },
+    "styleImportIncoming": {
+        "message": "the file's: $where$, $css$",
+        "placeholders": {
+            "where": {
+                "content": "$1",
+                "example": "wikipedia.org and its subdomains"
+            },
+            "css": {
+                "content": "$2",
+                "example": "different CSS"
+            }
+        }
+    },
+    "styleImportSameCss": {
+        "message": "same CSS"
+    },
+    "styleImportDifferentCss": {
+        "message": "different CSS"
+    },
+    "styleImportStripped": {
+        "message": "Removed from the imported CSS"
+    },
+    "styleImportStrippedWhy": {
+        "message": "These fetch a file from another site every time a page is captured, which tells that site what you are reading. Nothing a site style does needs one.",
+        "description": "Why remote url() and @import are taken out of imported CSS"
+    },
+    "styleImported": {
+        "message": "$count$ style(s) imported.",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "3"
+            }
+        }
+    },
+    "noStyleForThisSite": {
+        "message": "No style for this site - make one",
+        "description": "Shown in the popup under the Site Styles button when nothing in the library covers the page"
+    },
+    "stylesOffNote": {
+        "message": "\"Include (Custom) Style\" is off, so none of these will run.",
+        "description": "Shown in the popup when styles match the page but the master switch above is unchecked"
     }
 }

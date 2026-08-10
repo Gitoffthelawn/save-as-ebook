@@ -838,22 +838,10 @@ function _execRequest(request, sender, sendResponse) {
         });
         return true;
     }
-    if (request.type === 'get current style') {
-        chrome.storage.local.get('currentStyle', function (data) {
-            if (!data || !data.currentStyle) {
-                sendResponse({currentStyle: 0});
-            } else {
-                sendResponse({currentStyle: data.currentStyle});
-            }
-        });
-        return true;
-    }
-    if (request.type === 'set current style') {
-        chrome.storage.local.set({'currentStyle': request.currentStyle}, function () {
-            sendResponse({ok: true});
-        });
-        return true;
-    }
+    // 'get current style' / 'set current style' were here. They fed a
+    // 'currentStyle' key the popup wrote and nothing read - the capture path
+    // always worked the match out for itself, and now selectStylesForUrl is the
+    // only thing that decides which styles a page takes.
     if (request.type === 'get include style') {
         chrome.storage.local.get('includeStyle', function (data) {
             if (!data) {

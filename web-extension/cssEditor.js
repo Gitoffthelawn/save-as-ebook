@@ -198,6 +198,28 @@ function showEditor() {
 
     libraryPanel.appendChild(newButtons);
 
+    // Moving styles in and out of the library as a whole, kept apart from the
+    // two buttons that make one: these are about the library, and the file they
+    // read and write holds however many styles it holds.
+    var transferButtons = document.createElement('div');
+    transferButtons.id = 'cssEditor-transferButtons';
+
+    var importButton = document.createElement('button');
+    importButton.id = 'cssEditor-importStyles';
+    importButton.className = 'cssEditor-chip';
+    importButton.innerText = chrome.i18n.getMessage('styleImport');
+    importButton.onclick = openImport;
+    transferButtons.appendChild(importButton);
+
+    var exportAllButton = document.createElement('button');
+    exportAllButton.id = 'cssEditor-exportAllStyles';
+    exportAllButton.className = 'cssEditor-chip';
+    exportAllButton.innerText = chrome.i18n.getMessage('styleExportAll');
+    exportAllButton.onclick = exportLibrary;
+    transferButtons.appendChild(exportAllButton);
+
+    libraryPanel.appendChild(transferButtons);
+
     /////////////////////
     // Right - one style in full.
 
@@ -227,6 +249,14 @@ function showEditor() {
     duplicateButton.innerText = chrome.i18n.getMessage('styleDuplicate');
     duplicateButton.onclick = duplicateSelected;
     originRow.appendChild(duplicateButton);
+
+    var exportButton = document.createElement('button');
+    exportButton.id = 'cssEditor-exportStyle';
+    exportButton.className = 'cssEditor-text-button';
+    exportButton.innerText = chrome.i18n.getMessage('styleExport');
+    exportButton.title = chrome.i18n.getMessage('styleExportHint');
+    exportButton.onclick = exportSelected;
+    originRow.appendChild(exportButton);
 
     // Only shown for a style that has something to go back to: the user's fork
     // of a bundled one, while the catalog still ships it.
@@ -500,6 +530,116 @@ function showEditor() {
     saveButtonsHolder.appendChild(saveCssButton);
 
     modalFooter.appendChild(saveButtonsHolder);
+
+    /////////////////////
+    // Import, over the top of everything else.
+    //
+    // Two steps in one panel, because they are two halves of one question. The
+    // first takes the file or the pasted text; the second says what importing it
+    // would do to the library - what would be added, and what is already here
+    // under the same id - before anything is written. An import is the only way
+    // a style the user did not touch can change, so it is the one thing on this
+    // page that says what it is about to do rather than asking after the fact.
+
+    var importOverlay = document.createElement('div');
+    importOverlay.id = 'cssEditor-importOverlay';
+
+    var importDialog = document.createElement('div');
+    importDialog.id = 'cssEditor-importDialog';
+    importOverlay.appendChild(importDialog);
+
+    var importTitle = document.createElement('div');
+    importTitle.id = 'cssEditor-importTitle';
+    importTitle.innerText = chrome.i18n.getMessage('styleImportTitle');
+    importDialog.appendChild(importTitle);
+
+    var importPickStep = document.createElement('div');
+    importPickStep.id = 'cssEditor-importPickStep';
+
+    var importHint = document.createElement('div');
+    importHint.className = 'cssEditor-import-note';
+    importHint.innerText = chrome.i18n.getMessage('styleImportHint');
+    importPickStep.appendChild(importHint);
+
+    // A hidden file input the button opens, rather than a bare file field: the
+    // file and the textarea are two ways of handing over the same text, and one
+    // of them should not look like the main one.
+    var importFileInput = document.createElement('input');
+    importFileInput.id = 'cssEditor-importFileInput';
+    importFileInput.type = 'file';
+    importFileInput.accept = 'application/json,.json';
+    importFileInput.style.display = 'none';
+    importFileInput.onchange = function () {
+        readImportFile(importFileInput.files ? importFileInput.files[0] : null);
+    };
+    importPickStep.appendChild(importFileInput);
+
+    var importFileButton = document.createElement('button');
+    importFileButton.id = 'cssEditor-importFile';
+    importFileButton.className = 'cssEditor-chip';
+    importFileButton.innerText = chrome.i18n.getMessage('styleImportFromFile');
+    importFileButton.onclick = function () {
+        // choosing the same file twice in a row is still a change of mind
+        importFileInput.value = '';
+        importFileInput.click();
+    };
+    importPickStep.appendChild(importFileButton);
+
+    var importText = document.createElement('textarea');
+    importText.id = 'cssEditor-importText';
+    importText.spellcheck = false;
+    importText.placeholder = chrome.i18n.getMessage('styleImportPastePlaceholder');
+    importPickStep.appendChild(importText);
+
+    var importError = document.createElement('div');
+    importError.id = 'cssEditor-importError';
+    importPickStep.appendChild(importError);
+
+    importDialog.appendChild(importPickStep);
+
+    var importSummary = document.createElement('div');
+    importSummary.id = 'cssEditor-importSummary';
+    importDialog.appendChild(importSummary);
+
+    var importButtons = document.createElement('div');
+    importButtons.id = 'cssEditor-importButtons';
+
+    var importCancelButton = document.createElement('button');
+    importCancelButton.id = 'cssEditor-importCancel';
+    importCancelButton.className = 'cssEditor-chip';
+    importCancelButton.innerText = chrome.i18n.getMessage('cancel');
+    importCancelButton.onclick = closeImport;
+    importButtons.appendChild(importCancelButton);
+
+    var importReadButton = document.createElement('button');
+    importReadButton.id = 'cssEditor-importRead';
+    importReadButton.className = 'cssEditor-chip';
+    importReadButton.innerText = chrome.i18n.getMessage('styleImportRead');
+    importReadButton.onclick = function () {
+        readImportText(importText.value);
+    };
+    importButtons.appendChild(importReadButton);
+
+    // Shown only when something already here would be replaced - the one case
+    // where an import can take something away.
+    var importReplaceButton = document.createElement('button');
+    importReplaceButton.id = 'cssEditor-importReplace';
+    importReplaceButton.className = 'cssEditor-chip';
+    importReplaceButton.innerText = chrome.i18n.getMessage('styleImportReplace');
+    importReplaceButton.onclick = function () {
+        applyImport(true);
+    };
+    importButtons.appendChild(importReplaceButton);
+
+    var importApplyButton = document.createElement('button');
+    importApplyButton.id = 'cssEditor-importApply';
+    importApplyButton.className = 'cssEditor-chip cssEditor-chip-on';
+    importApplyButton.onclick = function () {
+        applyImport(false);
+    };
+    importButtons.appendChild(importApplyButton);
+
+    importDialog.appendChild(importButtons);
 
     //////////////////////////
     // What is in the list, and in what order.
@@ -792,13 +932,16 @@ function showEditor() {
 
     // The style being edited as it stands in the boxes, rather than as it was
     // stored. It is what the preview has to show - the point of the pane is to
-    // answer "what does this do" before it is saved.
+    // answer "what does this do" before it is saved - and what an export writes,
+    // for the same reason.
     function draftEntry() {
         let entry = selectedEntry();
         if (!entry) {
             return null;
         }
         return Object.assign({}, entry, {
+            title: nameInput.value,
+            description: descriptionInput.value,
             scope: scopeSelect.value,
             match: {type: matchTypeSelect.value, pattern: patternInput.value},
             css: cssInput.value
@@ -1136,6 +1279,217 @@ function showEditor() {
         replaceLibrary(removeStyleEntry(styleLibrary, entry.id));
     }
 
+    //////////////////////////
+    // Out of the library and back into it.
+
+    function downloadStyles(entries, fileName) {
+        // Indented, because a style file is meant to be opened and read: it is
+        // css with a few fields around it, and somebody handed one is entitled
+        // to see what it says before importing it.
+        downloadBlob(new Blob([JSON.stringify(styleExportDocument(entries), null, 4)],
+                              {type: 'application/json'}), fileName);
+    }
+
+    // What is on screen rather than what is stored, so that exporting a style
+    // the user has just changed writes the style they are looking at. Same
+    // reasoning as the preview, which composes the draft for the same reason.
+    function exportSelected() {
+        let draft = draftEntry();
+        if (!draft) {
+            return;
+        }
+        downloadStyles([draft], styleExportFileName(draft.title));
+    }
+
+    function exportLibrary() {
+        if (!styleLibrary || styleLibrary.entries.length === 0) {
+            alert(chrome.i18n.getMessage('styleExportNothing'));
+            return;
+        }
+        downloadStyles(styleLibrary.entries, styleExportFileName(''));
+    }
+
+    // What has been read and not yet written, or null while the panel is asking
+    // for a file. The two buttons at the bottom are the two answers to it.
+    var importPlan = null;
+
+    function openImport() {
+        // Same guard as making a style: until the service worker has answered
+        // there is no library to import into, and writing one now would write
+        // over whatever it is about to hand back.
+        if (!styleLibrary) {
+            return;
+        }
+        importPlan = null;
+        importText.value = '';
+        importError.innerText = '';
+        importOverlay.style.display = 'flex';
+        renderImportStep();
+        importText.focus();
+    }
+
+    function closeImport() {
+        importOverlay.style.display = 'none';
+        importPlan = null;
+    }
+
+    function importIsOpen() {
+        return importOverlay.style.display === 'flex';
+    }
+
+    function renderImportStep() {
+        let reading = importPlan === null;
+        importPickStep.style.display = reading ? 'block' : 'none';
+        importSummary.style.display = reading ? 'none' : 'block';
+        importReadButton.style.display = reading ? 'inline-block' : 'none';
+        importApplyButton.style.display = reading ? 'none' : 'inline-block';
+        importReplaceButton.style.display =
+            !reading && importPlan.collisions.length > 0 ? 'inline-block' : 'none';
+
+        if (!reading) {
+            // With something to replace, the plain button is the other answer to
+            // that - "keep both" - rather than an unqualified "import".
+            importApplyButton.innerText = chrome.i18n.getMessage(
+                importPlan.collisions.length > 0 ? 'styleImportKeepBoth' : 'styleImportApply');
+        }
+    }
+
+    function readImportFile(file) {
+        if (!file) {
+            return;
+        }
+        let reader = new FileReader();
+        reader.onload = function () {
+            importText.value = typeof reader.result === 'string' ? reader.result : '';
+            // Choosing a file is not an ambiguous act - there is nothing to
+            // confirm about it, so it goes straight to what the file would do.
+            readImportText(importText.value);
+        };
+        reader.onerror = function () {
+            importError.innerText = chrome.i18n.getMessage('styleImportUnreadableFile');
+        };
+        reader.readAsText(file);
+    }
+
+    function readImportText(text) {
+        if (String(text).trim() === '') {
+            importError.innerText = chrome.i18n.getMessage('styleImportNothingPasted');
+            return;
+        }
+
+        let result = readStyleImport(text);
+        if (result.error !== '') {
+            importError.innerText = chrome.i18n.getMessage(
+                result.error === 'empty' ? 'styleImportNoStyles' : 'styleImportNotAStyleFile');
+            return;
+        }
+
+        importError.innerText = '';
+        let plan = planStyleImport(styleLibrary, result.entries);
+        importPlan = {
+            entries: result.entries,
+            additions: plan.additions,
+            collisions: plan.collisions,
+            stripped: result.stripped
+        };
+        renderImportSummary();
+        renderImportStep();
+    }
+
+    function importStyleName(entry) {
+        return entry.title.trim() === '' ?
+               chrome.i18n.getMessage('untitledStyle') : entry.title;
+    }
+
+    // The panel's second half: what would be added, what would be replaced and
+    // by what, and what was taken out of the css on the way in.
+    function renderImportSummary() {
+        while (importSummary.firstChild) {
+            importSummary.removeChild(importSummary.firstChild);
+        }
+
+        let section = (titleText, className) => {
+            let holder = document.createElement('div');
+            holder.className = 'cssEditor-import-section' + (className ? ' ' + className : '');
+            let heading = document.createElement('div');
+            heading.className = 'cssEditor-import-heading';
+            heading.innerText = titleText;
+            holder.appendChild(heading);
+            importSummary.appendChild(holder);
+            return holder;
+        };
+
+        let line = (holder, text, className) => {
+            let row = document.createElement('div');
+            row.className = 'cssEditor-import-line' + (className ? ' ' + className : '');
+            row.innerText = text;
+            holder.appendChild(row);
+        };
+
+        if (importPlan.additions.length > 0) {
+            let holder = section(chrome.i18n.getMessage('styleImportAdding',
+                                                       [String(importPlan.additions.length)]));
+            for (let entry of importPlan.additions) {
+                line(holder, importStyleName(entry) + ' - ' + describeMatch(entry));
+            }
+        }
+
+        if (importPlan.collisions.length > 0) {
+            let holder = section(chrome.i18n.getMessage('styleImportCollisions',
+                                                       [String(importPlan.collisions.length)]),
+                                 'cssEditor-import-warn');
+            for (let collision of importPlan.collisions) {
+                line(holder, importStyleName(collision.incoming));
+                // The two sides of it, so that "replace" is a choice between two
+                // things the user can see rather than a leap.
+                line(holder, chrome.i18n.getMessage('styleImportHere',
+                        [importStyleName(collision.existing), describeMatch(collision.existing)]),
+                     'cssEditor-import-side');
+                line(holder, chrome.i18n.getMessage('styleImportIncoming',
+                        [describeMatch(collision.incoming),
+                         collision.incoming.css === collision.existing.css ?
+                             chrome.i18n.getMessage('styleImportSameCss') :
+                             chrome.i18n.getMessage('styleImportDifferentCss')]),
+                     'cssEditor-import-side');
+            }
+        }
+
+        // Not a footnote: this is css the file asked to run on the user's pages
+        // and did not get to. See stripRemoteCssReferences.
+        if (importPlan.stripped.length > 0) {
+            let holder = section(chrome.i18n.getMessage('styleImportStripped'),
+                                 'cssEditor-import-warn');
+            line(holder, chrome.i18n.getMessage('styleImportStrippedWhy'),
+                 'cssEditor-import-side');
+            for (let entry of importPlan.stripped) {
+                for (let reference of entry.references) {
+                    line(holder, importStyleName(entry) + ': ' + reference,
+                         'cssEditor-import-side');
+                }
+            }
+        }
+    }
+
+    function applyImport(replaceExisting) {
+        if (!importPlan) {
+            return;
+        }
+        // An import writes several styles at once, so the pane is refilled from
+        // what was written rather than from what was being typed into it.
+        if (!confirmDiscard()) {
+            return;
+        }
+
+        let imported = applyStyleImport(styleLibrary, importPlan.entries, replaceExisting);
+        closeImport();
+        unsavedStyleEdits = false;
+        // the first of them as it was actually stored, so that an import is
+        // followed by looking at what arrived rather than at an empty pane
+        selectedStyleId = imported.entries[0].id;
+        replaceLibrary(imported.library);
+        alert(chrome.i18n.getMessage('styleImported', [String(imported.entries.length)]));
+    }
+
     /////////////////////
 
     var modal = document.createElement('div');
@@ -1145,10 +1499,16 @@ function showEditor() {
     modalContent.appendChild(modalList);
     modalContent.appendChild(modalFooter);
     modal.appendChild(modalContent);
+    modal.appendChild(importOverlay);
 
     body.appendChild(modal);
 
     window.onclick = function(event) {
+        // the backdrop of whichever is on top
+        if (event.target == importOverlay) {
+            closeImport();
+            return;
+        }
         if (event.target == modal) {
             closeModal();
         }
@@ -1156,9 +1516,16 @@ function showEditor() {
 
     document.onkeydown = function(evt) {
         evt = evt || window.event;
-        if (evt.keyCode == 27) {
-            closeModal();
+        if (evt.keyCode != 27) {
+            return;
         }
+        // escape means "close the thing in front of me", and the import panel is
+        // in front of the page whenever it is open
+        if (importIsOpen()) {
+            closeImport();
+            return;
+        }
+        closeModal();
     };
 
     function closeModal() {

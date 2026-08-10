@@ -124,6 +124,53 @@
         font-size: 10px;
         color: gray;
     }
+
+    /* What the style library would do to this page, under the button that opens
+       it. Indented to the label text of the buttons above it, so it reads as
+       something about them rather than as another menu entry. */
+    #currentStyles {
+        font-family: sans-serif;
+        font-size: 12px;
+        padding: 0 8px 6px 8px;
+    }
+    .currentStyleRow {
+        display: flex;
+        flex-flow: row;
+        align-items: center;
+        gap: 4px;
+        padding: 1px 0;
+    }
+    .currentStyleRow input {
+        flex: 0 0 auto;
+        margin: 0;
+        cursor: pointer;
+    }
+    .currentStyleName {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    #currentStylesNone {
+        color: gray;
+        width: auto;
+        padding: 0;
+        font-size: 12px;
+        background-color: transparent;
+    }
+    #currentStylesNone:hover {
+        background-color: transparent;
+        color: #007fff;
+        text-decoration: underline;
+    }
+    #currentStylesNote {
+        color: #8a5000;
+        padding-top: 2px;
+    }
+    /* The master switch above is off, so nothing here runs. The list still says
+       what would, because that is what the switch is a switch on. */
+    .currentStylesOff .currentStyleName {
+        color: gray;
+    }
   </style>
 </head>
 
@@ -142,6 +189,7 @@
     </div>
     <button id="styleThisPage" type="button" name="button"></button>
     <button id="editStyles" type="button" name="button"></button>
+    <div id="currentStyles"></div>
     <hr/>
     <button id="savePage" type="button" name="button">
         <div id="savePageLabel"></div>
@@ -168,6 +216,11 @@
     <div id="waitMessage" class="wait-message"></div>
   </div>
 
+  <!-- The popup says which styles this page would take and lets them be switched
+       on and off, so it needs the same matcher the capture path uses - and the
+       message wrappers that read and write the library. -->
+  <script src="utils.js" charset="utf-8"></script>
+  <script src="styleLibrary.js" charset="utf-8"></script>
   <script src="menu.js" charset="utf-8"></script>
 </body>
 

@@ -27,15 +27,9 @@ chrome.runtime.onMessage.addListener((request) => {
     }
 });
 
-function removeEbook(callback) {
-    chrome.runtime.sendMessage({
-        type: "remove"
-    }, function(response) {
-        if (callback) {
-            callback();
-        }
-    });
-}
+// removeEbook() was declared here as well as in utils.js, which the popup did
+// not load. It does now - for the style list below - so the two would be one
+// name meaning whichever was loaded last; there is one of them, in utils.js.
 
 chrome.runtime.sendMessage({
     type: "is busy?"
@@ -50,11 +44,13 @@ chrome.runtime.sendMessage({
 // The popup used to run its own copy of the URL matching here, to write the
 // style it picked into storage under 'currentStyle'. Nothing ever read it - the
 // capture path works the match out for itself - so both the copy and the key it
-// fed are gone; selectStylesForUrl in styleLibrary.js is now the only matcher.
+// fed are gone; selectStylesForUrl in styleLibrary.js is now the only matcher,
+// and what this file does with it is show the answer rather than store one.
 
 function createIncludeStyle(data) {
     let includeStyleCheck = document.getElementById('includeStyleCheck');
     includeStyleCheck.checked = data;
+    renderCurrentStyles();
 }
 
 chrome.runtime.sendMessage({
@@ -69,6 +65,119 @@ document.getElementById('includeStyleCheck').onclick = function () {
         type: "set include style",
         includeStyle: includeStyleCheck.checked
     }, function(response) {
+    });
+    // the list below is a list of what will run, and this is the switch that
+    // decides whether any of it does
+    renderCurrentStyles();
+}
+
+/////
+// Which site styles this page would take, under the button that opens the
+// library. The popup is where a page is saved from, so it is where "what is
+// about to be done to this page" belongs - and a style that turns out to be the
+// wrong one is switched off here rather than three clicks away.
+
+// The tab the popup was opened on. Asked for once: it is what the list is about
+// and what both editor buttons hand over, and an extension page cannot look it
+// up for itself afterwards - see openEditor below.
+let currentTabUrl = null;
+let currentLibrary = null;
+
+chrome.tabs.query({active: true, currentWindow: true}, function (tabs) {
+    currentTabUrl = tabs && tabs[0] && tabs[0].url ? tabs[0].url : '';
+    getStyleLibrary(function (library) {
+        currentLibrary = library;
+        renderCurrentStyles();
+    });
+});
+
+// What this page would take, switched on or not - so that a style written for
+// the site can be turned on from here - minus the every-page styles that are
+// switched off. Those are not about this page in particular, and a library with
+// a few of them in it would push the buttons below off the popup.
+function stylesForThisPage() {
+    if (!currentLibrary) {
+        return [];
+    }
+    return styleCandidatesForUrl(currentTabUrl, currentLibrary)
+        .filter((entry) => entry.scope !== 'theme' || entry.enabled !== false);
+}
+
+function renderCurrentStyles() {
+    let holder = document.getElementById('currentStyles');
+    while (holder.firstChild) {
+        holder.removeChild(holder.firstChild);
+    }
+    // nothing is known yet - an empty list here would read as "no style for this
+    // site", which is an answer rather than the absence of one
+    if (!currentLibrary) {
+        return;
+    }
+
+    let includeStyle = document.getElementById('includeStyleCheck').checked;
+    let entries = stylesForThisPage();
+    holder.className = includeStyle ? '' : 'currentStylesOff';
+
+    for (let entry of entries) {
+        let row = document.createElement('div');
+        row.className = 'currentStyleRow';
+
+        let check = document.createElement('input');
+        check.type = 'checkbox';
+        check.checked = entry.enabled !== false;
+        check.title = chrome.i18n.getMessage('styleEnabledHint');
+        check.onclick = function () {
+            setStyleEnabled(entry.id, check.checked);
+        };
+        row.appendChild(check);
+
+        let name = document.createElement('span');
+        name.className = 'currentStyleName';
+        name.textContent = entry.title.trim() === '' ?
+                           chrome.i18n.getMessage('untitledStyle') : entry.title;
+        // which of the two kinds it is, and what it matches, without a second line
+        name.title = entry.scope === 'theme' ?
+                     chrome.i18n.getMessage('styleAppliesEveryPage') : entry.match.pattern;
+        row.appendChild(name);
+
+        holder.appendChild(row);
+    }
+
+    // Nothing in the library is written for this site. An every-page style being
+    // listed above does not answer that - it is on whatever page the user is
+    // looking at - so the offer stands whether or not one is running.
+    if (!entries.some((entry) => entry.scope !== 'theme')) {
+        let none = document.createElement('button');
+        none.id = 'currentStylesNone';
+        none.type = 'button';
+        none.textContent = chrome.i18n.getMessage('noStyleForThisSite');
+        none.onclick = openStyleLibrary;
+        holder.appendChild(none);
+    }
+
+    if (!includeStyle) {
+        let note = document.createElement('div');
+        note.id = 'currentStylesNote';
+        note.textContent = chrome.i18n.getMessage('stylesOffNote');
+        holder.appendChild(note);
+    }
+}
+
+// Read again before writing rather than written from the copy this popup has
+// held since it opened: the library page writes the whole library, and it may
+// well be open in another tab. The read is a message to the same service worker
+// the write goes to, so the two cannot interleave.
+function setStyleEnabled(id, enabled) {
+    getStyleLibrary(function (library) {
+        let entry = library.entries.find((existing) => existing.id === id);
+        if (!entry) {
+            // deleted from the library page while this popup was open
+            currentLibrary = library;
+            renderCurrentStyles();
+            return;
+        }
+        currentLibrary = putStyleEntry(library, Object.assign({}, entry, {enabled: enabled}));
+        saveStyleLibrary(currentLibrary, renderCurrentStyles);
     });
 }
 
@@ -129,12 +238,12 @@ function openEditor(page) {
 // the page the user is looking at. So the popup hands the url over, while it
 // still has activeTab for the tab it was opened on: an extension page cannot ask
 // which tab was in front of it, and being able to would need the tabs permission.
-document.getElementById("editStyles").onclick = function() {
-    chrome.tabs.query({active: true, currentWindow: true}, function (tabs) {
-        let url = tabs && tabs[0] && tabs[0].url ? tabs[0].url : '';
-        openEditor('styles.html' + (url === '' ? '' : '?for=' + encodeURIComponent(url)));
-    });
-};
+function openStyleLibrary() {
+    let url = currentTabUrl === null ? '' : currentTabUrl;
+    openEditor('styles.html' + (url === '' ? '' : '?for=' + encodeURIComponent(url)));
+}
+
+document.getElementById("editStyles").onclick = openStyleLibrary;
 
 document.getElementById("editChapters").onclick = function() {
     openEditor('chapters.html');

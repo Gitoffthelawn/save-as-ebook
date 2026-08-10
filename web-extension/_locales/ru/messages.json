@@ -19,7 +19,7 @@
         "message": "Открывать «Сохранить страницу» и «Сохранить выделение» в редакторе глав вместо немедленной загрузки, чтобы книгу можно было сначала просмотреть, отредактировать и описать. Файл сохраняет кнопка «Создать книгу» в редакторе."
     },
     "editStyles": {
-        "message": "Редактировать стили сайтов ..."
+        "message": "Стили сайтов ..."
     },
     "savePage": {
         "message": "Сохранить страницу"
@@ -501,5 +501,127 @@
     },
     "styleRecipeBiggerText": {
         "message": "Крупнее текст"
+    },
+    "styleExport": {
+        "message": "Экспорт"
+    },
+    "styleExportHint": {
+        "message": "Сохранить этот стиль в файл - чтобы оставить себе или передать другому"
+    },
+    "styleExportAll": {
+        "message": "Экспортировать все"
+    },
+    "styleExportNothing": {
+        "message": "Экспортировать нечего."
+    },
+    "styleImport": {
+        "message": "Импорт ..."
+    },
+    "styleImportTitle": {
+        "message": "Импорт стилей"
+    },
+    "styleImportHint": {
+        "message": "Откройте файл стилей или вставьте его ниже. Импортированные стили добавляются как ваши собственные - встроенные они не заменяют."
+    },
+    "styleImportFromFile": {
+        "message": "Открыть файл ..."
+    },
+    "styleImportPastePlaceholder": {
+        "message": "или вставьте файл стилей сюда"
+    },
+    "styleImportRead": {
+        "message": "Далее"
+    },
+    "styleImportApply": {
+        "message": "Импортировать"
+    },
+    "styleImportKeepBoth": {
+        "message": "Оставить оба"
+    },
+    "styleImportReplace": {
+        "message": "Заменить"
+    },
+    "styleImportNothingPasted": {
+        "message": "Импортировать пока нечего - откройте файл или вставьте его в поле."
+    },
+    "styleImportNotAStyleFile": {
+        "message": "Это не файл стилей."
+    },
+    "styleImportNoStyles": {
+        "message": "В этом файле нет ни одного стиля."
+    },
+    "styleImportUnreadableFile": {
+        "message": "Не удалось прочитать этот файл."
+    },
+    "styleImportAdding": {
+        "message": "Новые стили ($count$)",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "3"
+            }
+        }
+    },
+    "styleImportCollisions": {
+        "message": "Уже есть в вашей библиотеке ($count$)",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "2"
+            }
+        }
+    },
+    "styleImportHere": {
+        "message": "ваш: $title$ - $where$",
+        "placeholders": {
+            "title": {
+                "content": "$1",
+                "example": "Wikipedia Article"
+            },
+            "where": {
+                "content": "$2",
+                "example": "wikipedia.org и его поддомены"
+            }
+        }
+    },
+    "styleImportIncoming": {
+        "message": "из файла: $where$, $css$",
+        "placeholders": {
+            "where": {
+                "content": "$1",
+                "example": "wikipedia.org и его поддомены"
+            },
+            "css": {
+                "content": "$2",
+                "example": "другой CSS"
+            }
+        }
+    },
+    "styleImportSameCss": {
+        "message": "тот же CSS"
+    },
+    "styleImportDifferentCss": {
+        "message": "другой CSS"
+    },
+    "styleImportStripped": {
+        "message": "Убрано из импортированного CSS"
+    },
+    "styleImportStrippedWhy": {
+        "message": "Такие ссылки при каждом сохранении страницы обращаются к чужому сайту, сообщая ему, что вы читаете. Стилю сайта это не нужно."
+    },
+    "styleImported": {
+        "message": "Импортировано стилей: $count$.",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "3"
+            }
+        }
+    },
+    "noStyleForThisSite": {
+        "message": "Для этого сайта стиля нет - создайте его"
+    },
+    "stylesOffNote": {
+        "message": "«Подключить CSS» выключено, поэтому ни один из них не сработает."
     }
 }

@@ -19,7 +19,7 @@
         "message": "Abrir «Salvar Página» e «Salvar Selecão» no editor de capítulos em vez de baixar imediatamente, para que o livro possa ser pré-visualizado, editado e descrito antes. O botão «Gerar eBook» do editor é que salva o arquivo."
     },
     "editStyles": {
-        "message": "Editar estilos do site ..."
+        "message": "Estilos do site ..."
     },
     "savePage": {
         "message": "Salvar Página"
@@ -501,5 +501,127 @@
     },
     "styleRecipeBiggerText": {
         "message": "Texto maior"
+    },
+    "styleExport": {
+        "message": "Exportar"
+    },
+    "styleExportHint": {
+        "message": "Gravar este estilo em um arquivo, para guardar ou para passar a alguém"
+    },
+    "styleExportAll": {
+        "message": "Exportar tudo"
+    },
+    "styleExportNothing": {
+        "message": "Não há estilo para exportar."
+    },
+    "styleImport": {
+        "message": "Importar ..."
+    },
+    "styleImportTitle": {
+        "message": "Importar estilos"
+    },
+    "styleImportHint": {
+        "message": "Abra um arquivo de estilos, ou cole um abaixo. Estilos importados são adicionados como seus - nunca tomam o lugar de um estilo interno."
+    },
+    "styleImportFromFile": {
+        "message": "Abrir arquivo ..."
+    },
+    "styleImportPastePlaceholder": {
+        "message": "ou cole um arquivo de estilos aqui"
+    },
+    "styleImportRead": {
+        "message": "Continuar"
+    },
+    "styleImportApply": {
+        "message": "Importar"
+    },
+    "styleImportKeepBoth": {
+        "message": "Manter os dois"
+    },
+    "styleImportReplace": {
+        "message": "Substituir"
+    },
+    "styleImportNothingPasted": {
+        "message": "Ainda não há nada para importar - abra um arquivo, ou cole um no campo."
+    },
+    "styleImportNotAStyleFile": {
+        "message": "Este não é um arquivo de estilos."
+    },
+    "styleImportNoStyles": {
+        "message": "Não há nenhum estilo neste arquivo."
+    },
+    "styleImportUnreadableFile": {
+        "message": "Não foi possível ler esse arquivo."
+    },
+    "styleImportAdding": {
+        "message": "Estilos novos ($count$)",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "3"
+            }
+        }
+    },
+    "styleImportCollisions": {
+        "message": "Já na sua biblioteca ($count$)",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "2"
+            }
+        }
+    },
+    "styleImportHere": {
+        "message": "o seu: $title$ - $where$",
+        "placeholders": {
+            "title": {
+                "content": "$1",
+                "example": "Wikipedia Article"
+            },
+            "where": {
+                "content": "$2",
+                "example": "wikipedia.org e seus subdomínios"
+            }
+        }
+    },
+    "styleImportIncoming": {
+        "message": "o do arquivo: $where$, $css$",
+        "placeholders": {
+            "where": {
+                "content": "$1",
+                "example": "wikipedia.org e seus subdomínios"
+            },
+            "css": {
+                "content": "$2",
+                "example": "CSS diferente"
+            }
+        }
+    },
+    "styleImportSameCss": {
+        "message": "mesmo CSS"
+    },
+    "styleImportDifferentCss": {
+        "message": "CSS diferente"
+    },
+    "styleImportStripped": {
+        "message": "Removido do CSS importado"
+    },
+    "styleImportStrippedWhy": {
+        "message": "Isto busca um arquivo em outro site sempre que uma página é capturada, o que conta àquele site o que você está lendo. Nada num estilo de site precisa disso."
+    },
+    "styleImported": {
+        "message": "$count$ estilo(s) importado(s).",
+        "placeholders": {
+            "count": {
+                "content": "$1",
+                "example": "3"
+            }
+        }
+    },
+    "noStyleForThisSite": {
+        "message": "Nenhum estilo para este site - crie um"
+    },
+    "stylesOffNote": {
+        "message": "\"Incuir estilo (personalizado)\" está desligado, então nenhum destes será aplicado."
     }
 }
