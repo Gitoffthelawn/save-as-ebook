@@ -321,12 +321,15 @@ async function test(name, body) {
         assert.strictEqual(h.state.badgeTexts.at(-1).text, '');
     });
 
-    await test('concurrent commands claim only one background job', () => {
+    await test('concurrent commands claim only one background job', async () => {
         const h = createHarness({deferSessionGets: true});
         h.context.executeCommand({type: 'save-page'});
         h.context.executeCommand({type: 'save-selection'});
         assert.strictEqual(messages(h, (m) => m.alert && m.alert.startsWith('Work in progress')).length, 1);
         h.flushSessionGets();
+        // the styles are read before the extraction is asked for, and that read
+        // reaches the catalog file
+        await settle();
         assert.strictEqual(messages(h, (m) => /^extract-/.test(m.type || '')).length, 1);
         assert.strictEqual(messages(h, (m) => m.shortcut === 'build-ebook').length, 1);
         assert.strictEqual(h.state.session.job.tabId, 7);
@@ -436,7 +439,7 @@ async function test(name, body) {
         assert.deepStrictEqual(off.state.createdTabs, []);
     });
 
-    await test('a reviewed save is a new book, not an addition to the buffered one', () => {
+    await test('a reviewed save is a new book, not an addition to the buffered one', async () => {
         // The rule getBookId() states: a page saved on its own is a new book
         // every time. Storing it on the way to the editor must not let it
         // inherit the identifier - or the chapters - of the book before it.
@@ -454,6 +457,7 @@ async function test(name, body) {
         });
         h.context.startJob(7);
         h.context.dispatch([{id: 7, url: 'https://example.com/article'}], 'extract-page', false, []);
+        await settle();
         assert.deepStrictEqual(h.state.local.allPages,
             [{title: 'Article', content: '<p>chapter</p>'}]);
         assert.strictEqual(h.state.local.title, 'Article');
@@ -523,7 +527,7 @@ async function test(name, body) {
         let applied;
         h.context.prepareStyles(
             [{id: 12, url: 'https://www.example.com/articles/42?print=1'}],
-            true, [], (value) => { applied = value; });
+            [], (value) => { applied = value; });
         await settle();
         assert.strictEqual(applied, undefined,
             'action continued before the CSS cleanup record was persisted');
@@ -562,7 +566,7 @@ async function test(name, body) {
         });
         h.context.startJob(3);
         let applied;
-        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], true, [],
+        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], [],
                                 (value) => { applied = value; });
         await settle();
         h.flushSessionGets();
@@ -570,6 +574,35 @@ async function test(name, body) {
             {target: {tabId: 3}, css: '.theme {}'},
             {target: {tabId: 3}, css: '.on {}'}
         ]);
+    });
+
+    // Hiding is not styling. An element with no box is not extracted at all, so a
+    // preset that takes the banner, the ad slots and the comment thread off a page
+    // does its work whether or not the page's own css is carried into the book -
+    // and gating the injection on the checkbox made the cleanest capture the
+    // extension can make, plain markup with the chrome removed, the one
+    // combination it refused.
+    await test('styles are injected for a capture made with Include Style off', async () => {
+        const h = createHarness({
+            local: {
+                includeStyle: false,
+                allPages: [],
+                styleLibrary: {version: 2, entries: [
+                    {id: 'cleanup', scope: 'theme', css: '.banner {display: none}'}
+                ]}
+            }
+        });
+        h.context.startJob(9);
+        h.context.dispatch([{id: 9, url: 'https://example.com/a'}], 'extract-page', true, []);
+        await settle();
+        assert.deepStrictEqual(h.state.insertedCss,
+            [{target: {tabId: 9}, css: '.banner {display: none}'}]);
+
+        // and the extraction is told which sheets went on: with the page's own css
+        // left out, they are the whole of the chapter's stylesheet
+        const extraction = messages(h, (m) => m.type === 'extract-page')[0].message;
+        assert.strictEqual(extraction.includeStyle, false);
+        assert.deepStrictEqual(extraction.appliedStyles.map((style) => style.id), ['cleanup']);
     });
 
     // The first sheet is refused - an activeTab grant that has lapsed, a tab
@@ -584,7 +617,7 @@ async function test(name, body) {
         });
         h.context.startJob(3);
         let applied = 'not called';
-        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], true, [],
+        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], [],
                                 (value) => { applied = value; });
         await settle();
         assert.deepStrictEqual(applied, []);
@@ -604,7 +637,7 @@ async function test(name, body) {
         });
         // no startJob: nothing is in flight, so updateJob has nothing to record
         let applied = 'not called';
-        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], true, [],
+        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], [],
                                 (value) => { applied = value; });
         await settle();
         assert.deepStrictEqual(applied, []);
@@ -749,21 +782,36 @@ async function test(name, body) {
 
         const entries = responses[0].library.entries;
         assert.deepStrictEqual(entries.map((entry) => entry.builtinId),
-            shipped.entries.map((entry) => entry.builtinId),
-            'a fresh install is the catalog, in the order the catalog states');
+            h.context.catalogEntries(shipped).map((entry) => entry.builtinId),
+            'a fresh install is what the catalog offers, in the order the catalog states');
+        assert.ok(entries.length < shipped.entries.length,
+            'the retired entries are in the file for the migration to match, not to be installed');
         assert.ok(entries.every((entry) => entry.origin === 'builtin'));
         assert.ok(entries.filter((entry) => entry.scope === 'theme')
                          .every((entry) => entry.enabled === false),
             'a style that applies to every capture cannot arrive switched on');
 
-        // and it reaches the page: the bundled Wikipedia style, on a wikipedia url
-        h.context.startJob(4);
-        let applied;
-        h.context.prepareStyles([{id: 4, url: 'https://en.wikipedia.org/wiki/Book'}],
-                                true, [], (value) => { applied = value; });
+        async function stylesFor(url) {
+            h.context.startJob(4);
+            let applied;
+            h.context.prepareStyles([{id: 4, url: url}], [],
+                                    (value) => { applied = value; });
+            await settle();
+            h.flushSessionGets();
+            return applied.map((entry) => entry.builtinId);
+        }
+
+        // nothing runs on a page by itself any more: the site presets were all
+        // retired, and a theme has to be switched on
+        assert.deepStrictEqual(await stylesFor('https://en.wikipedia.org/wiki/Book'), []);
+
+        // and once one is, it reaches the page
+        const library = responses[0].library;
+        library.entries.find((entry) => entry.builtinId === 'theme-large-print').enabled = true;
+        request(h, {type: 'set style library', library: library});
         await settle();
-        h.flushSessionGets();
-        assert.deepStrictEqual(applied.map((entry) => entry.builtinId), ['wikipedia-article']);
+        assert.deepStrictEqual(await stylesFor('https://en.wikipedia.org/wiki/Book'),
+                               ['theme-large-print']);
     });
 
 

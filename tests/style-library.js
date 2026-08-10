@@ -359,6 +359,27 @@ function builtinEntry(builtinId, extra) {
     return Object.assign(lib.entryFromCatalogEntry(source), extra || {});
 }
 
+function shippedInV1(builtinId) {
+    const entry = catalog.entries.find((entry) => entry.builtinId === builtinId);
+    return !!(entry && entry.v1);
+}
+
+// The same catalog with some of it withdrawn, said the two ways the file can say
+// it: a style that shipped in v1 stays where it is and marks itself retired,
+// because the migration still has to recognize a user's copy of it, while one
+// added later simply leaves and names its id on the way out.
+function catalogRetiring(builtinIds) {
+    const isRetired = (builtinId) => builtinIds.indexOf(builtinId) > -1;
+    return {
+        version: catalog.version,
+        retiredBuiltins: builtinIds.filter((builtinId) => !shippedInV1(builtinId)),
+        entries: catalog.entries
+            .filter((entry) => !isRetired(entry.builtinId) || entry.v1 === true)
+            .map((entry) => isRetired(entry.builtinId) ?
+                            Object.assign({}, entry, {retired: true}) : entry)
+    };
+}
+
 test('the migration is only shown the bundled styles that existed in v1', () => {
     assert.deepStrictEqual(lib.catalogToV1Builtins(catalog), [
         {builtinId: 'wiki', title: 'Wikipedia Article',
@@ -445,6 +466,86 @@ test('merging the same catalog again changes nothing', () => {
     const twice = lib.mergeCatalogIntoLibrary(once.library, catalog);
     assert.strictEqual(twice.changed, false,
         'every read merges, so a merge that always changed something would write on every read');
+    assert.deepStrictEqual(twice.library, once.library);
+});
+
+// ---- retiring a bundled style ----------------------------------------------
+//
+// The other direction: a preset written for a site that has since rebuilt itself
+// has to be able to leave, and leaving the file is not enough - the merge would
+// simply stop speaking to the copy every existing library already holds.
+
+test('a retired style is not offered to a library that never had it', () => {
+    const result = lib.mergeCatalogIntoLibrary(lib.normalizeStyleLibrary(null),
+                                               catalogRetiring(['wiki', 'gh']));
+    assert.deepStrictEqual(result.library.entries.map((entry) => entry.builtinId),
+                           ['hn', 'serif']);
+});
+
+test('a retired style is taken back out of a library that has it', () => {
+    const stored = lib.normalizeStyleLibrary({
+        version: lib.STYLE_LIBRARY_VERSION,
+        entries: [
+            {id: 'own', css: '.own {}', match: {type: 'domain', pattern: 'a.test'}},
+            builtinEntry('wiki'),
+            builtinEntry('gh', {enabled: false, priority: 5})
+        ],
+        removedBuiltins: []
+    });
+    const result = lib.mergeCatalogIntoLibrary(stored, catalogRetiring(['wiki', 'gh']));
+
+    assert.strictEqual(result.changed, true, 'the library has to be written back without them');
+    assert.deepStrictEqual(result.library.entries.map((entry) => entry.id),
+                           ['own', 'builtin-hn', 'builtin-serif'],
+        'an untouched copy is the extension\'s to withdraw, and switching one off is not editing it');
+    assert.deepStrictEqual(result.library.removedBuiltins, [],
+        'that list is what the user deleted; a retired style is not on offer to be handed back');
+});
+
+test('retiring a style leaves the user\'s fork of it alone', () => {
+    const fork = builtinEntry('gh', {origin: 'user', title: 'My GitHub', css: '.mine {}'});
+    const retiring = catalogRetiring(['gh']);
+    const result = lib.mergeCatalogIntoLibrary(
+        lib.normalizeStyleLibrary({entries: [fork]}), retiring);
+    const kept = result.library.entries.filter((entry) => entry.builtinId === 'gh');
+
+    assert.strictEqual(kept.length, 1);
+    assert.strictEqual(kept[0].css, '.mine {}',
+        'they wrote it, so withdrawing what it grew out of cannot take it');
+    assert.strictEqual(lib.resetEntryToBuiltin(kept[0], retiring), null,
+        'but there is nothing behind it any more, so the library page offers no reset');
+});
+
+test('a v1 style is retired through the copy the migration recognizes', () => {
+    const retiring = catalogRetiring(['wiki']);
+    assert.deepStrictEqual(lib.catalogToV1Builtins(retiring).map((entry) => entry.builtinId),
+                           ['wiki', 'hn'],
+        'read the offered styles instead and an untouched v1 copy migrates as the user\'s own');
+
+    // a v1 user: an untouched copy of the retired style, one they edited, one of
+    // their own - and the untouched one is the only thing retirement may take
+    const migrated = lib.migrateStyleLibrary(null, [
+        {title: 'Wikipedia Article', url: 'wikipedia\\.org\\/wiki\\/',
+         style: '#mw-panel {display: none}'},
+        {title: 'YCombinator News Comments', url: 'news\\.ycombinator\\.com',
+         style: '.votearrow {display: none}\n.age {display: none}'},
+        {title: 'Mine', url: 'my\\.example', style: 'p{}'}
+    ], lib.catalogToV1Builtins(retiring));
+    const result = lib.mergeCatalogIntoLibrary(migrated.library, retiring);
+
+    assert.deepStrictEqual(result.library.entries.map((entry) => entry.title),
+                           ['YCombinator News Comments', 'Mine', 'GitHub', 'Serif Reading']);
+    assert.strictEqual(result.library.entries[0].origin, 'user',
+        'they had changed it, so it is theirs and stays');
+});
+
+test('a retired style stays gone on every read after it', () => {
+    const retiring = catalogRetiring(['wiki', 'gh']);
+    const once = lib.mergeCatalogIntoLibrary(
+        lib.normalizeStyleLibrary({entries: [builtinEntry('wiki')]}), retiring);
+    const twice = lib.mergeCatalogIntoLibrary(once.library, retiring);
+
+    assert.strictEqual(twice.changed, false);
     assert.deepStrictEqual(twice.library, once.library);
 });
 
@@ -740,14 +841,15 @@ test('importing over a bundled style is not something an import can do', () => {
 test('styles/catalog.json says what the merge and the library UI expect of it', () => {
     const shipped = JSON.parse(fs.readFileSync(
         path.join(__dirname, '..', 'web-extension', 'styles', 'catalog.json'), 'utf8'));
-    const entries = lib.catalogEntries(shipped);
+    const all = lib.allCatalogEntries(shipped);
+    const offered = lib.catalogEntries(shipped);
 
-    assert.strictEqual(entries.length, shipped.entries.length,
+    assert.strictEqual(all.length, shipped.entries.length,
         'an entry without a builtinId is silently ignored by the merge');
-    assert.strictEqual(new Set(entries.map((entry) => entry.builtinId)).size, entries.length,
+    assert.strictEqual(new Set(all.map((entry) => entry.builtinId)).size, all.length,
         'two entries under one builtinId would fight over the same library slot');
 
-    for (const entry of entries) {
+    for (const entry of offered) {
         const where = entry.builtinId;
         assert.ok(entry.title && entry.title.trim() !== '', where + ' has no title');
         assert.ok(entry.description && entry.description.trim() !== '',
@@ -770,9 +872,29 @@ test('styles/catalog.json says what the merge and the library UI expect of it', 
 
     // The five v1 styles are recognized by their text, so this is the guard on
     // editing them: change one and every untouched copy in the wild becomes a
-    // fork that no update can ever fix.
-    assert.deepStrictEqual(entries.filter((entry) => entry.v1).map((entry) => entry.builtinId),
+    // fork that no update can ever fix. Retiring one does not release it from
+    // that - the entry has to stay in the file, and stay as it shipped, for the
+    // migration to know an untouched copy when it sees one.
+    assert.deepStrictEqual(all.filter((entry) => entry.v1).map((entry) => entry.builtinId),
         ['reddit-comments', 'wikipedia-article', 'hn-comments', 'medium-article', 'twitter']);
+    for (const entry of lib.catalogToV1Builtins(shipped)) {
+        assert.ok(entry.title.trim() !== '' && entry.url.trim() !== '' && entry.style.trim() !== '',
+            entry.builtinId + ' has lost the text the v1 migration matches it by');
+    }
+
+    // The site presets this release withdrew: every one of them was written
+    // against markup the site has since replaced, so what they hide now is the
+    // wrong thing or nothing at all. See retiredBuiltinIds for the two ways of
+    // saying it, and why the v1 five are still in the file.
+    const retired = lib.retiredBuiltinIds(shipped);
+    assert.deepStrictEqual(Object.keys(retired).sort(), [
+        'arxiv-abs', 'github-repo', 'hn-comments', 'medium-article', 'reddit-comments',
+        'stackoverflow-question', 'substack-post', 'twitter', 'wikipedia-article'
+    ]);
+    assert.ok(all.filter((entry) => entry.v1).every((entry) => entry.retired === true),
+        'a v1 entry that is kept only for the migration has to say so, or it ships');
+    assert.deepStrictEqual(offered.filter((entry) => retired[entry.builtinId]), [],
+        'a retired style the catalog still offers would be added straight back');
 });
 
 console.log(failures === 0 ? '\nstyle library OK' : '\n' + failures + ' style library failure(s)');

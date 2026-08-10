@@ -385,21 +385,63 @@ function migrateStyleLibrary(storedLibrary, legacyStyles, builtinStyles) {
 // ---- the bundled catalog --------------------------------------------------
 //
 // styles/catalog.json holds the styles the extension ships with, in the v2
-// shape plus two fields of its own: builtinId, which is what identifies one of
-// them across releases, and v1, which marks the five that shipped before there
-// was a library at all.
+// shape plus three fields of its own: builtinId, which is what identifies one of
+// them across releases, v1, which marks the five that shipped before there was a
+// library at all, and retired, which marks one the extension has stopped
+// shipping - see retiredBuiltinIds.
 //
 // The catalog is not stored. It is merged over the stored library every time
-// that library is read, which is what lets a release add styles to it without
-// touching - or being able to lose - anything the user has done.
+// that library is read, which is what lets a release add a style to it - or take
+// one back - without touching, or being able to lose, anything the user has done.
 
-function catalogEntries(catalog) {
+// Every entry in the file, retired ones included. Only the migration reads this
+// far: what the extension offers today is catalogEntries.
+function allCatalogEntries(catalog) {
     let entries = catalog && Array.isArray(catalog.entries) ? catalog.entries : [];
     // an entry with no builtinId cannot be tracked across releases: it would be
     // added again, under a new id, on every read
     return entries.filter((entry) => entry && typeof entry === 'object' &&
                                      typeof entry.builtinId === 'string' &&
                                      entry.builtinId !== '');
+}
+
+// The styles the catalog has withdrawn - a preset written for a site that has
+// since rebuilt itself, and that now hides the wrong things or nothing at all.
+//
+// Deleting the entry from the file is not enough to be rid of one. The merge
+// only adds and refreshes, so a style already in a stored library would simply
+// stay there, still marked builtin but with no catalog entry left to correct it:
+// unmaintained css that no release can reach. Naming it here is what takes it
+// back out of those libraries.
+//
+// Two ways to say it, because a retired style is not always free to leave the
+// file. The five v1 styles are how the migration recognizes a v1 user's own
+// copies - by their title, pattern and css, see catalogToV1Builtins - so those
+// stay exactly as they shipped, marked "retired": true. Anything else is deleted
+// outright and leaves its builtinId in the top-level "retiredBuiltins" list.
+function retiredBuiltinIds(catalog) {
+    let ids = {};
+    let listed = catalog && Array.isArray(catalog.retiredBuiltins) ?
+                 catalog.retiredBuiltins : [];
+    for (let builtinId of listed) {
+        if (typeof builtinId === 'string' && builtinId !== '') {
+            ids[builtinId] = true;
+        }
+    }
+    for (let entry of allCatalogEntries(catalog)) {
+        if (entry.retired === true) {
+            ids[entry.builtinId] = true;
+        }
+    }
+    return ids;
+}
+
+// What the extension offers this release. This is the list the merge adds from
+// and refreshes against, and the list "reset to built-in" reads: a fork of a
+// retired style is the user's own now, with nothing left to go back to.
+function catalogEntries(catalog) {
+    let retired = retiredBuiltinIds(catalog);
+    return allCatalogEntries(catalog).filter((entry) => !retired[entry.builtinId]);
 }
 
 function catalogEntryById(catalog, builtinId) {
@@ -416,8 +458,14 @@ function catalogEntryById(catalog, builtinId) {
 // that actually shipped in v1, because only those can have a copy in a v1
 // 'styles' array. Handing it the whole catalog would make every style added
 // since look like one the user had deleted.
+//
+// Retired entries count here, and this is why they stay in the file: a v1 user's
+// untouched copy of one has to be recognized as the bundled style it is, so that
+// the merge can then retire it. Read from the offered styles instead and that
+// copy would migrate as a style of the user's own - the very css this release is
+// withdrawing, kept forever, unmaintainable and impossible to reset.
 function catalogToV1Builtins(catalog) {
-    return catalogEntries(catalog)
+    return allCatalogEntries(catalog)
         .filter((entry) => entry.v1 === true)
         .map((entry) => ({
             builtinId: entry.builtinId,
@@ -475,7 +523,8 @@ function sameStoredEntry(left, right) {
 // Three cases, and the middle one is the point of the whole tier:
 //   no entry for this builtinId  - a style this release adds, unless the user
 //                                  has deleted it before (removedBuiltins)
-//   an entry still marked builtin - untouched, so refreshed from the catalog
+//   an entry still marked builtin - untouched, so refreshed from the catalog,
+//                                   or dropped if the catalog has retired it
 //   anything else                 - the user's fork, which shadows the catalog
 //                                   until they reset it
 function mergeCatalogIntoLibrary(library, catalog) {
@@ -485,6 +534,23 @@ function mergeCatalogIntoLibrary(library, catalog) {
     // adding this release's entries to it could put back a style it retired.
     if (merged.version > STYLE_LIBRARY_VERSION) {
         return {library: merged, changed: false};
+    }
+
+    let changed = false;
+
+    // Retirements first, so that what the rest of the merge sees is a library of
+    // styles the catalog still speaks to. Only an untouched copy goes: a fork is
+    // the user's own work, and withdrawing the style it grew out of is no reason
+    // to take it. Nor does a retirement touch removedBuiltins - that list is the
+    // record of what the *user* deleted, and a retired style is not on offer to
+    // be handed back in the first place.
+    let retired = retiredBuiltinIds(catalog);
+    let kept = merged.entries.filter((entry) => !(entry.origin === 'builtin' &&
+                                                  entry.builtinId &&
+                                                  retired[entry.builtinId]));
+    if (kept.length !== merged.entries.length) {
+        merged.entries = kept;
+        changed = true;
     }
 
     let removed = {};
@@ -502,7 +568,6 @@ function mergeCatalogIntoLibrary(library, catalog) {
         }
     }
 
-    let changed = false;
     for (let catalogEntry of catalogEntries(catalog)) {
         if (removed[catalogEntry.builtinId]) {
             continue;
@@ -528,8 +593,8 @@ function mergeCatalogIntoLibrary(library, catalog) {
 
 // Undoes a fork: the bundled style again, keeping where it sits in the library
 // and whether it is switched on. Null when there is nothing to go back to -
-// a style the user wrote themselves, or one whose builtin has since been
-// dropped from the catalog.
+// a style the user wrote themselves, or one whose builtin the catalog has since
+// retired.
 function resetEntryToBuiltin(entry, catalog) {
     if (!entry || !entry.builtinId) {
         return null;

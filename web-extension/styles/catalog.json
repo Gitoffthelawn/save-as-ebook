@@ -1,5 +1,11 @@
 {
     "version": 1,
+    "retiredBuiltins": [
+        "github-repo",
+        "stackoverflow-question",
+        "substack-post",
+        "arxiv-abs"
+    ],
     "entries": [
         {
             "builtinId": "reddit-comments",
@@ -15,7 +21,8 @@
             "tags": [
                 "site"
             ],
-            "v1": true
+            "v1": true,
+            "retired": true
         },
         {
             "builtinId": "wikipedia-article",
@@ -31,7 +38,8 @@
             "tags": [
                 "site"
             ],
-            "v1": true
+            "v1": true,
+            "retired": true
         },
         {
             "builtinId": "hn-comments",
@@ -47,7 +55,8 @@
             "tags": [
                 "site"
             ],
-            "v1": true
+            "v1": true,
+            "retired": true
         },
         {
             "builtinId": "medium-article",
@@ -63,7 +72,8 @@
             "tags": [
                 "site"
             ],
-            "v1": true
+            "v1": true,
+            "retired": true
         },
         {
             "builtinId": "twitter",
@@ -79,82 +89,169 @@
             "tags": [
                 "site"
             ],
-            "v1": true
-        },
-        {
-            "builtinId": "github-repo",
-            "title": "GitHub",
-            "description": "Drops the app header, the repository toolbars and the footer.",
-            "scope": "site",
-            "match": {
-                "type": "domain",
-                "pattern": "github.com"
-            },
-            "css": ".AppHeader, header.Header, .js-header-wrapper {\ndisplay: none !important;\n}\n.footer, .js-repo-nav, .UnderlineNav, .file-navigation, .pagehead-actions {\ndisplay: none !important;\n}\n.Layout-sidebar, #repository-container-header .flex-wrap {\ndisplay: none !important;\n}\n.gh-header-actions, .js-notification-shelf, .flash-messages {\ndisplay: none !important;\n}\n",
-            "enabled": true,
-            "tags": [
-                "site",
-                "code"
-            ]
-        },
-        {
-            "builtinId": "stackoverflow-question",
-            "title": "Stack Overflow",
-            "description": "Drops the top bar, the sidebar, the vote gutters and the answer form.",
-            "scope": "site",
-            "match": {
-                "type": "domain",
-                "pattern": "stackoverflow.com"
-            },
-            "css": "header.s-topbar, .s-topbar, #left-sidebar, #sidebar, #footer {\ndisplay: none !important;\n}\n.votecell, .js-voting-container, .post-menu, .js-post-notice {\ndisplay: none !important;\n}\n#post-form, .js-answer-form, .bottom-notice, .s-notice {\ndisplay: none !important;\n}\n.user-info .-flair, .js-gps-track[title] {\ndisplay: none;\n}\n",
-            "enabled": true,
-            "tags": [
-                "site",
-                "code"
-            ]
-        },
-        {
-            "builtinId": "substack-post",
-            "title": "Substack",
-            "description": "Drops the subscribe prompts, the top bar and the comment section from a post.",
-            "scope": "site",
-            "match": {
-                "type": "domain",
-                "pattern": "substack.com"
-            },
-            "css": ".subscribe-widget, .subscription-widget-wrap, [class*=\"subscribe-prompt\"] {\ndisplay: none !important;\n}\n.topbar, .main-menu, .publication-footer, .footer-wrap {\ndisplay: none !important;\n}\n.post-footer, .comments-page, .post-ufi, .share-dialog {\ndisplay: none !important;\n}\n",
-            "enabled": true,
-            "tags": [
-                "site",
-                "newsletter"
-            ]
-        },
-        {
-            "builtinId": "arxiv-abs",
-            "title": "arXiv Abstract",
-            "description": "Drops the site header, the download box and the submission history.",
-            "scope": "site",
-            "match": {
-                "type": "domain",
-                "pattern": "arxiv.org"
-            },
-            "css": "#header, .header-breadcrumbs, .footer, #footer {\ndisplay: none !important;\n}\n.extra-services, .full-text, .browse, .bookmarks {\ndisplay: none !important;\n}\n.submission-history, .endorsers, .extra-ref-cite {\ndisplay: none !important;\n}\n",
-            "enabled": true,
-            "tags": [
-                "site",
-                "science"
-            ]
+            "v1": true,
+            "retired": true
         },
         {
             "builtinId": "hide-consent-banners",
-            "title": "Hide Cookie Banners",
-            "description": "Removes the consent dialogs the common banner tools put up, and undoes the page scroll lock they leave behind.",
+            "title": "Hide Banners & Overlays",
+            "description": "Removes the consent dialogs, sign-in walls, app prompts and modal surveys that sit over a page, and undoes the scroll lock they leave behind. A page that puts its own content in a dialog loses it too.",
             "scope": "theme",
             "match": {
                 "type": "domain",
                 "pattern": ""
             },
-            "css": "#onetrust-banner-sdk, #onetrust-consent-sdk, #CybotCookiebotDialog, #usercentrics-root {\ndisplay: none !important;\n}\n.cc-window, .fc-consent-root, .qc-cmp2-container, .osano-cm-window {\ndisplay: none !important;\n}\n[id*=\"cookie-banner\"], [id*=\"cookie-consent\"], [class*=\"cookie-banner\"], [class*=\"cookie-consent\"] {\ndisplay: none !important;\n}\nhtml, body {\noverflow: auto !important;\nposition: static !important;\n}\n",
+            "css": "#onetrust-banner-sdk, #onetrust-consent-sdk, #CybotCookiebotDialog, #usercentrics-root {\ndisplay: none !important;\n}\n.cc-window, .fc-consent-root, .qc-cmp2-container, .osano-cm-window {\ndisplay: none !important;\n}\n[id*=\"cookie-banner\"], [id*=\"cookie-consent\"], [class*=\"cookie-banner\"], [class*=\"cookie-consent\"] {\ndisplay: none !important;\n}\ndialog[open], [aria-modal=\"true\"], [role=\"alertdialog\"] {\ndisplay: none !important;\n}\n[class*=\"modal-overlay\"], [class*=\"modal-backdrop\"], [class*=\"popup-overlay\"], [class*=\"lightbox\"] {\ndisplay: none !important;\n}\n[class*=\"signup-modal\"], [class*=\"subscribe-modal\"], [class*=\"app-banner\"], [class*=\"smart-banner\"] {\ndisplay: none !important;\n}\nhtml, body {\noverflow: auto !important;\nposition: static !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "cleanup"
+            ]
+        },
+        {
+            "builtinId": "hide-ads",
+            "title": "Hide Ads & Sponsored Content",
+            "description": "Removes the in-page ad slots and the sponsored blocks beside them. The ad frames themselves never reach a book - what this takes out is the native units, the promoted rows and the space held open for them.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "[id*=\"google_ads\"], [id^=\"div-gpt-ad\"], [id*=\"taboola\"], [id*=\"outbrain\"] {\ndisplay: none !important;\n}\nins.adsbygoogle, [class*=\"adsbygoogle\"], [class*=\"advertisement\"], [class*=\"ad-slot\"], [class*=\"ad-unit\"], [class*=\"ad-container\"], [class*=\"ad-wrapper\"] {\ndisplay: none !important;\n}\n[class*=\"sponsored\"], [class*=\"promoted\"], [data-ad], [data-ad-slot] {\ndisplay: none !important;\n}\n[aria-label*=\"advertisement\" i], [aria-label*=\"sponsored\" i] {\ndisplay: none !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "cleanup"
+            ]
+        },
+        {
+            "builtinId": "hide-navigation",
+            "title": "Hide Navigation",
+            "description": "Removes the site header, the menu bars and the breadcrumbs. A table of contents the page marked up as navigation goes with them.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "[role=\"banner\"], [class*=\"site-header\"], [class*=\"global-header\"], [class*=\"masthead\"], [id*=\"masthead\"] {\ndisplay: none !important;\n}\nnav[role=\"navigation\"], [class*=\"navbar\"], [class*=\"nav-bar\"], [class*=\"main-nav\"], [class*=\"site-nav\"], [class*=\"global-nav\"], [class*=\"menu-bar\"], [class*=\"mega-menu\"] {\ndisplay: none !important;\n}\n[class*=\"breadcrumb\"], [aria-label*=\"breadcrumb\" i], [class*=\"skip-link\"] {\ndisplay: none !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "cleanup"
+            ]
+        },
+        {
+            "builtinId": "hide-sidebars",
+            "title": "Hide Sidebars",
+            "description": "Removes the side rails and everything parked in them. An aside inside the article is kept, since that is where pull quotes and author notes live.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "aside, [role=\"complementary\"], [class*=\"sidebar\"], [id*=\"sidebar\"], [class*=\"side-rail\"], [class*=\"side-bar\"] {\ndisplay: none !important;\n}\narticle aside, article [role=\"complementary\"] {\ndisplay: revert !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "cleanup"
+            ]
+        },
+        {
+            "builtinId": "hide-footers",
+            "title": "Hide Footers",
+            "description": "Removes the site footer and the legal and corporate navigation in it. A footer inside the article is kept, since that is usually the byline and the licence.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "[role=\"contentinfo\"], [class*=\"site-footer\"], [class*=\"global-footer\"], [class*=\"page-footer\"], [class*=\"footer-nav\"], [class*=\"legal-nav\"], [id*=\"colophon\"] {\ndisplay: none !important;\n}\nbody > footer {\ndisplay: none !important;\n}\narticle footer, article [role=\"contentinfo\"] {\ndisplay: revert !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "cleanup"
+            ]
+        },
+        {
+            "builtinId": "hide-comments",
+            "title": "Hide Comments",
+            "description": "Removes the comment thread and the reply forms under an article. Worth switching off when the discussion is what is being saved.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "#comments, #comment, #disqus_thread, #respond, [id*=\"comment-section\"], [id*=\"comments-section\"] {\ndisplay: none !important;\n}\n[class*=\"comments-area\"], [class*=\"comment-list\"], [class*=\"comment-thread\"], [class*=\"comment-section\"], [class*=\"comment-form\"] {\ndisplay: none !important;\n}\n[class*=\"disqus\"], [class*=\"livefyre\"], [class*=\"fb-comments\"], [data-component*=\"comments\"] {\ndisplay: none !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "cleanup"
+            ]
+        },
+        {
+            "builtinId": "hide-related-content",
+            "title": "Hide Related & Recommended",
+            "description": "Removes the \"more stories\", \"read next\" and trending blocks, and the recommendation carousels wrapped around them.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "[class*=\"related-post\"], [class*=\"related-article\"], [class*=\"related-content\"], [class*=\"related-stories\"], [class*=\"more-stories\"], [class*=\"more-from\"] {\ndisplay: none !important;\n}\n[class*=\"recommend\"], [class*=\"read-next\"], [class*=\"up-next\"], [class*=\"you-may-also\"], [class*=\"most-popular\"], [class*=\"popular-posts\"], [class*=\"trending\"] {\ndisplay: none !important;\n}\n[aria-label*=\"related\" i], [aria-label*=\"recommended\" i] {\ndisplay: none !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "cleanup"
+            ]
+        },
+        {
+            "builtinId": "hide-share-widgets",
+            "title": "Hide Share Widgets",
+            "description": "Removes the share bars and social buttons that sit around and between the paragraphs.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "[class*=\"share-button\"], [class*=\"share-bar\"], [class*=\"share-tools\"], [class*=\"social-share\"], [class*=\"sharedaddy\"], [class*=\"addtoany\"], [class*=\"addthis\"], [class*=\"sharethis\"] {\ndisplay: none !important;\n}\n[aria-label*=\"share\" i], [data-share] {\ndisplay: none !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "cleanup"
+            ]
+        },
+        {
+            "builtinId": "hide-newsletter-prompts",
+            "title": "Hide Newsletter & Follow Prompts",
+            "description": "Removes the inline subscribe boxes, follow buttons and email capture forms an article is broken up by.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "[class*=\"newsletter\"], [class*=\"subscribe-form\"], [class*=\"subscribe-widget\"], [class*=\"signup-form\"], [class*=\"email-capture\"], [class*=\"mailing-list\"] {\ndisplay: none !important;\n}\n[class*=\"follow-button\"], [class*=\"follow-prompt\"], [class*=\"subscribe-button\"] {\ndisplay: none !important;\n}\n[aria-label*=\"subscribe\" i], [aria-label*=\"newsletter\" i] {\ndisplay: none !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "cleanup"
+            ]
+        },
+        {
+            "builtinId": "hide-embed-placeholders",
+            "title": "Hide Embed Placeholders",
+            "description": "Removes what an embed leaves behind. The players and frames themselves are never written to a book, so what is left without this is an empty box, a \"watch on\" link, or the fallback text of a quoted post.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "[class*=\"video-placeholder\"], [class*=\"video-wrapper\"], [class*=\"video-container\"], [class*=\"video-embed\"], [class*=\"jwplayer\"], [class*=\"video-js\"] {\ndisplay: none !important;\n}\n[class*=\"embed-container\"], [class*=\"responsive-embed\"], [class*=\"iframe-wrapper\"], [class*=\"embed-wrapper\"], figure[class*=\"embed\"] {\ndisplay: none !important;\n}\nblockquote.twitter-tweet, blockquote.instagram-media, blockquote.tiktok-embed, [class*=\"twitter-tweet\"], [class*=\"instagram-media\"] {\ndisplay: none !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "cleanup"
+            ]
+        },
+        {
+            "builtinId": "hide-paywall-fades",
+            "title": "Hide Paywall Walls & Fades",
+            "description": "Removes the subscribe wall under a truncated article and the gradient that fades the text into it. It does not unlock anything - what the page never loaded cannot be saved.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "[class*=\"paywall\"], [class*=\"subscribe-wall\"], [class*=\"regwall\"], [class*=\"registration-wall\"], [class*=\"premium-gate\"], [class*=\"content-gate\"] {\ndisplay: none !important;\n}\n[class*=\"fade-out\"], [class*=\"fadeout\"], [class*=\"content-fade\"], [class*=\"gradient-overlay\"] {\ndisplay: none !important;\n}\narticle, [class*=\"article-body\"], [class*=\"post-content\"], [class*=\"entry-content\"] {\nfilter: none !important;\nmask-image: none !important;\n-webkit-mask-image: none !important;\nmax-height: none !important;\n}\n",
             "enabled": false,
             "tags": [
                 "cleanup"
@@ -176,15 +273,15 @@
             ]
         },
         {
-            "builtinId": "hide-share-widgets",
-            "title": "Hide Share Widgets",
-            "description": "Removes the share, follow and newsletter boxes that sit between the paragraphs.",
+            "builtinId": "reveal-collapsed",
+            "title": "Reveal Collapsed Content",
+            "description": "Opens what the page folded away. A closed disclosure or an inactive tab is hidden, and hidden text is not captured at all - so without this it is missing from the book rather than merely collapsed.",
             "scope": "theme",
             "match": {
                 "type": "domain",
                 "pattern": ""
             },
-            "css": "[class*=\"share-button\"], [class*=\"social-share\"], [class*=\"sharedaddy\"], [class*=\"addtoany\"] {\ndisplay: none !important;\n}\n[class*=\"newsletter-signup\"], [class*=\"follow-button\"], [aria-label*=\"Share\"] {\ndisplay: none !important;\n}\n",
+            "css": "details:not([open]) > *:not(summary) {\ndisplay: block !important;\n}\ndetails:not([open])::details-content {\ncontent-visibility: visible !important;\n}\n[role=\"tabpanel\"][hidden], [role=\"tabpanel\"][aria-hidden=\"true\"] {\ndisplay: block !important;\n}\n",
             "enabled": false,
             "tags": [
                 "cleanup"
@@ -193,13 +290,28 @@
         {
             "builtinId": "theme-serif-reading",
             "title": "Serif Reading",
-            "description": "A serif body face, looser lines and a narrower measure.",
+            "description": "A serif body face, a little larger, on looser lines.",
             "scope": "theme",
             "match": {
                 "type": "domain",
                 "pattern": ""
             },
-            "css": "body, p, li, blockquote, td {\nfont-family: Georgia, \"Times New Roman\", serif !important;\nline-height: 1.7 !important;\n}\np, li, blockquote {\nfont-size: 18px !important;\n}\narticle, main, .content, #content {\nmax-width: 40em !important;\nmargin: 0 auto !important;\n}\n",
+            "css": "body, p, li, blockquote, td {\nfont-family: Georgia, \"Times New Roman\", serif !important;\nline-height: 1.7 !important;\n}\np, li, blockquote {\nfont-size: 18px !important;\n}\n",
+            "enabled": false,
+            "tags": [
+                "theme"
+            ]
+        },
+        {
+            "builtinId": "theme-sans-reading",
+            "title": "Sans Serif Reading",
+            "description": "The same, with a sans serif body face.",
+            "scope": "theme",
+            "match": {
+                "type": "domain",
+                "pattern": ""
+            },
+            "css": "body, p, li, blockquote, td {\nfont-family: \"Helvetica Neue\", Helvetica, Arial, sans-serif !important;\nline-height: 1.7 !important;\n}\np, li, blockquote {\nfont-size: 18px !important;\n}\n",
             "enabled": false,
             "tags": [
                 "theme"
@@ -208,13 +320,13 @@
         {
             "builtinId": "theme-compact",
             "title": "Compact",
-            "description": "Smaller type and tighter spacing, for fitting more of a long page on a page.",
+            "description": "Smaller type on tighter lines, for fitting more of a long page on a page.",
             "scope": "theme",
             "match": {
                 "type": "domain",
                 "pattern": ""
             },
-            "css": "body, p, li, td {\nfont-size: 14px !important;\nline-height: 1.35 !important;\n}\np, ul, ol, blockquote, figure, h1, h2, h3 {\nmargin-top: 0.4em !important;\nmargin-bottom: 0.4em !important;\n}\n",
+            "css": "body, p, li, td {\nfont-size: 14px !important;\nline-height: 1.35 !important;\n}\n",
             "enabled": false,
             "tags": [
                 "theme"
@@ -238,13 +350,13 @@
         {
             "builtinId": "theme-force-light",
             "title": "Force Light Background",
-            "description": "Black on white, whatever the page uses - a dark page is captured as dark, and prints as a black slab.",
+            "description": "Dark text on a light page, whatever the page uses - a dark page is captured as dark, and prints as a black slab. Code blocks, quotations and callouts keep their own colours, so the highlighting in them survives.",
             "scope": "theme",
             "match": {
                 "type": "domain",
                 "pattern": ""
             },
-            "css": "html, body, article, main, section, div, p, li, td, th, blockquote, pre {\nbackground-color: #ffffff !important;\nbackground-image: none !important;\ncolor: #000000 !important;\n}\na, a * {\ncolor: #00000f !important;\n}\n",
+            "css": "html, body {\nbackground-color: #ffffff !important;\nbackground-image: none !important;\ncolor: #111111 !important;\n}\narticle, main, section, header, footer, aside, nav, ul, ol, dl, table, tbody, tr {\nbackground-color: transparent !important;\nbackground-image: none !important;\n}\n#root, #app, #__next, #__nuxt, #page, #wrapper, #container, [class*=\"page-wrapper\"], [class*=\"site-wrapper\"], [class*=\"app-shell\"] {\nbackground-color: transparent !important;\nbackground-image: none !important;\n}\np, li, dd, dt, td, th, figcaption, h1, h2, h3, h4, h5, h6 {\nbackground-color: transparent !important;\ncolor: #111111 !important;\n}\na, a * {\ncolor: #0645ad !important;\n}\n",
             "enabled": false,
             "tags": [
                 "theme"
@@ -252,14 +364,14 @@
         },
         {
             "builtinId": "theme-no-images",
-            "title": "No Images",
-            "description": "Leaves the pictures out, for a smaller file and a text-only read.",
+            "title": "Text Only",
+            "description": "Leaves the pictures out, for a smaller file and a text-only read. The figures they sat in are kept, so captions and attribution stay.",
             "scope": "theme",
             "match": {
                 "type": "domain",
                 "pattern": ""
             },
-            "css": "img, picture, figure, svg, video, iframe, canvas {\ndisplay: none !important;\n}\n",
+            "css": "img, picture, svg, canvas {\ndisplay: none !important;\n}\nfigure {\nbackground-image: none !important;\n}\n",
             "enabled": false,
             "tags": [
                 "theme"
