@@ -1,18 +1,14 @@
 # save-as-ebook
 
-Save a web page/selection as an eBook (.epub format) - a Chrome/Firefox/Opera Web Extension
+Save a web page/selection as an eBook (.epub format) - a Chrome/Firefox Web Extension
 
 <img src="https://github.com/alexadam/save-as-ebook/blob/master/imgs/menu.png?raw=true" width="350">
-
-![alt ex2.png](https://github.com/alexadam/save-as-ebook/blob/master/imgs/ex2.png?raw=true)
-
-![alt ex3.png](https://github.com/alexadam/save-as-ebook/blob/master/imgs/ex3.png?raw=true)
 
 ## How to install it
 
 ### From [Chrome Web Store](https://chrome.google.com/webstore/detail/save-as-ebook/haaplkpoiimngbppjihnegfmpejdnffj)
 
-or manually (tested on v. 52.0.2743.116)
+or manually
 
 ```
 1. Navigate to chrome://extensions/
@@ -22,19 +18,11 @@ or manually (tested on v. 52.0.2743.116)
 
 ### From [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/saveasebook/)
 
-or manually (tested on v. 50.0a2)
+or manually
 
 ```
 1. Navigate to about:debugging
 2. Load temporary add-on ...
-3. Select the extension's directory
-```
-
-### Opera (tested on v. 39.0.2256.48)
-
-```
-1. Navigate to opera:extensions
-2. Load unpacked extension ...
 3. Select the extension's directory
 ```
 
