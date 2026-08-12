@@ -1,7 +1,35 @@
+# Dependencies
 node_modules/
-tests/pages/
+
+# Extracted test fixtures (generated test output is covered by tests/.gitignore)
+/tests/pages/
+
+# Packaged extension artifacts
+/web-extension/save-as-ebook-*.zip
+/Archive.zip
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# macOS and Windows metadata
 .DS_Store
-__MACOSX/
+.AppleDouble
+.LSOverride
 ._*
-save-as-ebook-*.zip
-Archive.zip
+__MACOSX/
+Thumbs.db
+Desktop.ini
+
+# Local editor and coding-agent settings
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+*~
