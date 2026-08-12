@@ -177,37 +177,79 @@ Saving a chapter puts it back in the list. The book itself is still not written
 until **Generate** in the editor.
 
 
-## Style Library
+### Style Library
 
 Some pages carry things a book should not: a sidebar, a cookie banner, a sticky
 header that reappears in the middle of a chapter. The **Style Library** holds the
 CSS that is applied to a page *while it is being captured*, so that what is saved
 is the page without them.
 
-It is reached from the extension popup - the button lists the styles the page in
-front of you would take, each of which can be switched on or off there - and it
-is not the same thing as the eBook Stylesheet in the chapter editor, which styles
-the book that comes out.
+A style is a name, a note, a rule about which pages it covers, and some CSS. When
+a page is saved, every style that is switched on and covers that address is
+applied first, and only then is the page read into the book. Hiding an element
+with a style keeps it out of the .epub for good; this is not a viewing setting.
+Twenty four styles ship with the extension: cleanups for Reddit, Wikipedia,
+Hacker News, Medium and X, general ones that hide consent banners, ads, sidebars,
+comments, share buttons and newsletter prompts on any site, and whole-book looks
+such as serif reading, large print, compact and no images.
+
+The library is reached from the extension popup, whose button lists the styles
+the page in front of you would take, each of which can be switched on or off
+there. It is not the same thing as the eBook Stylesheet in the chapter editor:
+that one styles the book that comes out, this one changes pages on the way in.
+
+![alt style-library.png](https://github.com/alexadam/save-as-ebook/blob/master/imgs/style-library.png?raw=true)
+
+Three panels, left to right: the library, the style being edited, and the page
+they are tried on.
+
+**The library, on the left**
 
 | | |
 | --- | --- |
-| **Site style** | Applies to the pages its pattern covers. Matched by domain, by URL prefix, by a `*` glob, or by a regular expression. |
-| **Every-page style** | Applies to every capture - a serif face, larger text, no images. Ships switched off. |
-| **Built-in** | Bundled with the extension and kept up to date by it. Editing one makes it your own copy, which "Reset to built-in" undoes. |
+| **Search name, pattern or CSS** | Narrows the list by what you type, looking inside the CSS as well as at the names, so a style can be found by the selector it hides. |
+| **All, Applies here, Site styles, Every page, On** | Filters for, in order: everything; only what covers the page in the preview; only styles tied to a pattern; only styles applied to every capture; only what is switched on. |
+| **Mine, Built-in** | Splits the list by where a style came from: written or imported by you, or shipped with the extension. |
+| The checkbox on each row | Switches that style on or off. Off means it exists but is not applied to anything. |
+| The row itself | Click to open the style in the middle panel. Underneath the name it says where the style applies, and a badge on the right says **Built-in**, **Edited built-in**, **Imported** or **Yours**. |
+| **New site style** | Starts a style tied to a pattern, for one site or one part of one. |
+| **New every-page style** | Starts a style applied to every page captured, whatever the address. |
+| **Import ...** | Opens a style file, or takes one pasted in. It says what would be added and what already exists under the same name before writing anything, so a clash can be kept as a separate copy or written over. |
+| **Export all** | Writes the whole library to a JSON file. |
 
-The library page also holds a preview. Opening it with **Capture this page
-first** ticked - the checkbox under the popup's button, ticked by default unless
-the page has already been captured - takes a copy of the page you are on and
-renders it as the eBook will show it, with your styles applied as you type them.
-Pointing at something in that preview and clicking writes the rule that hides it.
-Capturing takes as long as saving the page does, so leave the box clear to open
-the library straight away on the last page captured.
+**The style, in the middle**
 
-Styles can be exported to a JSON file - one style or the whole library - and
-imported back. An import says what it would add and what it would land on top of
-before it writes anything. **Remote `url()` and `@import` references are removed
-from imported CSS**: they would fetch a file from another site every time you
-saved a page, which tells that site what you are reading.
+| | |
+| --- | --- |
+| The badge, **Duplicate**, **Export** | The badge says where this style came from. Duplicate makes a copy to change freely, which is the way to keep a built-in as it is while trying something else. Export writes this one style to a file. A built-in you have edited also gets **Reset to built-in**, which puts the shipped version back. |
+| **Name** | What the style is called in the list. |
+| **Note** | A line to yourself about what the style is for. |
+| **Applies to** | Either every page that is captured, or pages matching a pattern. Choosing the pattern reveals how to match (by domain, by address prefix, by a `*` glob, or by a regular expression), a box for the pattern, and a box holding an address to test it against, which says as you type whether that address matches. |
+| **CSS** | The rules themselves, applied to the page while it is captured, not to the eBook. |
+| **Hide images, Hide sidebars, Unstick headers, Hide comments, Single column, Bigger text** | Ready-made rules, written into the CSS box at a click, to be kept or changed. |
+| **Remove Style**, **Save Style** | At the foot of the window. Remove asks first. Nothing is applied to a capture until it is saved. |
+
+**The preview, on the right**
+
+The preview shows a copy of a real page, rendered the way the eBook will show it,
+with the styles above applied as you type them. Above it, the address it was
+taken from, and the styles it is showing, listed in the order they were applied.
+
+| | |
+| --- | --- |
+| **Pick element** | Point at something in the preview and click it to write the rule that hides it into the style you have open. The line underneath says what the click would hide, and how many elements on the page that rule covers, before you click. |
+| **Select parent**, **Select child** | Move the pick outwards to the box around what you are pointing at, or back inwards, when the thing you want is not what sits under the cursor. |
+| **Discard** | Throws away the captured page, leaving the library with nothing to preview against. |
+
+The page comes from the popup's **Capture this page first** checkbox, which is
+ticked by default unless the page has already been captured. Capturing takes as
+long as saving the page does, so leave the box clear to open the library straight
+away on the last page captured. Fonts, margins and pagination are not part of the
+preview: those belong to the reading system.
+
+**Remote `url()` and `@import` references are removed from imported CSS**: they
+would fetch a file from another site every time you saved a page, which tells
+that site what you are reading.
 
 ## Convert .epub to .mobi
 
