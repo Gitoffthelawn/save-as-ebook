@@ -343,30 +343,73 @@ made:
 ## Added in 2.0.0
  - Updated the manifest to v3
 
-## To-Do
- - DONE make the Custom Style Editor more user friendly - it is a searchable
-   library now, with built-in styles, a preview and an element picker
- - DONE support backup / restore for Custom Styles - export and import, per
-   style or for the whole library
- - DONE fix all 'epubcheck' errors (https://github.com/IDPF/epubcheck)
- - clean & optimize code
- - create tests
- - support other formats (mobi, pdf etc.)
- - show confirmations (ui/ux)
- - display errors (ui/ux)
- - DONE support custom style
- - add 'remove from ebook' right click menu action
+## Run Tests
 
-## Run Tests (Work in progress...)
+The tests are in `tests/`, and they run the code in `web-extension/` rather than
+a copy of it.
+
+### What you need
+
+**Node.js**. There is nothing to install, the tests have no npm or yarn
+dependencies.
+
+**Google Chrome or Chromium**, for the DOM tests. Those need a real browser,
+because the extraction code uses `getComputedStyle`, layout measurements,
+`canvas.toDataURL` and the HTML5 parser behind `<template>`. Chrome is found
+automatically on macOS, and through `google-chrome` or `chromium` on PATH.
+Otherwise set `CHROME=/path/to/chrome`.
+
+**EPUBCheck**, to validate a generated book. Install it with
+`brew install epubcheck`, or download a
+[release](https://github.com/w3c/epubcheck/releases) and set
+`EPUBCHECK_JAR=/path/to/epubcheck.jar`, which also needs `java` on PATH.
+
+When Chrome or EPUBCheck is missing, the steps that need them print `SKIP` and
+everything else still runs.
+
+### Run everything
+
  ```
  cd tests
- yarn install  # install puppeteer
- node test/index.js  # should start a chrome instance with Save as eBook loaded
-
- # it will generate and save the ebook in ./tmp-downloads
-
- .... 
+ ./run-all.sh
  ```
+
+It prints a section per stage. It ends with `ALL PASSED` and exit code 0, or
+with a list of the failures and exit code 1. A full run takes a couple of
+minutes. The books it builds are written to `tests/out/`, which is git ignored,
+so you can open them in a reader afterwards.
+
+### Run one piece at a time
+
+ ```
+ cd tests
+
+ ./run-dom-tests.sh          # every fixture in tests/dom/, in headless Chrome
+ node utils.js               # pure helper functions
+ node style-library.js       # style matching, and the v1 custom style migration
+ node background.js          # background jobs and message state
+ node outline.js             # chapter outline and navigation tree
+ node epub-builder.js        # EPUB builder scenarios
+
+ # build a book with the extension's own saveEbook.js, then check it
+ node build-epub.js out/fixture.epub            # a book of several chapters
+ node build-epub.js out/single.epub --single    # a one chapter book
+ node check-epub.js out/fixture.epub            # structural checks, no JVM needed
+ ./run-epubcheck.sh out/fixture.epub            # the official validator
+
+ # build a book out of chapters edited in the chapter editor, then validate it
+ ./build-edited-epub.sh
+
+ # check that each test in check-epub.js rejects a broken archive
+ node check-epub-negative.js out/fixture.epub
+ ```
+
+To run one DOM fixture instead of all of them, open it in a browser, for example
+`tests/dom/mathml.html`, and read the `PASS` and `FAIL` lines it renders.
+
+`check-epub.js` and `check-epub-negative.js` need a book to inspect, so run the
+matching `build-epub.js` first. `run-epubcheck.sh` builds one itself when the
+file is not there.
 
 ## Credits
  - http://ebooks.stackexchange.com/questions/1183/what-is-the-minimum-required-content-for-a-valid-epub
