@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "__MSG_extName__",
-    "version": "2.1.0",
+    "version": "2.2.0",
     "default_locale": "en",
     "author": "Alex Adam",
     "homepage_url": "https://github.com/alexadam/save-as-ebook",
