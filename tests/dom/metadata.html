@@ -16,6 +16,7 @@ window.chrome = {
 <script src="../../web-extension/utils.js"></script>
 <script src="../../web-extension/sanitizeHtml.js"></script>
 <script src="../../web-extension/extractHtml.js"></script>
+<script src="../../web-extension/cssSanitizer.js"></script>
 <script src="../../web-extension/saveEbook.js"></script>
 </head>
 <body>
@@ -122,6 +123,20 @@ window.addEventListener('load', function () {
                function () { return readPageMetadata(); });
   eq('an implausible year is dropped', m.date, '');
 
+  // A plausible year is not the whole test: the day has to be one the month
+  // has. This reaches dc:date, where epubcheck reports it as OPF-053.
+  m = withPage('<meta name="date" content="2024-02-31">', 'en',
+               function () { return readPageMetadata(); });
+  eq('a date shaped right but impossible is dropped', m.date, '');
+
+  m = withPage('<meta name="date" content="2024-01-01T29:70Z">', 'en',
+               function () { return readPageMetadata(); });
+  eq('a timestamp no clock shows is dropped', m.date, '');
+
+  m = withPage('<meta name="date" content="2024-02-29">', 'en',
+               function () { return readPageMetadata(); });
+  eq('a real leap day is kept verbatim', m.date, '2024-02-29');
+
   // ---- 4. language ----
   m = withPage('', 'EN_us', function () { return readPageMetadata(); });
   eq('lang="EN_us" is repaired rather than rejected', m.lang, 'en-US');
@@ -134,6 +149,14 @@ window.addEventListener('load', function () {
   eq('normalizeLanguageTag: template placeholder', normalizeLanguageTag('{{locale}}'), '');
   eq('normalizeLanguageTag: script and region cased', normalizeLanguageTag('zh-hans-cn'), 'zh-Hans-CN');
   eq('normalizeLanguageTag: plain code', normalizeLanguageTag('DE'), 'de');
+  // A digit is a fine subtag character and "1" is still not a subtag - it is
+  // neither a script, a region nor a variant, which is what OPF-092 says.
+  eq('normalizeLanguageTag: a bare digit subtag', normalizeLanguageTag('en-1'), '');
+  eq('normalizeLanguageTag: an extlang tag survives', normalizeLanguageTag('zh-yue'), 'zh-yue');
+  eq('normalizeLanguageTag: a numeric region survives', normalizeLanguageTag('es-419'), 'es-419');
+
+  m = withPage('', 'en-1', function () { return readPageMetadata(); });
+  eq('lang="en-1" does not reach the package document', m.lang, '');
 
   // ---- 4b. direction ----
   //

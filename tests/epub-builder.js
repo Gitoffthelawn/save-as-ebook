@@ -69,7 +69,7 @@ function makeSandbox() {
     sandbox.window.document = sandbox.document;
     sandbox.self = sandbox.window;
     vm.createContext(sandbox);
-    for (const file of ['libs/jszip.js', 'utils.js', 'saveEbook.js']) {
+    for (const file of ['libs/jszip.js', 'utils.js', 'cssSanitizer.js', 'saveEbook.js']) {
         vm.runInContext(fs.readFileSync(path.join(EXT, file), 'utf8'), sandbox, {filename: file});
         if (!sandbox.JSZip && sandbox.window.JSZip) sandbox.JSZip = sandbox.window.JSZip;
     }
@@ -118,15 +118,33 @@ async function build(env, pages, options) {
     });
 }
 
+// Which file each chapter was written to, in spine order. The builder names
+// those files itself rather than using the name on the chapter record - see
+// chapterFileName() - so a scenario that wants the second chapter's markup asks
+// the package where the second chapter is instead of guessing at a file name.
+function manifestPaths(opf, idPrefix) {
+    const pattern = new RegExp('<item id="' + idPrefix + '(\\d+)"[^>]*href="([^"]+)"', 'g');
+    return [...opf.matchAll(pattern)]
+        .sort((a, b) => Number(a[1]) - Number(b[1]))
+        .map((match) => 'OEBPS/' + match[2]);
+}
+
 async function inspect(env, result) {
     const zip = await env.sandbox.JSZip.loadAsync(result.raw);
     const read = async (name) => zip.file(name).async('string');
+    const opf = await read('OEBPS/content.opf');
+    const pages = manifestPaths(opf, 'ebook');
+    const styles = manifestPaths(opf, 'style');
     return {
         zip,
         names: Object.keys(zip.files).filter((name) => !zip.files[name].dir),
-        opf: await read('OEBPS/content.opf'),
+        opf,
         nav: await read('OEBPS/toc.xhtml'),
         ncx: await read('OEBPS/toc.ncx'),
+        pages,
+        styles,
+        page: (index) => read(pages[index]),
+        style: (index) => read(styles[index]),
         read
     };
 }
@@ -195,6 +213,72 @@ function equal(actual, expected, message) {
         ok(epub.opf.includes('<dc:title id="t1">Scenario Book</dc:title>'), 'the valid chapter should still build');
     });
 
+    // Chapter files used to be named by whatever the chapter record carried: a
+    // slug of the title, keeping only [a-z0-9_], plus four random digits. A
+    // title in a non-Latin script slugged away to nothing, so the name was the
+    // four digits alone, and two chapters drawing the same digits - or two
+    // chapters with the same title - were written to one file. JSZip's file()
+    // overwrites, so the first chapter's content left the book without a word
+    // being said about it, and the manifest declared the survivor twice.
+    await scenario('chapters with non-Latin, repeated, or colliding stored names get separate files', async () => {
+        const env = makeSandbox();
+        const pages = [
+            chapter({title: 'Русская глава', url: '_9753.xhtml', styleFileName: 'style9753.css',
+                     content: '<p>first</p>'}),
+            chapter({title: '中文章节', url: '_9753.xhtml', styleFileName: 'style9753.css',
+                     content: '<p>second</p>'}),
+            // the same page added to the book twice: one title, one stored name,
+            // and no slug rule that could tell the two records apart
+            chapter({title: 'Repeated', url: 'repeated4616.xhtml', content: '<p>third</p>'}),
+            chapter({title: 'Repeated', url: 'repeated4616.xhtml', content: '<p>fourth</p>'})
+        ];
+        const epub = await inspect(env, await build(env, pages));
+
+        equal(epub.pages.length, 4, 'every chapter should be declared in the manifest');
+        equal(new Set(epub.pages).size, 4, 'no two chapters may be written to one file');
+        equal(new Set(epub.styles).size, 4, 'no two chapters may share a stylesheet');
+        for (const name of epub.pages.concat(epub.styles)) {
+            ok(epub.names.includes(name), name + ' is in the manifest and not in the archive');
+        }
+        equal((epub.opf.match(/<itemref /g) || []).length, 4, 'every chapter should reach the spine');
+
+        // the content is the point: a name collision was never a naming problem
+        const bodies = await Promise.all(epub.pages.map((name, index) => epub.page(index)));
+        ['first', 'second', 'third', 'fourth'].forEach((text, index) => {
+            ok(bodies[index].includes('<p>' + text + '</p>'),
+               'chapter ' + index + ' should hold its own content');
+        });
+        // the landmarks nav names the first chapter too, so this is the table of
+        // contents alone: four chapters, four entries, no chapter listed twice
+        const toc = (epub.nav.match(/<nav id="toc"[\s\S]*?<\/nav>/) || [''])[0];
+        epub.pages.forEach((name) => {
+            const href = name.replace('OEBPS/', '');
+            equal((toc.match(new RegExp('href="' + href + '"', 'g')) || []).length, 1,
+                  'the table of contents should point at ' + href + ' exactly once');
+        });
+    });
+
+    await scenario('chapter file names are derived from the book, and the same book builds the same names', async () => {
+        const pages = [
+            chapter({title: 'Café Society — Part 1'}),
+            chapter({title: 'Ω'}),
+            chapter({title: 'A title long enough that nobody would want the whole of it in a path'})
+        ];
+        let env = makeSandbox();
+        const first = await inspect(env, await build(env, pages));
+        env = makeSandbox();
+        const second = await inspect(env, await build(env, pages));
+
+        equal(first.pages.join('|'), second.pages.join('|'),
+              'the same chapters should build to the same file names');
+        equal(first.pages[0], 'OEBPS/pages/ch0-cafe_society_part_1.xhtml',
+              'an accent should fold onto the letter it is drawn over');
+        equal(first.pages[1], 'OEBPS/pages/ch1.xhtml',
+              'a title with no ascii in it should still name a file of its own');
+        ok(first.pages[2].length <= 'OEBPS/pages/ch2-'.length + 40 + '.xhtml'.length,
+           'a long title should be cut down rather than written out: ' + first.pages[2]);
+    });
+
     await scenario('single-chapter and compilation package metadata take different branches', async () => {
         const first = chapter({
             url: 'one.xhtml',
@@ -249,7 +333,7 @@ function equal(actual, expected, message) {
         ok(epub.opf.includes('P &amp; P &lt;Press&gt;'), 'publisher was not escaped');
         ok(epub.opf.includes('D &amp; D &lt;words&gt; &quot;quote&quot; &apos;apostrophe&apos;'), 'description was not escaped');
         ok(epub.opf.includes('https://example.test/?a=1&amp;b=&quot;two&quot;&amp;c=&apos;three&apos;'), 'source URL was not escaped');
-        const content = await epub.read('OEBPS/pages/chapter.xhtml');
+        const content = await epub.page(0);
         ok(content.includes('<title>Chapter &amp; &lt;one&gt; &quot;quoted&quot;</title>'), 'chapter title was not escaped');
     });
 
@@ -286,7 +370,7 @@ function equal(actual, expected, message) {
                      '<img src="../images/no-data.png" alt="empty" />'
         });
         const epub = await inspect(env, await build(env, [page]));
-        const content = await epub.read('OEBPS/pages/chapter.xhtml');
+        const content = await epub.page(0);
         ok(content.includes('kept.jpg'), 'supported image was removed');
         ok(!/(unsupported\.bmp|missing\.png|no-data\.png)/.test(content), 'dangling image reference survived');
         equal(epub.names.filter((name) => name === 'OEBPS/images/kept.jpg').length, 1,
@@ -305,8 +389,7 @@ function equal(actual, expected, message) {
                      '<img src="https://cdn.example.test/images/photo.jpg" alt="remote" />' +
                      '<img src="//cdn.example.test/images/logo.png" alt="protocol relative" />'
         });
-        const content = await (await inspect(env, await build(env, [page])))
-              .read('OEBPS/pages/chapter.xhtml');
+        const content = await (await inspect(env, await build(env, [page]))).page(0);
         ok(content.includes('cdn.example.test/images/photo.jpg'), 'remote image was dropped');
         ok(content.includes('//cdn.example.test/images/logo.png'), 'protocol-relative image was dropped');
         ok(content.includes('../images/local.png'), 'local image was dropped');
@@ -406,18 +489,18 @@ function equal(actual, expected, message) {
         ]));
         ok(epub.opf.includes('page-progression-direction="rtl"'),
            'a book with a right to left chapter has to turn its pages that way');
-        ok((await epub.read('OEBPS/pages/ar.xhtml')).includes(' dir="rtl"'),
+        ok((await epub.page(0)).includes(' dir="rtl"'),
            'the right to left chapter should state its direction');
         // direction is only ever recorded when it is rtl, so taking the book's
         // for a chapter that recorded nothing would reverse this one
-        ok(!(await epub.read('OEBPS/pages/en.xhtml')).includes(' dir='),
+        ok(!(await epub.page(1)).includes(' dir='),
            'a chapter that said nothing about direction must not inherit the book\'s');
 
         env = makeSandbox();
         epub = await inspect(env, await build(env, [chapter()]));
         ok(!epub.opf.includes('page-progression-direction'),
            'a book with no right to left chapter should not state a progression direction');
-        ok(!(await epub.read('OEBPS/pages/chapter.xhtml')).includes(' dir='),
+        ok(!(await epub.page(0)).includes(' dir='),
            'left to right is the default and does not need saying');
 
         // chapters buffered before extraction read the direction at all
@@ -437,16 +520,16 @@ function equal(actual, expected, message) {
         equal(await epub.read('OEBPS/' + 'ebook.css'), 'body{font-family:serif}',
               'the book css should be written into ebook.css');
 
-        const page = await epub.read('OEBPS/pages/chapter.xhtml');
+        const page = await epub.page(0);
         ok(page.includes('<link href="../ebook.css" rel="stylesheet" type="text/css" />'),
            'every chapter should link the book stylesheet');
         // order is the cascade: the chapter's own is the more specific answer
-        ok(page.indexOf('../ebook.css') < page.indexOf('../style/chapter.css'),
+        ok(page.indexOf('../ebook.css') < page.indexOf('../' + epub.styles[0].replace('OEBPS/', '')),
            'the book stylesheet should be linked before the chapter\'s own');
         ok(epub.nav.includes('<link href="ebook.css"'),
            'the table of contents should link it too, from the root it sits in');
 
-        equal(await epub.read('OEBPS/style/chapter.css'),
+        equal(await epub.style(0),
               '.captured{color:#111}\np{text-align:justify}',
               'a chapter\'s own css should be appended to what extraction captured');
     });
@@ -456,7 +539,7 @@ function equal(actual, expected, message) {
         const epub = await inspect(env, await build(env, [chapter()]));
         equal(await epub.read('OEBPS/ebook.css'), '',
               'no book css means an empty ebook.css, as it always was');
-        equal(await epub.read('OEBPS/style/chapter.css'), '',
+        equal(await epub.style(0), '',
               'no chapter css means the captured stylesheet unchanged');
     });
 
@@ -483,7 +566,7 @@ function equal(actual, expected, message) {
         ok(book.includes('background-image:none'),
            'a removed url should leave a value the property accepts: ' + book);
 
-        const style = await epub.read('OEBPS/style/chapter.css');
+        const style = await epub.style(0);
         ok(!style.includes('@import'), 'no @import survives, quoted or in a url()');
         ok(!style.includes('cdn.test') && !style.includes('fonts.test'),
            'nothing remote survives: ' + style);
@@ -538,7 +621,7 @@ function equal(actual, expected, message) {
            'a compilation may be given a description, which it can never derive');
 
         // the chapters keep their own - a book-level answer is about the book
-        ok((await epub.read('OEBPS/pages/one.xhtml')).includes('xml:lang="fr"'),
+        ok((await epub.page(0)).includes('xml:lang="fr"'),
            'a stated book language must not restate every chapter');
         equal((epub.opf.match(/property="dcterms:created"/g) || []).length, 2,
               'each chapter still carries its own date');
@@ -599,9 +682,9 @@ function equal(actual, expected, message) {
         ];
         const epub = await inspect(env, await build(env, pages));
 
-        ok((await epub.read('OEBPS/pages/one.xhtml')).includes('xml:lang="ja"'),
+        ok((await epub.page(0)).includes('xml:lang="ja"'),
            'the chapter should be written in the language stated for it');
-        ok(!(await epub.read('OEBPS/pages/two.xhtml')).includes('xml:lang="ja"'),
+        ok(!(await epub.page(1)).includes('xml:lang="ja"'),
            'and the chapter beside it should not be');
         ok(epub.opf.includes('<dc:language>ja</dc:language>'),
            'the first chapter to state a language names the book\'s, override or not');

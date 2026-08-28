@@ -51,6 +51,15 @@
     "waitMessage": {
         "message": "Merci de patienter..."
     },
+    "restrictedTabMessage": {
+        "message": "Enregistrer comme eBook ne peut pas lire cet onglet. Les pages du navigateur, la boutique d'extensions et les fichiers PDF sont inaccessibles - essayez sur une page web ordinaire."
+    },
+    "busyMessage": {
+        "message": "Travail en cours ! Merci de patienter jusqu'à la fin de la génération de l'eBook."
+    },
+    "noTabMessage": {
+        "message": "Enregistrer comme eBook n'a pas trouvé la page à lire - merci de réessayer."
+    },
     "chapterEditorTitle": {
         "message": "Éditeur de chapitre"
     },
@@ -182,6 +191,9 @@
     },
     "discardEditsConfirm": {
         "message": "Ce chapitre a des modifications non enregistrées. Fermer sans enregistrer ?"
+    },
+    "discardChangesConfirm": {
+        "message": "Ce livre a des modifications non enregistrées. Fermer sans enregistrer ?"
     },
     "remove": {
         "message": "Retirer"

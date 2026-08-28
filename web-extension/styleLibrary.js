@@ -7,6 +7,9 @@
 // has one answer instead of one per caller. Nothing here touches chrome.* or the
 // DOM: the matcher and the migration are the two things that have to be right,
 // and both are testable on their own.
+//
+// Its one dependency is cssSanitizer.js, which the import path below calls and
+// which is loaded alongside this file everywhere this file is.
 
 // Bumped when the stored shape changes. A library written by a later version is
 // read as best it can be but never rewritten - see migrateStyleLibrary.
@@ -738,59 +741,18 @@ function styleExportFileName(title) {
 // That is a tracking beacon fired by a file the user was invited to trust, and
 // there is nothing a site style needs a remote resource for.
 //
-// saveEbook.js removes the same two constructs from the stylesheets that go into
-// a book, for reasons of its own (an epub has to read offline, and a remote
-// reference has to be declared). The rules are deliberately spelled out again
-// here rather than shared: that file writes ebooks and is not loaded by the
-// service worker, and this one has to report what it took out so that the user
-// is told rather than quietly protected.
-
-var STYLE_IMPORT_REGEX = /@import\b(?:[^;{}'"]|'[^']*'|"[^"]*")*(?:;|(?=\})|$)/gi;
-var STYLE_URL_REGEX = /\burl\(\s*(?:"([^"]*)"|'([^']*)'|([^)"'\s]*))\s*\)/gi;
-
-// Anything with a scheme, plus the scheme-relative "//host/path" form. A data:
-// url is the resource itself rather than an address to fetch it from, and a
-// relative one cannot leave the page the style is running on.
-function isRemoteStyleUrl(target) {
-    let value = String(target === undefined || target === null ? '' : target).trim();
-    if (/^data:/i.test(value)) {
-        return false;
-    }
-    return /^(?:[a-z][a-z0-9+.\-]*:|\/\/)/i.test(value);
-}
-
-// The css with those references gone, and the list of what went - the second
-// half being the point: a style that quietly does less than the file said is
-// worse than one that says what was dropped from it.
+// saveEbook.js removes the same constructs from the stylesheets that go into a
+// book, for reasons of its own (an epub has to read offline, and a remote
+// reference has to be declared). Both call cssSanitizer.js, which is where the
+// rule and the reasoning behind it live: a stylesheet has more than one way to
+// name an address - url(), image-set(), a custom property holding a string, an
+// identifier spelled with css escapes - and finding all of them takes a
+// tokenizer, which is not a thing worth writing twice.
 //
-// A removed url() becomes 'none' rather than nothing, for the reason saveEbook.js
-// gives: an empty value takes the whole declaration - and any fallback beside it
-// - down with it.
+// What this call site adds is the report. The user is told what was taken out of
+// a file they were given, rather than quietly protected from it.
 function stripRemoteCssReferences(css) {
-    let removed = [];
-    let note = (reference) => {
-        let text = String(reference).replace(/\s+/g, ' ').trim();
-        if (text !== '' && removed.indexOf(text) < 0) {
-            removed.push(text);
-        }
-    };
-
-    let cleaned = String(css === undefined || css === null ? '' : css)
-        .replace(STYLE_IMPORT_REGEX, (rule) => {
-            note(rule);
-            return '';
-        })
-        .replace(STYLE_URL_REGEX, (rule, quoted, single, bare) => {
-            let target = quoted !== undefined ? quoted :
-                         single !== undefined ? single : bare;
-            if (!isRemoteStyleUrl(target)) {
-                return rule;
-            }
-            note(target);
-            return 'none';
-        });
-
-    return {css: cleaned, removed: removed};
+    return sanitizeCssResources(css);
 }
 
 // The styles in a file somebody was given, or in text they pasted.

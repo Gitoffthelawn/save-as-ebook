@@ -59,6 +59,65 @@ for (const value of ['', '   ', 'javascript', '{{locale}}', 'en--US', 'e', 'en-v
        sandbox.normalizeLanguageTag(value), '');
 }
 
+// Subtags are positional, so a per-subtag "1-8 alphanumeric" test is not the
+// grammar: every value below is alphanumeric and none of them is a tag.
+// epubcheck reports these as OPF-092.
+for (const value of ['en-1', 'en-9', 'en-12', 'en-2-3', 'en-US-1', 'en-Latn-US-abcd',
+                     'x-private', 'en-x', 'en-a']) {
+    eq('a well-shaped subtag in the wrong position is rejected: ' + value,
+       sandbox.normalizeLanguageTag(value), '');
+}
+// ...and the rest of the grammar still passes. Rejecting a tag epubcheck would
+// have taken costs the page its language, so the check has to be the grammar
+// and not a subset of it.
+for (const value of ['zh-yue', 'es-419', 'en-1abc', 'de-DE-1901', 'en-Latn-US-fonipa',
+                     'en-x-foo', 'nan-Hant-TW']) {
+    eq('a valid tag survives unchanged: ' + value,
+       sandbox.normalizeLanguageTag(value), value);
+}
+eq('an extension singleton ends the region casing',
+   sandbox.normalizeLanguageTag('EN-us-U-ca-gregory'), 'en-US-u-ca-gregory');
+
+// ---- dates ----------------------------------------------------------------
+//
+// The well-formed branch keeps its text verbatim, which is only safe if the
+// fields in it are a real moment: "2024-02-31" parses as a shape and fails
+// epubcheck as a dc:date (OPF-053).
+
+for (const [value, expected] of [
+    ['2024', '2024'],
+    ['2024-02', '2024-02'],
+    ['2024-02-29', '2024-02-29'],
+    ['2000-02-29', '2000-02-29'],
+    ['2024-12-31', '2024-12-31'],
+    ['2024-01-01T23:59:59Z', '2024-01-01T23:59:59Z'],
+    ['2024-01-01T09:30:00+02:00', '2024-01-01T09:30:00+02:00'],
+    ['  2024-03-01  ', '2024-03-01'],
+    ['Fri, 01 Mar 2024 09:00:00 GMT', '2024-03-01T09:00:00Z']
+]) {
+    eq('a real date is kept: ' + JSON.stringify(value),
+       sandbox.normalizeDate(value), expected);
+}
+for (const value of [
+    '2024-99-99',       // no such month or day
+    '2024-00-10',       // months count from one
+    '2024-13-01',
+    '2024-02-31',       // never a day
+    '2023-02-29',       // not a leap year
+    '1900-02-29',       // a century that is not a leap year
+    '2024-01-32',
+    '2024-01-01T29:70Z',
+    '2024-01-01T24:00:00Z',
+    '2024-01-01T09:30:60Z',
+    '2024-01-01T09:30:00+25:00',
+    '2024-01-01T09:30:00+02:99',
+    '1399-01-01',       // implausible year, checked before the fields
+    '', '   ', 'last tuesday', null, undefined, 42
+]) {
+    eq('an impossible date is rejected: ' + JSON.stringify(value),
+       sandbox.normalizeDate(value), '');
+}
+
 // ---- safe link schemes ----------------------------------------------------
 
 for (const href of ['https://example.com', 'HTTP://example.com', '../chapter', '#note', 'mailto:a@example.com']) {
@@ -132,6 +191,29 @@ eq('XML entity spellings cannot introduce markup into a filename',
    'Rock & Roll Live Mix 24');
 eq('filename sanitization preserves Unicode',
    sandbox.getEbookFileName(sandbox.removeSpecialChars('Café/你好')), 'Café-你好');
+
+// ---- title slugs ----------------------------------------------------------
+
+eq('a slug is lowercase, ascii, and joined by underscores',
+   sandbox.slugifyTitle('Hello World: An Article!'), 'hello_world_an_article');
+eq('accents fold onto the letters they are drawn over',
+   sandbox.slugifyTitle('Café Society — Part 1'), 'cafe_society_part_1');
+eq('a slug has no leading or trailing underscore',
+   sandbox.slugifyTitle('  ...Ends & Edges...  '), 'ends_edges');
+eq('a long title is cut down rather than written out',
+   sandbox.slugifyTitle('a'.repeat(200)), 'a'.repeat(40));
+// The honest answer, and the reason buildEbook() cannot name a chapter file
+// from a slug alone: there is nothing ascii here to name it with.
+for (const title of ['Русская глава', '中文章节', 'Ελληνικά', 'العربية', '😀', '', null, undefined]) {
+    eq('a title with no ascii in it slugs to nothing: ' + JSON.stringify(title),
+       sandbox.slugifyTitle(title), '');
+}
+check('a stored chapter name is readable and ends in .xhtml',
+      /^hello_world[0-9]+\.xhtml$/.test(sandbox.getPageUrl('Hello World')),
+      sandbox.getPageUrl('Hello World'));
+check('a stored chapter name for a non-Latin title is still a name',
+      /^page[0-9]+\.xhtml$/.test(sandbox.getPageUrl('Русская глава')),
+      sandbox.getPageUrl('Русская глава'));
 
 // ---- base64 ---------------------------------------------------------------
 

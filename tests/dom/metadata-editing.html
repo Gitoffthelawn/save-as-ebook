@@ -86,6 +86,7 @@ window.addEventListener('error', function(e){ errors.push(e.message); });
 <script src="../../web-extension/utils.js"></script>
 <script src="../../web-extension/libs/jszip.js"></script>
 <script src="../../web-extension/sanitizeHtml.js"></script>
+<script src="../../web-extension/cssSanitizer.js"></script>
 <script src="../../web-extension/saveEbook.js"></script>
 <script src="../../web-extension/chapterPreview.js"></script>
 <script src="../../web-extension/chapterContentEditor.js"></script>
@@ -248,6 +249,22 @@ setTimeout(function () {
   type(book('date'), '2024-06-01');
   report('...which a date it can use clears',
          element('chapterEditor-bookMeta-dateWarning').innerText === '');
+
+  // The two that look right and are not. The editor warns with the same
+  // functions the build validates with, so what is called out here is exactly
+  // what would have been dropped from the package document - and before these
+  // were range-checked, neither was called out and both reached the file.
+  type(book('lang'), 'en-1');
+  report('a subtag in the wrong position is called out',
+         element('chapterEditor-bookMeta-langWarning').innerText === 'metadataLanguageIgnored',
+         element('chapterEditor-bookMeta-langWarning').innerText);
+  type(book('lang'), 'pt-BR');
+
+  type(book('date'), '2024-02-31');
+  report('a day the month does not have is called out',
+         element('chapterEditor-bookMeta-dateWarning').innerText === 'metadataDateIgnored',
+         element('chapterEditor-bookMeta-dateWarning').innerText);
+  type(book('date'), '2024-06-01');
 
   // ---- the chapter panel -----------------------------------------------------
   element('li0').getElementsByTagName('button')[0].click();

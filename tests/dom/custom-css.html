@@ -76,6 +76,7 @@ window.addEventListener('error', function(e){ errors.push(e.message); });
 <script src="../../web-extension/utils.js"></script>
 <script src="../../web-extension/libs/jszip.js"></script>
 <script src="../../web-extension/sanitizeHtml.js"></script>
+<script src="../../web-extension/cssSanitizer.js"></script>
 <script src="../../web-extension/saveEbook.js"></script>
 <script src="../../web-extension/chapterPreview.js"></script>
 <script src="../../web-extension/chapterContentEditor.js"></script>
@@ -182,6 +183,39 @@ setTimeout(function () {
              '@media print{p{page-break-after:avoid;--x:1}}');
   report('nothing at all is not an error',
          sanitizeStylesheet(undefined) === '' && sanitizeStylesheet(null) === '');
+
+  // A book that phones home when it is opened is the same failure as one that
+  // does it while being made, and url() is not the only way to write the call.
+  // Each of these is fetched by a reading system and was carried into the
+  // archive whole while this was a pattern match rather than a tokenizer.
+  [['image-set takes a bare string',
+    'p{background-image:image-set("https://cdn.test/x.png" 1x)}'],
+   ['a comment sits where a space may',
+    'p{background-image:url( /*c*/ "https://cdn.test/x.png")}'],
+   ['url can be spelled with escapes',
+    'p{background-image:\\75 rl("https://cdn.test/x.png")}'],
+   ['and so can @import',
+    '@\\69 mport "https://cdn.test/a.css";p{color:red}'],
+   ['a custom property is a place to keep one',
+    ':root{--px:"https://cdn.test/x.png"}p{background-image:image-set(var(--px) 1x)}'],
+   ['a font is fetched like a picture',
+    '@font-face{font-family:x;src:src("https://cdn.test/f.woff2")}']
+  ].forEach(function (testCase) {
+    report('a remote reference does not survive: ' + testCase[0],
+           sanitizeStylesheet(testCase[1]).indexOf('cdn.test') < 0,
+           sanitizeStylesheet(testCase[1]));
+  });
+
+  // The other half of reading css as tokens: what only looks like an address is
+  // still the user's text, and the file comes back byte for byte.
+  ['p{content:"see https://example.com"}',
+   'a[href="https://example.com"]{color:red}',
+   '/* url(https://example.com/x.png) */p{color:red}',
+   'p{filter:url(#blur)}'
+  ].forEach(function (css) {
+    report('what is not a fetch is left as written: ' + css,
+           sanitizeStylesheet(css) === css, sanitizeStylesheet(css));
+  });
 
   // ---- what the chapter's stylesheet is --------------------------------------
   report('the captured stylesheet comes first, the user\'s after it',

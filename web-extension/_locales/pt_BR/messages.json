@@ -51,6 +51,15 @@
     "waitMessage": {
         "message": "Por favor, aguarde ..."
     },
+    "restrictedTabMessage": {
+        "message": "Salvar como eBook não consegue ler esta aba. Páginas do navegador, a loja de extensões e arquivos PDF não são acessíveis - tente em uma página web comum."
+    },
+    "busyMessage": {
+        "message": "Trabalho em andamento! Por favor, aguarde até que o eBook atual seja gerado."
+    },
+    "noTabMessage": {
+        "message": "Salvar como eBook não encontrou a página para ler - por favor, tente novamente."
+    },
     "chapterEditorTitle": {
         "message": "Editor de capítulos"
     },
@@ -182,6 +191,9 @@
     },
     "discardEditsConfirm": {
         "message": "Este capítulo tem alterações não salvas. Fechar sem salvar?"
+    },
+    "discardChangesConfirm": {
+        "message": "Este livro tem alterações não salvas. Fechar sem salvar?"
     },
     "remove": {
         "message": "Remover"

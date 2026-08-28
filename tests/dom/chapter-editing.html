@@ -30,7 +30,10 @@ var FIXTURE_PAGES = [
     content: '<p id="keep">kept text</p>' +
              '<aside class="ad"><p>advert</p>' +
              '<img src="../images/img-2.png" alt="ad" /></aside>' +
-             '<p><img src="../images/img-1.png" alt="figure" /></p>' +
+             // the shape readSvgs() used to write: a laid-out size is a
+             // double, and an <img> in a chapter is measured in whole pixels
+             '<p><img src="../images/img-1.png" alt="figure" ' +
+             'width="16.296875" height="24" /></p>' +
              '<h2 id="sec">A section &amp; its heading</h2>' +
              '<table><caption>A table</caption>' +
              '<colgroup><col span="2" /></colgroup>' +
@@ -42,8 +45,14 @@ var FIXTURE_PAGES = [
              '<p lang="fr" dir="ltr">un paragraphe, ' +
              '<abbr title="s\'il vous plaît">svp</abbr>, le ' +
              '<time datetime="2024-03-01">1 mars</time></p>' +
+             // foo and bogus are invented MathML attributes; rowspan is real,
+             // but only on mtd. EPUBCheck validates per element, so each is an
+             // RSC-005 that fails the whole book rather than the one formula.
+             // This round trip carries them into the package if the sanitizer
+             // stops stripping them, and build-edited-epub.sh is what says so.
              '<p>A formula <math xmlns="http://www.w3.org/1998/Math/MathML" ' +
-             'display="block" alttext="x^2"><mrow><msup><mi>x</mi><mn>2</mn></msup>' +
+             'display="block" alttext="x^2" foo="bar"><mrow>' +
+             '<msup><mi bogus="x" rowspan="2">x</mi><mn>2</mn></msup>' +
              '</mrow></math></p>' +
              '<p><a href="#sec">into the chapter</a> and ' +
              '<a href="https://example.com/elsewhere">out of it</a></p>',
@@ -101,6 +110,7 @@ window.addEventListener('error', function(e){ errors.push(e.message); });
 <script src="../../web-extension/utils.js"></script>
 <script src="../../web-extension/libs/jszip.js"></script>
 <script src="../../web-extension/sanitizeHtml.js"></script>
+<script src="../../web-extension/cssSanitizer.js"></script>
 <script src="../../web-extension/saveEbook.js"></script>
 <script src="../../web-extension/chapterPreview.js"></script>
 <script src="../../web-extension/chapterContentEditor.js"></script>
@@ -362,6 +372,10 @@ function afterSave() {
   report('no data url reached storage', saved.content.indexOf('data:image') < 0);
   report('the surviving image points into the archive again',
          saved.content.indexOf('src="../images/img-1.png"') > -1, saved.content);
+  report('a fractional image width does not survive the round trip',
+         saved.content.indexOf('16.296875') < 0, saved.content);
+  report('the integer height beside it does',
+         saved.content.indexOf('height="24"') > -1, saved.content);
   report('no editor class was left on the content',
          saved.content.indexOf('sae-edit') < 0 && saved.content.indexOf('class=""') < 0,
          saved.content);

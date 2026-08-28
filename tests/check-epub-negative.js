@@ -52,6 +52,23 @@ async function rewrite(zip, name, change) {
     zip.file(name, change(original));
 }
 
+// The builder names the chapter files, deriving each one from the chapter's
+// position in the book rather than from anything the fixture states, so the
+// mutations below ask the package which file a chapter landed in instead of
+// spelling the name out and going stale the next time the rule changes.
+async function chapterHref(zip, index) {
+    const opf = await zip.file('OEBPS/content.opf').async('string');
+    const match = opf.match(new RegExp('<item id="ebook' + index + '"[^>]*href="([^"]+)"'));
+    if (!match) {
+        throw new Error('the fixture has no chapter ' + index);
+    }
+    return match[1].replace(/^pages\//, '');
+}
+
+async function rewriteChapter(zip, index, change) {
+    return rewrite(zip, 'OEBPS/pages/' + await chapterHref(zip, index), change);
+}
+
 async function mutatedArchive(raw, mutate) {
     const zip = await JSZip.loadAsync(raw);
     await mutate(zip);
@@ -124,6 +141,12 @@ async function runCase(tempDir, raw, test) {
     pass('uncorrupted baseline passes before negative checks');
 
     const raw = fs.readFileSync(fixture);
+    // the names the three fixture chapters were built under, for the mutations
+    // that reach into one chapter to break a link to another
+    const fixtureZip = await JSZip.loadAsync(raw);
+    const first = await chapterHref(fixtureZip, 0);
+    const second = await chapterHref(fixtureZip, 1);
+    const third = await chapterHref(fixtureZip, 2);
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'save-as-ebook-check-'));
     const tests = [
         {
@@ -152,6 +175,13 @@ async function runCase(tempDir, raw, test) {
                 replace(opf, 'id="style1"', 'id="style0"'))
         },
         {
+            name: 'two manifest items naming one file are rejected',
+            slug: 'shared-manifest-href',
+            expected: 'no two manifest items name the same file',
+            mutate: (zip) => rewrite(zip, 'OEBPS/content.opf', (opf) =>
+                replace(opf, 'href="pages/' + second + '"', 'href="pages/' + first + '"'))
+        },
+        {
             name: 'a dangling spine idref is rejected',
             slug: 'dangling-spine',
             expected: 'every spine itemref resolves',
@@ -162,7 +192,7 @@ async function runCase(tempDir, raw, test) {
             name: 'a dangling image source is rejected',
             slug: 'dangling-image',
             expected: 'every <img> in the content resolves to a file in the archive',
-            mutate: (zip) => rewrite(zip, 'OEBPS/pages/chapter0.xhtml', (xhtml) =>
+            mutate: (zip) => rewriteChapter(zip, 0, (xhtml) =>
                 replace(xhtml, '../images/img-1.png', '../images/missing.png'))
         },
         {
@@ -170,28 +200,28 @@ async function runCase(tempDir, raw, test) {
             slug: 'dangling-navigation',
             expected: 'every navigation target resolves to a file and an id in it',
             mutate: (zip) => rewrite(zip, 'OEBPS/toc.xhtml', (nav) =>
-                replace(nav, 'href="pages/chapter0.xhtml"', 'href="pages/missing.xhtml"'))
+                replace(nav, 'href="pages/' + first + '"', 'href="pages/missing.xhtml"'))
         },
         {
             name: 'a dangling content fragment is rejected',
             slug: 'dangling-fragment',
             expected: 'every link into a chapter resolves to an id in that same chapter',
-            mutate: (zip) => rewrite(zip, 'OEBPS/pages/chapter0.xhtml', (xhtml) =>
+            mutate: (zip) => rewriteChapter(zip, 0, (xhtml) =>
                 replace(xhtml, 'href="#results"', 'href="#missing-fragment"'))
         },
         {
             name: 'a link to a chapter the book does not hold is rejected',
             slug: 'dangling-chapter-link',
             expected: 'every link between chapters resolves to a file in the book and an id in it',
-            mutate: (zip) => rewrite(zip, 'OEBPS/pages/chapter0.xhtml', (xhtml) =>
-                replace(xhtml, 'href="chapter1.xhtml"', 'href="missing.xhtml"'))
+            mutate: (zip) => rewriteChapter(zip, 0, (xhtml) =>
+                replace(xhtml, 'href="' + second + '"', 'href="missing.xhtml"'))
         },
         {
             name: 'a link to a chapter naming an id it does not have is rejected',
             slug: 'dangling-chapter-fragment',
             expected: 'every link between chapters resolves to a file in the book and an id in it',
-            mutate: (zip) => rewrite(zip, 'OEBPS/pages/chapter0.xhtml', (xhtml) =>
-                replace(xhtml, 'href="chapter2.xhtml#summary"', 'href="chapter2.xhtml#missing"'))
+            mutate: (zip) => rewriteChapter(zip, 0, (xhtml) =>
+                replace(xhtml, 'href="' + third + '#summary"', 'href="' + third + '#missing"'))
         },
         {
             name: 'a right to left book that pages left to right is rejected',

@@ -54,6 +54,15 @@
     "waitMessage": {
         "message": "Please Wait ..."
     },
+    "restrictedTabMessage": {
+        "message": "Save as eBook cannot read this tab. Browser pages, the extension store and PDF files are off limits - try it on an ordinary web page."
+    },
+    "busyMessage": {
+        "message": "Work in progress! Please wait until the current eBook is generated."
+    },
+    "noTabMessage": {
+        "message": "Save as eBook could not find the page to read - please try again."
+    },
     "chapterEditorTitle": {
         "message": "Chapter Editor"
     },
@@ -185,6 +194,9 @@
     },
     "discardEditsConfirm": {
         "message": "This chapter has unsaved edits. Close without saving?"
+    },
+    "discardChangesConfirm": {
+        "message": "This book has unsaved changes. Close without saving?"
     },
     "remove": {
         "message": "Remove"

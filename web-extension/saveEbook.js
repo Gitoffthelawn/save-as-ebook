@@ -11,59 +11,33 @@ var cssFileName = 'ebook.css';
 // package invalid either - css a reading system does not understand is css it
 // ignores.
 //
-// What this removes is neither of those judgements. It is the two ways a
-// stylesheet reaches outside the archive, which both kinds can do:
+// What this removes is neither of those judgements. It is the ways a stylesheet
+// reaches outside the archive, which both kinds can do:
 //
-//   @import       pulls in another stylesheet, which for a remote address is a
-//                 network fetch from inside a file that is supposed to read
-//                 offline, and for a local one names a file the archive has no
-//                 way to contain.
-//   remote url()  a background image or a font fetched off the network. EPUB
-//                 requires a manifest item referencing a remote resource to say
-//                 so (properties="remote-resources"), and this build makes no
-//                 such claim about any file it writes - so rather than have the
-//                 claim and the content disagree, the reference goes. Captured
-//                 css hits this as well: 'list-style' serializes an absolute
-//                 url whenever the page gave its bullets a picture.
+//   @import          pulls in another stylesheet, which for a remote address is
+//                    a network fetch from inside a file that is supposed to read
+//                    offline, and for a local one names a file the archive has
+//                    no way to contain.
+//   a remote address a background image or a font fetched off the network. EPUB
+//                    requires a manifest item referencing a remote resource to
+//                    say so (properties="remote-resources"), and this build
+//                    makes no such claim about any file it writes - so rather
+//                    than have the claim and the content disagree, the reference
+//                    goes. Captured css hits this as well: 'list-style'
+//                    serializes an absolute url whenever the page gave its
+//                    bullets a picture.
+//
+// url() is not the only way to write the second one, which is why the work is
+// done by a tokenizer in cssSanitizer.js rather than by a pattern here. That
+// file states the whole rule and why it is that rule; this one only says which
+// half of the result it wants.
 //
 // A url() that is not remote is left alone: "../images/photo.jpg" from a chapter
 // stylesheet resolves to a picture the book really does contain, and using one as
 // a background is a reasonable thing to want. data: urls stay for the same
 // reason - they are carried in the file rather than fetched.
-
-// A url() target that leaves the archive: anything with a scheme, plus the
-// scheme-relative "//host/path" form. data: is not one of these - it is the
-// resource itself, not an address to go and get it from.
-function isRemoteCssUrl(target) {
-    var value = String(target || '').trim();
-    if (/^data:/i.test(value)) {
-        return false;
-    }
-    return /^(?:[a-z][a-z0-9+.\-]*:|\/\/)/i.test(value);
-}
-
-// An @import rule runs to the first semicolon; a quoted string inside it may
-// contain one, so strings are matched rather than scanned through. A rule left
-// unterminated at the end of the file, or at the end of the block it sits in,
-// ends there.
-var CSS_IMPORT_REGEX = /@import\b(?:[^;{}'"]|'[^']*'|"[^"]*")*(?:;|(?=\})|$)/gi;
-var CSS_URL_REGEX = /\burl\(\s*(?:"([^"]*)"|'([^']*)'|([^)"'\s]*))\s*\)/gi;
-
-// What a removed url() becomes. Dropping the token outright would leave
-// "background-image: ;", which a parser discards along with any fallback beside
-// it; 'none' is a value the properties that take a url actually accept, and
-// where it is not one the declaration is dropped by css error recovery, which is
-// the same outcome.
-var REMOVED_CSS_URL = 'none';
-
 function sanitizeStylesheet(css) {
-    return String(css == null ? '' : css)
-        .replace(CSS_IMPORT_REGEX, '')
-        .replace(CSS_URL_REGEX, function(rule, quoted, single, bare) {
-            var target = quoted !== undefined ? quoted :
-                         single !== undefined ? single : bare;
-            return isRemoteCssUrl(target) ? REMOVED_CSS_URL : rule;
-        });
+    return sanitizeCssResources(css).css;
 }
 
 // The stylesheet a chapter is written with: what extraction captured from the
@@ -119,6 +93,33 @@ function dropUntypedImages(page) {
     return Object.assign({}, page, {images: usable, content: content});
 }
 
+// The names the chapter and its stylesheet are written under in the archive.
+//
+// They are derived here rather than taken from the chapter record, because the
+// names in the record are not unique. A stored `url` is minted at extraction
+// time as a slug of the page title plus four random digits, and neither half of
+// that can be relied on: the slug keeps only [a-z0-9_], so a title in Cyrillic,
+// CJK, Greek, Arabic or Hebrew reduces to nothing and the name is the four
+// digits alone - a draw from ten thousand values that a fifty-chapter book of
+// same-script titles collides on about one time in nine. Two chapters landing
+// on one name is not a cosmetic problem: JSZip's file() overwrites, so the
+// first chapter's content is gone from the book with nothing reported, and the
+// manifest declares the one surviving file twice, which is an invalid package.
+// `styleFileName` drew from a larger space and so collided more rarely, with
+// the same two consequences when it did.
+//
+// A chapter's position in the normalized list is unique by construction, so
+// that, and not chance, is what separates the names. The slug after it is for
+// a person reading the archive; the build never reads meaning back out of it,
+// which is why dropping it entirely for a title with no ascii letters is a
+// loss of readability and not of correctness. Deriving both names also makes a
+// build reproducible - the same chapters produce the same archive - and keeps
+// a name that arrived from storage from deciding what path is written to.
+function chapterFileName(page, index) {
+    var slug = slugifyTitle(page.title);
+    return 'ch' + index + (slug ? '-' + slug : '') + '.xhtml';
+}
+
 // Only complete chapter records can become spine items. A null or partially
 // written record can be left behind if the browser is closed while storage is
 // being updated; skipping that record is preferable to losing every good
@@ -129,6 +130,9 @@ function normalizeChapters(allPages) {
         return [];
     }
     return allPages.filter(function(page) {
+        // The stored url is read here as evidence that extraction finished
+        // writing this record, not as a value the build goes on to use: the name
+        // the chapter is written under is minted below.
         return page && typeof page === 'object' &&
                typeof page.title === 'string' && page.title.trim().length > 0 &&
                typeof page.url === 'string' && page.url.trim().length > 0;
@@ -136,8 +140,9 @@ function normalizeChapters(allPages) {
         return dropUntypedImages(Object.assign({}, page, {
             content: typeof page.content === 'string' ? page.content : '',
             images: Array.isArray(page.images) ? page.images : [],
-            styleFileName: typeof page.styleFileName === 'string' && page.styleFileName ?
-                           page.styleFileName : 'style' + index + '.css',
+            // both names are the build's to decide - see chapterFileName()
+            url: chapterFileName(page, index),
+            styleFileName: 'style' + index + '.css',
             styleFileContent: typeof page.styleFileContent === 'string' ? page.styleFileContent : '',
             // kept beside the captured stylesheet rather than merged into it, so
             // that reopening the editor shows the user what they wrote and not
@@ -191,7 +196,12 @@ function collectUniqueImages(allPages) {
 
 chrome.runtime.onMessage.addListener((obj, sender, sendResponse) => {
     if (obj && obj.shortcut === 'build-ebook') {
-        buildEbook(obj.response);
+        // Which background job this build belongs to, carried down through the
+        // build rather than kept in a variable of its own: this script is
+        // injected once per tab and outlives any one job, so a global would be
+        // overwritten by the next build in the same tab while the previous one
+        // was still compressing.
+        buildEbook(obj.response, null, obj.jobId || null);
         return false;
     }
     if (obj && obj.alert) {
@@ -205,9 +215,14 @@ chrome.runtime.onMessage.addListener((obj, sender, sendResponse) => {
 })
 
 // Tells the background the job is over, whichever way it ended. Every exit from
-// _buildEbook() goes through this: without it a failed build leaves the badge on
+// buildEbook() goes through this: without it a failed build leaves the badge on
 // and the extension refusing to start anything else until the job times out.
-function finishJob(errorMessage) {
+//
+// The job is named, so that a build which outlived its own job - reclaimed after
+// its heartbeats stopped reaching the background - ends nothing belonging to the
+// job that replaced it. A build with no job behind it, which is what the chapter
+// editor's Generate button is, ends nobody's.
+function finishJob(errorMessage, jobId) {
     if (errorMessage) {
         console.log('Error:', errorMessage);
         try {
@@ -217,7 +232,7 @@ function finishJob(errorMessage) {
         }
     }
     try {
-        chrome.runtime.sendMessage({type: "done"}, () => {
+        chrome.runtime.sendMessage({type: "done", jobId: jobId || null}, () => {
             void chrome.runtime.lastError;
         });
     } catch (e) {
@@ -292,6 +307,10 @@ function getPageMetadata(page, override) {
     let stated = normalizeMetadataOverride(
         override === undefined ? page.metadataOverride : override);
     return {
+        // The two validated fields are re-normalized rather than trusted. A
+        // chapter buffered by an older build carries whatever that build
+        // accepted, and this is the last point before the value is written into
+        // a package document that has to validate.
         lang: stated.lang || normalizeLanguageTag(metadata.lang),
         // '' or 'rtl', never 'ltr' - see extractDirection() in extractHtml.js.
         // Not something the editor offers: a page states which way it reads and
@@ -302,7 +321,7 @@ function getPageMetadata(page, override) {
                  (Array.isArray(metadata.authors) ? metadata.authors : []),
         publisher: stated.publisher || metadata.publisher || '',
         description: stated.description || metadata.description || '',
-        date: stated.date || metadata.date || ''
+        date: stated.date || normalizeDate(metadata.date) || ''
     };
 }
 
@@ -1016,13 +1035,13 @@ function buildEbookFromStorage() {
 //          to state them in.
 //
 // http://ebooks.stackexchange.com/questions/1183/what-is-the-minimum-required-content-for-a-valid-epub
-function buildEbook(allPages, bookMeta) {
+function buildEbook(allPages, bookMeta, jobId) {
     bookMeta = bookMeta || {};
     var ebookTitle = typeof bookMeta.title === 'string' && bookMeta.title.trim().length > 0 ?
                      bookMeta.title : null;
     allPages = normalizeChapters(allPages);
     if (allPages.length === 0) {
-        finishJob('There are no valid chapters to save.');
+        finishJob('There are no valid chapters to save.', jobId);
         return;
     }
     var allImages = collectUniqueImages(allPages);
@@ -1300,7 +1319,7 @@ function buildEbook(allPages, bookMeta) {
     // keep reporting progress until the file is handed to the download
     let heartbeat = setInterval(function () {
         try {
-            chrome.runtime.sendMessage({type: 'job-heartbeat'}, () => {
+            chrome.runtime.sendMessage({type: 'job-heartbeat', jobId: jobId || null}, () => {
                 void chrome.runtime.lastError;
             });
         } catch (e) {
@@ -1315,13 +1334,13 @@ function buildEbook(allPages, bookMeta) {
         .then(function(content) {
             clearInterval(heartbeat);
             downloadBlob(content, ebookFileName);
-            finishJob(null);
+            finishJob(null, jobId);
         })
         .catch(function(error) {
             // out of memory on a very large book, a corrupt image, a revoked
             // blob url - all of them used to leave the job open forever
             clearInterval(heartbeat);
-            finishJob('Could not generate the eBook: ' + error);
+            finishJob('Could not generate the eBook: ' + error, jobId);
         });
 
 }

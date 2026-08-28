@@ -13,10 +13,12 @@ const vm = require('vm');
 // browser provides, and a sandbox would give everything it builds a different
 // Array and Object prototype - which deepStrictEqual reports as a difference
 // between two structures that are identical.
-vm.runInThisContext(
-    fs.readFileSync(path.join(__dirname, '..', 'web-extension', 'styleLibrary.js'), 'utf8'),
-    {filename: 'styleLibrary.js'}
-);
+for (const file of ['cssSanitizer.js', 'styleLibrary.js']) {
+    vm.runInThisContext(
+        fs.readFileSync(path.join(__dirname, '..', 'web-extension', file), 'utf8'),
+        {filename: file}
+    );
+}
 const lib = globalThis;
 
 let failures = 0;
@@ -764,6 +766,67 @@ test('a stylesheet with nothing to strip is not reported as stripped', () => {
     const result = lib.readStyleImport(JSON.stringify([{title: 'Clean', css: 'p {color: red}'}]));
     assert.deepStrictEqual(result.stripped, []);
     assert.strictEqual(result.entries[0].css, 'p {color: red}');
+});
+
+// url() is one way to write an address, and it was the only one the old pattern
+// knew. Every case here is css a browser fetches and that pattern let through:
+// the first is ordinary css a style author could write by accident, the rest are
+// somebody spelling url() so that a text search does not see it.
+test('an address written some way other than url() is still an address', () => {
+    const cases = [
+        ['image-set takes a bare string, and it is a url',
+         'a{background-image:image-set("https://tracker.test/px.png" 1x)}'],
+        ['so does the prefixed spelling of it',
+         'a{background-image:-webkit-image-set(url(https://tracker.test/px.png) 1x)}'],
+        ['a comment may sit anywhere a space may',
+         'a{background:url( /*c*/ "https://tracker.test/px.png")}'],
+        ['an escape is how a stylesheet writes a character, url included',
+         'a{background:\\75 rl("https://tracker.test/px.png")}'],
+        ['and the at-keyword can be written the same way',
+         '@\\69 mport "https://tracker.test/x.css";'],
+        ['a custom property holds the address and something else spends it',
+         ':root{--px:"https://tracker.test/px.png"}' +
+             'a{background-image:image-set(var(--px) 1x)}'],
+        ['src() is url() under another name',
+         '@font-face{font-family:x;src:src("https://tracker.test/f.woff2")}'],
+        ['an @import inside a block is an @import',
+         '@media print{@import "https://tracker.test/y.css";p{color:red}}']
+    ];
+
+    for (const [what, css] of cases) {
+        const result = lib.stripRemoteCssReferences(css);
+        assert.strictEqual(result.css.indexOf('tracker.test'), -1, what + ' -- ' + result.css);
+        assert.ok(result.removed.length > 0, what + ' -- and it is reported');
+    }
+});
+
+// The other half: reading css as tokens rather than as text means the things
+// that only look like addresses stay where they are.
+test('what is not an address is left where it was written', () => {
+    const kept = [
+        'p{content:"visit https://example.com for more"}',
+        'a[href="https://example.com"]{color:red}',
+        '/* url(https://example.com/x.png) */p{color:red}',
+        'p{background:url(data:image/gif;base64,R0lGOD)}',
+        'p{background:url("../images/x.png")}',
+        'p{filter:url(#blur)}',
+        '@media print{p{page-break-after:avoid;--x:1}}'
+    ];
+
+    for (const css of kept) {
+        const result = lib.stripRemoteCssReferences(css);
+        assert.strictEqual(result.css, css, 'unchanged, byte for byte');
+        assert.deepStrictEqual(result.removed, []);
+    }
+});
+
+// A url token holds no strings and ends at its own paren, so the characters that
+// end things everywhere else end nothing inside one.
+test('a semicolon or a brace inside a url is part of the url', () => {
+    const css = '@import "a;b.css" screen;.a{background:url(data:image/svg+xml;utf8,<a{}/>)}';
+    const result = lib.stripRemoteCssReferences(css);
+    assert.strictEqual(result.css, '.a{background:url(data:image/svg+xml;utf8,<a{}/>)}');
+    assert.deepStrictEqual(result.removed, ['@import "a;b.css" screen;']);
 });
 
 test('an import says what it would add and what it would land on top of', () => {

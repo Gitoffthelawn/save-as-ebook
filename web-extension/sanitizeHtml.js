@@ -109,41 +109,124 @@ var strippedContentTags = [
 // linethickness="0" is how a binomial coefficient is written. Only alttext used
 // to survive, so all of that was lost on every formula.
 //
-// The vocabulary is allowed wholesale rather than enumerated, which is the
-// opposite of how the HTML attributes below are handled and deliberately so:
-// MathML's is a closed vocabulary defined by a spec, an attribute this extension
-// has not heard of is far more likely to be one MathML has than one an attacker
-// invented, and a list of thirty names would go out of date silently. What is
-// excluded is what is dangerous, or what would break the file:
+// MathML's vocabulary is closed, and EPUBCheck validates attributes against the
+// element-specific vocabulary rather than against a union of all MathML names.
+// Both <mi bogus="x"> and <mi rowspan="2"> are RSC-005 errors: the first name
+// does not exist and the second exists only on <mtd>. Keep the sets per element
+// so neither kind can make the chapter XHTML invalid.
 //
-//   on*             event handlers
-//   href, src       MathML's own link and image attributes. href can hold a
-//                   javascript: url, and src would point at a file that is not
-//                   in the archive.
-//   style, class    the chapter stylesheet is generated from computed styles,
-//                   never copied from the page
-//   id, data-*      an html id is carried over - it is what a link inside the
-//                   page points at - but nothing ever links into a formula, and
-//                   an id here would only be one more name the ids minted while
-//                   the chapter is written have to avoid colliding with
-//   anything with a colon, or that is not a plain lowercase name. An xmlns: or
-//   xlink: attribute needs a namespace declaration the chapter documents do not
-//   make, and an undeclared prefix does not make one formula wrong, it makes the
-//   whole xhtml file unparseable.
-var deniedMathMLAttributes = ['href', 'src', 'style', 'class', 'id', 'xmlns'];
+// The shared arrays below mirror the actual groups in the MathML 3 presentation
+// schema (common presentation attributes, token attributes, and the attributes
+// <mstyle> may set). The table then adds only what each retained MathML element
+// accepts. This is intentionally a subset of the schema: leaving out a layout
+// hint can cost one formula some styling, while passing an invalid attribute
+// costs the validity of the whole EPUB.
+//
+// Excluded on purpose, though MathML does define them:
+//
+//   href, src, altimg   MathML's own link and image attributes. href can hold a
+//                       javascript: url, and src or altimg would point at a
+//                       file that is not in the archive.
+//   style, class        the chapter stylesheet is generated from computed
+//                       styles, never copied from the page
+//   id                  an html id is carried over - it is what a link inside
+//                       the page points at - but nothing ever links into a
+//                       formula, and an id here would only be one more name the
+//                       ids minted while the chapter is written have to avoid
+//                       colliding with
+//   xmlns, definitionURL, and anything else with a colon or a capital in it.
+//                       An xmlns: or xlink: attribute needs a namespace
+//                       declaration the chapter documents do not make, and an
+//                       undeclared prefix does not make one formula wrong, it
+//                       makes the whole xhtml file unparseable. <math> gets its
+//                       own xmlns written by the serializer.
+//
+// Event handlers, data-* names, invented names, and names from another MathML
+// element are absent by construction.
+var mathMLCommonPresentationAttributes = ['mathbackground', 'mathcolor'];
 
-function isAllowedMathMLAttribute(name) {
-    return /^[a-z][a-z0-9-]*$/.test(name) &&
-           name.indexOf('on') !== 0 &&
-           name.indexOf('data-') !== 0 &&
-           deniedMathMLAttributes.indexOf(name) < 0;
+function mathMLAttributes(extra) {
+    return mathMLCommonPresentationAttributes.concat(extra || []);
 }
 
-// HTML attributes are enumerated, where MathML's are allowed wholesale. The
-// vocabularies differ in the way that matters: HTML's is huge, mostly about
-// behaviour rather than meaning, and full of names that either do nothing in a
-// reader (onclick, target, srcset) or actively break the file (style and class,
-// which the generated stylesheet owns).
+var mathMLTokenAttributes = mathMLAttributes(['dir', 'mathsize', 'mathvariant']);
+
+// MathML 3 lets <mstyle> set the presentation attributes of its descendants;
+// <math> accepts the same group. These names are not global attributes.
+var mathMLStyleAttributes = [
+    'dir', 'displaystyle', 'mathsize', 'mathvariant', 'scriptlevel',
+    'form', 'fence', 'separator', 'lspace', 'rspace', 'stretchy', 'symmetric',
+    'maxsize', 'minsize', 'largeop', 'movablelimits', 'accent', 'linebreak',
+    'lquote', 'rquote', 'valign', 'width', 'height', 'depth',
+    'linethickness', 'numalign', 'denomalign', 'bevelled',
+    'scriptminsize', 'scriptsizemultiplier', 'infixlinebreakstyle', 'decimalpoint',
+    'accentunder', 'align', 'subscriptshift', 'superscriptshift',
+    'alignmentscope', 'columnalign', 'columnlines', 'columnspacing', 'columnspan',
+    'columnwidth', 'equalcolumns', 'equalrows', 'frame', 'framespacing', 'groupalign',
+    'minlabelspacing', 'rowalign', 'rowlines', 'rowspacing', 'rowspan', 'side',
+    'selection'
+];
+
+var allowedMathMLAttributesByTag = {
+    math: mathMLAttributes(['display', 'alttext'].concat(mathMLStyleAttributes)),
+    mstyle: mathMLAttributes(mathMLStyleAttributes),
+
+    mi: mathMLTokenAttributes,
+    mn: mathMLTokenAttributes,
+    mtext: mathMLTokenAttributes,
+    mo: mathMLTokenAttributes.concat([
+        'form', 'fence', 'separator', 'lspace', 'rspace', 'stretchy', 'symmetric',
+        'maxsize', 'minsize', 'largeop', 'movablelimits', 'accent', 'linebreak'
+    ]),
+    ms: mathMLTokenAttributes.concat(['lquote', 'rquote']),
+    mspace: mathMLTokenAttributes.concat(['width', 'height', 'depth', 'linebreak']),
+    mglyph: mathMLAttributes(['mathsize', 'mathvariant', 'width', 'height', 'valign', 'alt']),
+
+    mrow: mathMLAttributes(['dir']),
+    mfrac: mathMLAttributes(['linethickness', 'numalign', 'denomalign', 'bevelled']),
+    mpadded: mathMLAttributes(['width', 'height', 'depth', 'lspace', 'voffset']),
+    msub: mathMLAttributes(['subscriptshift']),
+    msup: mathMLAttributes(['superscriptshift']),
+    msubsup: mathMLAttributes(['subscriptshift', 'superscriptshift']),
+    mmultiscripts: mathMLAttributes(['subscriptshift', 'superscriptshift']),
+    munder: mathMLAttributes(['accentunder', 'align']),
+    mover: mathMLAttributes(['accent', 'align']),
+    munderover: mathMLAttributes(['accent', 'accentunder', 'align']),
+
+    mtable: mathMLAttributes([
+        'align', 'rowalign', 'columnalign', 'groupalign', 'alignmentscope',
+        'columnwidth', 'width', 'rowspacing', 'columnspacing', 'rowlines',
+        'columnlines', 'frame', 'framespacing', 'equalrows', 'equalcolumns',
+        'displaystyle', 'side', 'minlabelspacing'
+    ]),
+    mtr: mathMLAttributes(['rowalign', 'columnalign', 'groupalign']),
+    mtd: mathMLAttributes(['rowspan', 'columnspan', 'rowalign', 'columnalign', 'groupalign']),
+
+    maction: mathMLAttributes(['actiontype', 'selection']),
+    merror: mathMLAttributes(),
+    mphantom: mathMLAttributes(),
+    mprescripts: mathMLAttributes(),
+    mroot: mathMLAttributes(),
+    msqrt: mathMLAttributes(),
+    none: mathMLAttributes(),
+
+    // <semantics> is not a presentation element and does not take the common
+    // mathcolor/mathbackground pair.
+    semantics: ['encoding']
+};
+
+function isAllowedMathMLAttribute(tag, name) {
+    var allowed = allowedMathMLAttributesByTag[tag] || [];
+    return allowed.indexOf(name) > -1;
+}
+
+// HTML attributes are enumerated too, but the list is chosen the other way
+// round. MathML's above is a large safe subset for each element; HTML's is a
+// small subset of a huge vocabulary, because most of HTML's attributes are about
+// behaviour rather than meaning and either do nothing in a reader (onclick,
+// target, srcset) or actively break the file (style and class, which the
+// generated stylesheet owns). Completeness is the goal there and would be a
+// mistake here.
 //
 // What is here is the subset that changes what the chapter says. Everything on
 // this list was previously dropped, and dropping it was not a loss of polish:
@@ -195,6 +278,11 @@ function attrCount(min) {
     };
 }
 
+// <img width> and <img height> are a count of pixels, and epubcheck rejects
+// anything else: "100%" from a page, "16.296875" from a laid-out svg. Bounded
+// like a count, since an image measured in five digits is a bug either way.
+var attrDimension = attrCount(1);
+
 // <ol start> and <li value> are the two that may be negative or zero
 function attrInteger(value) {
     var normalized = value.trim();
@@ -211,6 +299,12 @@ function attrText(value) {
 // an offset, or a bare time - is what pages actually write. The exotic
 // remainder of the html grammar (weeks, durations, yearless dates) is dropped
 // rather than guessed at, which costs the attribute and keeps the element.
+//
+// The shape is only half the test. dateTimeFieldsAreValid() from utils.js is
+// the other half, and the split is deliberate: this regex says what spellings
+// are accepted here, which is a different question from whether "2024-02-31"
+// and "29:70" name a moment - and that second question has the same answer for
+// dc:date, which asks it with a different spelling.
 var DATETIME_REGEX = new RegExp(
     '^(' +
         '[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?' +
@@ -222,7 +316,8 @@ var DATETIME_REGEX = new RegExp(
 
 function attrDateTime(value) {
     var normalized = value.trim();
-    return DATETIME_REGEX.test(normalized) ? normalized : '';
+    return DATETIME_REGEX.test(normalized) && dateTimeFieldsAreValid(normalized) ?
+        normalized : '';
 }
 
 // A url attribute that is not the one being followed for content - <blockquote
@@ -307,6 +402,181 @@ function extraHtmlAttributes(tag, attrs, options) {
     }
 
     return result;
+}
+
+// ---- which source an <img> actually names -----------------------------------
+//
+// A lazy loader ships an <img> that does not name its own picture: the real url
+// waits in a data attribute until a script decides the image is close enough to
+// the viewport, and src holds either nothing or a placeholder - very often a 1x1
+// gif, which is the same file the page's tracking pixels are. Reading src alone
+// is why a lazily loaded page arrived in the book with the photographs missing
+// and the 1x1s embedded in their place, which is worse than a gap because
+// nothing in the book says anything is absent.
+//
+// There is no standard here - every loader picked its own attribute name - so
+// this is the list of the ones in wide use rather than a specification.
+var LAZY_IMAGE_SRC_ATTRIBUTES = [
+    'data-src', 'data-original', 'data-original-src', 'data-lazy-src',
+    'data-lazy', 'data-echo', 'data-full-src', 'data-hi-res-src',
+    'data-image-src', 'data-actualsrc', 'data-url'
+];
+
+// The same idea for responsive images: a set of candidates parked out of the
+// browser's reach until the loader moves it into srcset.
+var LAZY_IMAGE_SRCSET_ATTRIBUTES = [
+    'data-srcset', 'data-lazy-srcset', 'data-original-set'
+];
+
+// What a placeholder looks like when its url is all there is to go on. Both
+// tests are guesses - a short data uri can be a real picture, and a file really
+// can be called spacer.png - so a match only ever demotes a source below a
+// better candidate. Nothing here drops an image on its own: an unreplaced
+// placeholder is still shipped, exactly as before, because guessing wrong in
+// that direction would lose content the page really did have.
+var PLACEHOLDER_IMAGE_NAME_REGEX =
+    /(^|[/_.-])(blank|spacer|placeholder|transparent|pixel|dummy|empty|loading|loader|lazy)([_.-]|$)/i;
+// A 1x1 gif is 62 characters as a data uri and an inline "loading" svg is not
+// much more; a photograph is thousands.
+var MAX_PLACEHOLDER_DATA_URI_LENGTH = 512;
+
+function isPlaceholderImageSrc(value) {
+    let text = String(value == null ? '' : value).trim();
+    if (text === '') {
+        return true;
+    }
+    if (/^data:/i.test(text)) {
+        return text.length <= MAX_PLACEHOLDER_DATA_URI_LENGTH;
+    }
+    let path = text.split(/[?#]/)[0];
+    let fileName = path.substring(path.lastIndexOf('/') + 1);
+    // "1x1.gif", "2x2.png" - the other way the file is usually named
+    if (/^[0-9]{1,3}x[0-9]{1,3}\.[a-z0-9]+$/i.test(fileName)) {
+        return true;
+    }
+    return PLACEHOLDER_IMAGE_NAME_REGEX.test(fileName);
+}
+
+// The url a srcset names, at the largest size it offers. A book has no viewport
+// to select against, and of the sizes on offer the largest is the only one that
+// cannot have thrown detail away.
+//
+// Splitting the list on every comma is what a srcset parser must not do: a data
+// uri carries commas inside the url itself, and html reads a candidate's url as
+// a run of non-whitespace before it looks for a separator at all. Splitting
+// naively hands back the tail of the base64 as if it were a filename.
+function parseSrcset(value) {
+    let text = String(value == null ? '' : value).trim();
+    let candidates = [];
+    let at = 0;
+    while (at < text.length) {
+        while (at < text.length && /[\s,]/.test(text.charAt(at))) {
+            at++;
+        }
+        let urlStart = at;
+        while (at < text.length && !/\s/.test(text.charAt(at))) {
+            at++;
+        }
+        let url = text.substring(urlStart, at);
+        if (url === '') {
+            continue;
+        }
+        let descriptor = '';
+        let trimmed = url.replace(/,+$/, '');
+        if (trimmed === url) {
+            // no comma ended the url, so what follows it up to the next comma
+            // is this candidate's descriptor
+            let descriptorStart = at;
+            while (at < text.length && text.charAt(at) !== ',') {
+                at++;
+            }
+            descriptor = text.substring(descriptorStart, at).trim().split(/\s+/)[0] || '';
+        }
+        if (trimmed !== '') {
+            candidates.push({url: trimmed, descriptor: descriptor});
+        }
+    }
+    return candidates;
+}
+
+function pickFromSrcset(value) {
+    let candidates = parseSrcset(value);
+    if (candidates.length === 0) {
+        return '';
+    }
+    // A set that offers a real picture and a placeholder is offering one image.
+    let real = candidates.filter(function (candidate) {
+        return !isPlaceholderImageSrc(candidate.url);
+    });
+    let usable = real.length > 0 ? real : candidates;
+    let best = '';
+    let bestWeight = -1;
+    usable.forEach(function (candidate) {
+        // "800w" and "2x" - a srcset may not mix the two, so comparing the bare
+        // numbers is enough. An absent descriptor means 1x.
+        let weight = /^[0-9.]+[wx]$/i.test(candidate.descriptor) ?
+                     parseFloat(candidate.descriptor) : 1;
+        if (weight > bestWeight) {
+            bestWeight = weight;
+            best = candidate.url;
+        }
+    });
+    return best;
+}
+
+// Every source an <img> offers, best first, for the caller to try in order until
+// one of them resolves. Reading them in a fixed order rather than taking the
+// first that exists is what keeps a placeholder from beating the picture it
+// stands in for.
+//
+// getAttribute is the element's, or a lookup into the parsed attributes - this
+// runs on both a live element and a tag in a string. currentSrc is the live
+// browser's own answer to "which candidate did this element pick", which nothing
+// downstream can work out for itself, and is null off the live page.
+// renderedPlaceholder says the element finished loading a 1x1, which is a fact
+// about the bytes rather than a guess about the url, and the strongest signal
+// there is that src is standing in for something.
+function imageSrcCandidates(getAttribute, currentSrc, renderedPlaceholder) {
+    let attr = function (name) {
+        let value = getAttribute(name);
+        return String(value == null ? '' : value).trim();
+    };
+    let src = attr('src');
+    // The source that produced a 1x1 bitmap is that placeholder's own, whatever
+    // its url looks like.
+    let current = renderedPlaceholder ? '' : String(currentSrc == null ? '' : currentSrc).trim();
+    let usingPlaceholder = src === '' || renderedPlaceholder || isPlaceholderImageSrc(src);
+
+    let candidates = [];
+    let add = function (value) {
+        if (value !== '' && candidates.indexOf(value) < 0) {
+            candidates.push(value);
+        }
+    };
+    let addSelected = function () {
+        // A responsive image states a fallback in src and the real choice in
+        // srcset; currentSrc is that choice, already resolved.
+        if (!isPlaceholderImageSrc(current)) {
+            add(current);
+        }
+    };
+
+    if (!usingPlaceholder) {
+        addSelected();
+        add(src);
+    }
+    LAZY_IMAGE_SRC_ATTRIBUTES.forEach(function (name) { add(attr(name)); });
+    LAZY_IMAGE_SRCSET_ATTRIBUTES.forEach(function (name) { add(pickFromSrcset(attr(name))); });
+    if (usingPlaceholder) {
+        addSelected();
+        // srcset with no src at all, which the browser resolves and an offline
+        // reader cannot
+        add(pickFromSrcset(attr('srcset')));
+        // Last, and only because dropping an image the page did ship is the
+        // worse mistake: everything above this line is a guess.
+        add(src);
+    }
+    return candidates;
 }
 
 // ---- where urls and images resolve ------------------------------------------
@@ -428,7 +698,38 @@ function parseHTML(rawContentString, options) {
                 let tmpAttrsTxt = '';
 
                 if (tag === 'img') {
-                    let tmpSrc = ''
+                    // The source is written first because choosing it needs
+                    // every attribute of the tag at once - see
+                    // imageSrcCandidates - rather than the one named src.
+                    // No prototype: an attribute the page called "constructor"
+                    // must read as absent, not as a function. First wins, which
+                    // is what the html parser does with a repeated attribute.
+                    let tagAttrs = Object.create(null);
+                    for (let i = 0; i < attrs.length; i++) {
+                        if (!(attrs[i].name in tagAttrs)) {
+                            tagAttrs[attrs[i].name] = attrs[i].value;
+                        }
+                    }
+                    let tmpSrc = '';
+                    // Off the live page there is no currentSrc and no loaded
+                    // bitmap to measure: extraction has already resolved those
+                    // into src by the time the markup gets here, and content
+                    // that never had a live element - the inside of a same-origin
+                    // iframe, a chapter being re-sanitized - never had them at all.
+                    let srcCandidates = imageSrcCandidates(function (name) {
+                        return tagAttrs[name];
+                    }, null, false);
+                    for (let i = 0; i < srcCandidates.length; i++) {
+                        tmpSrc = options.resolveImageSrc(srcCandidates[i]);
+                        if (tmpSrc !== '') {
+                            break;
+                        }
+                    }
+                    if (tmpSrc === '') {
+                        // ignore imgs without source
+                        return;
+                    }
+                    tmpAttrsTxt += ' src="' + attrValue(tmpSrc) + '"';
                     // null and '' are different answers: null is a source that
                     // never said anything about this image, '' is one that
                     // deliberately marked it decorative. Collapsing them - which
@@ -438,24 +739,21 @@ function parseHTML(rawContentString, options) {
                     // from exactly this distinction.
                     let tmpAlt = null;
                     for (let i = 0; i < attrs.length; i++) {
-                        if (attrs[i].name === 'src') {
-                            tmpSrc = options.resolveImageSrc(attrs[i].value)
-                            tmpAttrsTxt += ' src="' + attrValue(tmpSrc) + '"';
-                        } else if (attrs[i].name === 'alt') {
+                        if (attrs[i].name === 'alt') {
                             tmpAlt = attrs[i].value == null ? '' : String(attrs[i].value);
                         } else if (attrs[i].name === options.classAttribute) {
                             tmpAttrsTxt += ' class="' + attrValue(attrs[i].value) + '"';
-                        } else if (attrs[i].name === 'width') {
-                            // used when converting svg to img - the result image was too big
-                            tmpAttrsTxt += ' width="' + attrValue(attrs[i].value) + '"';
-                        } else if (attrs[i].name === 'height') {
-                            // used when converting svg to img - the result image was too big
-                            tmpAttrsTxt += ' height="' + attrValue(attrs[i].value) + '"';
+                        } else if (attrs[i].name === 'width' || attrs[i].name === 'height') {
+                            // used when converting svg to img - the result image was too big.
+                            // Whatever wrote it, the value has to be an integer
+                            // number of pixels here: a page writing width="100%"
+                            // and a laid-out svg measuring 16.296875 are both
+                            // errors in the chapter, not sizes.
+                            let dimension = attrDimension(attrs[i].value);
+                            if (dimension !== '') {
+                                tmpAttrsTxt += ' ' + attrs[i].name + '="' + dimension + '"';
+                            }
                         }
-                    }
-                    if (tmpSrc === '') {
-                        // ignore imgs without source
-                        return;
                     }
                     if (tmpAlt !== null) {
                         tmpAttrsTxt += ' alt="' + attrValue(tmpAlt.replace(/\s+/g, ' ').trim()) + '"';
@@ -477,7 +775,7 @@ function parseHTML(rawContentString, options) {
                         tmpAttrsTxt += ' xmlns="' + MATHML_NS + '"';
                     }
                     for (let i = 0; i < attrs.length; i++) {
-                        if (isAllowedMathMLAttribute(attrs[i].name)) {
+                        if (isAllowedMathMLAttribute(tag, attrs[i].name)) {
                             tmpAttrsTxt += ' ' + attrs[i].name + '="' + attrValue(attrs[i].value) + '"';
                         }
                     }
@@ -489,9 +787,12 @@ function parseHTML(rawContentString, options) {
                     }
                 }
 
-                // MathML has been through its own allowlist just above, and the
-                // two vocabularies do not share attributes - lang and dir mean
-                // nothing on an <mrow>, and an id there is denied on purpose.
+                // MathML has been through its own allowlist just above, which
+                // is the complete answer for a MathML element: the html list
+                // holds names MathML either does not define (lang, colspan,
+                // datetime) or defines itself and is written above (dir), plus
+                // ids, which are denied inside a formula on purpose. Running
+                // both would only put back what the MathML list left out.
                 if (mathMLTags.indexOf(tag) < 0) {
                     tmpAttrsTxt += extraHtmlAttributes(tag, attrs, options);
                 }

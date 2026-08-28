@@ -47,6 +47,7 @@ window.addEventListener('error', function(e){ errors.push(e.message); });
 <script src="../../web-extension/utils.js"></script>
 <script src="../../web-extension/libs/jszip.js"></script>
 <script src="../../web-extension/sanitizeHtml.js"></script>
+<script src="../../web-extension/cssSanitizer.js"></script>
 <script src="../../web-extension/saveEbook.js"></script>
 <script src="../../web-extension/chapterPreview.js"></script>
 <script src="../../web-extension/chapterContentEditor.js"></script>
@@ -183,7 +184,144 @@ setTimeout(function () {
            written.pages[0].title === 'Renamed Two',
            written.pages ? written.pages.length + ' chapters' : 'nothing written');
 
-    document.title = 'DONE';
+    // Everything below happens a tick later, the way a user does it: the
+    // save above closed the editor, and the unload guard it stood down for
+    // that close comes back once the close has had its chance.
+    setTimeout(function () {
+      // ---- closing the editor does not discard the book ----
+      //
+      // Everything on this page - the book title, the stylesheet, the metadata
+      // boxes, the renames, the order and what is marked removed - lives here
+      // until something writes it. Escape, a click on the grey margin either side
+      // of the modal and the X are all one keystroke or one stray click, and each
+      // of them closes the tab.
+      var upperClose = document.getElementById('chapterEditor-modalHeader')
+                               .getElementsByTagName('button')[0];
+      var modalEl = document.getElementById('chapterEditor-Modal');
+      var chapterList = document.getElementsByClassName('chapterEditor-chapters-list')[0];
+      var asked = [];
+      var answerClose = false;
+      window.confirm = function (text) { asked.push(text); return answerClose; };
+
+      function firesBeforeUnload() {
+        var evt = new Event('beforeunload', {cancelable: true});
+        window.dispatchEvent(evt);
+        return evt.defaultPrevented;
+      }
+
+      function pressEscape() {
+        document.onkeydown({keyCode: 27});
+      }
+
+      function clickBackdrop() {
+        // the grey margin either side of the 70%-wide content: the event's target
+        // is the modal itself, which is what the page's own handler tests for
+        modalEl.click();
+      }
+
+      // nothing has changed since the save above
+      report('an unchanged editor is not holding anything back',
+             firesBeforeUnload() === false);
+
+      // ---- a rename that has not been saved ----
+      asked = [];
+      closed = 0;
+      document.getElementById('text1').value = 'Renamed Again';
+      report('an unsaved rename stops the tab from being closed from the browser',
+             firesBeforeUnload() === true);
+
+      pressEscape();
+      report('escape with unsaved changes asks first', asked.length === 1, asked.join(' | '));
+      report('answering no to escape keeps the tab open', closed === 0,
+             'closed ' + closed + ' times');
+
+      clickBackdrop();
+      report('a backdrop click with unsaved changes asks first', asked.length === 2,
+             asked.join(' | '));
+      report('answering no to the backdrop keeps the tab open', closed === 0,
+             'closed ' + closed + ' times');
+
+      upperClose.click();
+      report('the X with unsaved changes asks first', asked.length === 3, asked.join(' | '));
+      report('answering no to the X keeps the tab open', closed === 0,
+             'closed ' + closed + ' times');
+      report('the question is about the book, not about one chapter',
+             asked[2] === 'discardChangesConfirm', String(asked[2]));
+
+      // ---- everything else the page holds counts as work too ----
+      document.getElementById('text1').value = 'Renamed Two';
+      report('putting the title back makes the editor clean again',
+             firesBeforeUnload() === false);
+
+      document.getElementById('chapterEditor-bookCss').value = 'p { margin: 0 }';
+      report('an unsaved book stylesheet counts', firesBeforeUnload() === true);
+      document.getElementById('chapterEditor-bookCss').value = '';
+
+      document.getElementById('chapterEditor-bookMeta-publisher').value = 'A Publisher';
+      report('unsaved book metadata counts', firesBeforeUnload() === true);
+      document.getElementById('chapterEditor-bookMeta-publisher').value = '';
+
+      document.getElementById('chapterEditor-ebookTitle').value = 'Another Title';
+      report('an unsaved book title counts', firesBeforeUnload() === true);
+      document.getElementById('chapterEditor-ebookTitle').value = 'Saved Book';
+
+      chapterList.appendChild(chapterList.children[0]);
+      report('an unsaved reorder counts', firesBeforeUnload() === true);
+      chapterList.insertBefore(chapterList.children[1], chapterList.children[0]);
+      report('putting the order back makes the editor clean again',
+             firesBeforeUnload() === false);
+
+      // ---- a row marked removed is a change too ----
+      //
+      // Nothing writes it until the book is saved, and the row simply stops
+      // being drawn - so of everything this page holds, this is the change that
+      // is least visible and costs a whole chapter.
+      asked = [];
+      answerClose = true; // the row's own "remove this chapter?" question
+      document.getElementById('li1').getElementsByTagName('button')[1].click();
+      answerClose = false;
+      report('the row asked before marking the chapter removed', asked.length === 1,
+             asked.join(' | '));
+      report('a chapter marked removed counts as unsaved work',
+             firesBeforeUnload() === true);
+      // Generate rather than Save changes: it writes the same things, and it is
+      // the one that leaves the tab open to go on asserting against.
+      document.getElementsByClassName('chapterEditor-generate-button')[0].click();
+      report('saving the removal makes the editor clean again',
+             firesBeforeUnload() === false);
+
+      // ---- a close the user agreed to, and one there is nothing to ask about ----
+      asked = [];
+      closed = 0;
+      upperClose.click();
+      report('closing an unchanged editor asks nothing', asked.length === 0,
+             asked.join(' | '));
+      report('closing an unchanged editor closes', closed === 1,
+             'closed ' + closed + ' times');
+      // a change made after the click, while the tab is on its way out: the
+      // guard is stood down for a close the user has already been through
+      document.getElementById('text1').value = 'Changed On The Way Out';
+      report('a close it has already agreed to does not ask again on the way out',
+             firesBeforeUnload() === false);
+
+      setTimeout(function () {
+        // ...and comes back for a tab the browser declined to close, rather
+        // than leaving the book unguarded for the rest of its life
+        report('a tab that did not actually close is guarded again',
+               firesBeforeUnload() === true);
+
+        // ---- and the answer that does discard ----
+        asked = [];
+        closed = 0;
+        answerClose = true;
+        upperClose.click();
+        report('answering yes discards the changes and closes',
+               asked.length === 1 && closed === 1,
+               'asked ' + asked.length + ', closed ' + closed);
+
+        document.title = 'DONE';
+      }, 0);
+    }, 0);
   }, 100);
 }, 300);
 </script>

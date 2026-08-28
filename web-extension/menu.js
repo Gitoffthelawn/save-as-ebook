@@ -26,10 +26,38 @@ document.getElementById('selectionChapterLabel').textContent = chrome.i18n.getMe
 document.getElementById('editChapters').textContent = chrome.i18n.getMessage('editChapters');
 document.getElementById('waitMessage').textContent = chrome.i18n.getMessage('waitMessage');
 
+// What a command that never started is told, by key rather than by sentence:
+// the background has no i18n surface of its own, and this file already holds
+// every string the popup shows. An unknown key is not guessed at - showing the
+// key itself would be worse than the spinner it replaces.
+const failureMessages = {
+    'restricted-tab': 'restrictedTabMessage',
+    'busy': 'busyMessage',
+    'no-tab': 'noTabMessage'
+};
+
+function showFailure(reason) {
+    let messageName = failureMessages[reason];
+    if (!messageName) {
+        return;
+    }
+    // whatever this popup had asked for is not running, so the wait is over
+    document.getElementById('busy').style.display = 'none';
+    let failed = document.getElementById('failedMessage');
+    failed.textContent = chrome.i18n.getMessage(messageName);
+    failed.style.display = 'block';
+}
+
 // the service worker cannot close the popup directly, it asks for it
 chrome.runtime.onMessage.addListener((request) => {
     if (request && request.type === 'popup-close') {
         window.close();
+    }
+    // The other half of that: a command refused before a job existed has no
+    // finishJob to close this popup, and the busy overlay would otherwise spin
+    // until the user dismissed it - see reportToPopup in background.js.
+    if (request && request.type === 'popup-failed') {
+        showFailure(request.reason);
     }
 });
 
@@ -289,7 +317,7 @@ function openStyleLibrary() {
 // already has.
 function openStyleLibraryForThisPage() {
     if (document.getElementById('captureFirstCheck').checked) {
-        dispatch('style-snapshot', true);
+        dispatch('style-snapshot');
     } else {
         openStyleLibrary();
     }
@@ -305,37 +333,38 @@ document.getElementById("editChapters").onclick = function() {
 // answers as soon as the command has started, not when the ebook is finished,
 // and it is the one that closes the popup once the job ends (see finishJob).
 //
-// A save starts a new book, so the old chapters go first - and only once the
-// removal is confirmed, or the command would race the storage write.
-function dispatch(commandType, justAddToBuffer) {
+// A save starts a new book, but the popup is not the one that discards the old
+// one. It cannot be: at this point nobody knows yet whether the command will run
+// at all. A restricted tab, a capture already in progress, or a selection that
+// turns out to be empty each end the command without producing anything - and a
+// popup that had already cleared the buffer would have cost the user their
+// chapters for a save that never happened. The background owns that transition
+// and makes it once a capture exists to replace them with (see dispatch and
+// applyAction in background.js).
+function dispatch(commandType) {
+    // a message left over from the last command says nothing about this one
+    document.getElementById('failedMessage').style.display = 'none';
     document.getElementById('busy').style.display = 'block';
-    let start = function () {
-        chrome.runtime.sendMessage({
-            type: commandType
-        }, function(response) {
-        });
-    };
-    if (justAddToBuffer) {
-        start();
-    } else {
-        removeEbook(start);
-    }
+    chrome.runtime.sendMessage({
+        type: commandType
+    }, function(response) {
+    });
 }
 
 document.getElementById('savePage').onclick = function() {
-    dispatch('save-page', false);
+    dispatch('save-page');
 };
 
 document.getElementById('saveSelection').onclick = function() {
-    dispatch('save-selection', false);
+    dispatch('save-selection');
 };
 
 document.getElementById('pageChapter').onclick = function() {
-    dispatch('add-page', true);
+    dispatch('add-page');
 };
 
 document.getElementById('selectionChapter').onclick = function() {
-    dispatch('add-selection', true);
+    dispatch('add-selection');
 };
 
 // get all shortcuts and display them in the menuTitle

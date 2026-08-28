@@ -35,6 +35,10 @@ window.chrome = {
   <p><time datetime="2024-03-01">March</time></p>
   <p><time datetime="2024-03-01T09:30:00+02:00">with an offset</time></p>
   <p><time datetime="last tuesday">not a datetime</time></p>
+  <p><time datetime="2024-02-31">a day February never has</time></p>
+  <p><time datetime="2024-01-01T29:70Z">a time no clock shows</time></p>
+  <p><time datetime="09:30">a bare time</time></p>
+  <p><time datetime="2024-02-29">a real leap day</time></p>
   <p><data value="42">forty two</data></p>
   <p><bdo dir="rtl">reversed run</bdo></p>
 
@@ -61,6 +65,12 @@ window.chrome = {
 
   <p onclick="boom()" style="color: red" class="from-the-page" role="banner"
      aria-label="a label" target="_blank">attributes that do not travel</p>
+
+  <!-- an inline svg lays out at whatever fraction of a pixel the css asks for,
+       and leaves as an <img>, whose width and height are a count of pixels -->
+  <svg id="icon" style="width: 16.3px; height: 16.7px" viewBox="0 0 16 16"><rect width="16" height="16"/></svg>
+  <img id="pct" src="https://example.com/img/wide.png" width="100%" height="auto" alt="sized by the page in percent">
+  <img id="px" src="https://example.com/img/plain.png" width="320" height="240" alt="sized in pixels">
 </article>
 
 <script>
@@ -127,6 +137,14 @@ window.addEventListener('load', function () {
       '<time datetime="2024-03-01T09:30:00+02:00">');
   hasNot('a datetime epubcheck would reject is dropped', content, 'last tuesday');
   has('the element it was on stays', content, '<time>not a datetime</time>');
+  // Spelled like a datetime and still not one. The shape matched before the
+  // fields were checked, so these used to be written through verbatim.
+  has('a date that does not exist is dropped', content,
+      '<time>a day February never has</time>');
+  has('a time that does not exist is dropped', content,
+      '<time>a time no clock shows</time>');
+  has('a bare time is still kept', content, '<time datetime="09:30">');
+  has('a real leap day is still kept', content, '<time datetime="2024-02-29">');
   has('data keeps its value', content, '<data value="42">');
 
   // ---- list numbering ----
@@ -161,6 +179,24 @@ window.addEventListener('load', function () {
   hasNot('role does not travel - it has to validate, and a page role need not',
          content, 'role=');
   hasNot('aria-label does not travel', content, 'aria-label');
+
+  // ---- image dimensions ----
+  // epubcheck: "must be a decimal number without any significant digits after
+  // the decimal point". Both the generated and the page-authored values go
+  // through the sanitizer, so one sweep over the output covers both.
+  var dims = content.match(/(?:width|height)="[^"]*"/g) || [];
+  report('every dimension written is an integer number of pixels',
+         dims.length > 0 && dims.every(function (d) {
+           return /^(?:width|height)="[0-9]+"$/.test(d);
+         }),
+         dims.join(' '));
+  report('the img substituted for an svg is sized, rounded from the layout',
+         /<img src="\.\.\/images\/[^"]+" width="16" height="17"/.test(content),
+         (content.match(/<img[^>]*images\/[^>]*>/) || ['no match'])[0]);
+  hasNot('a percentage width is not a pixel count and is dropped', content, '100%');
+  hasNot('height="auto" is dropped with it', content, '"auto"');
+  has('a size the page wrote in pixels still travels', content,
+      'width="320" height="240"');
 
   // the runner's proof that the fixture got this far - see run-dom-tests.sh
   document.title = 'DONE';

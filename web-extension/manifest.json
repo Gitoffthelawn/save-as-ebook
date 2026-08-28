@@ -24,7 +24,7 @@
     },
     "background": {
         "service_worker": "background.js",
-        "scripts": ["styleLibrary.js", "background.js"]
+        "scripts": ["cssSanitizer.js", "styleLibrary.js", "background.js"]
     },
     "action": {
         "default_icon": "icons/book32.png",
