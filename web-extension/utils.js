@@ -1,8 +1,33 @@
-function setIncludeStyle(includeStyle) {
+// What every setter below hands its callback: null when the write landed, and a
+// string saying why when it did not. The background answers each write with
+// {ok: true} or {ok: false, error} - see storageSet() there - and a message that
+// was never answered at all (the worker torn down mid-write, the page outliving
+// it) is a failure too, which is what the lastError read is for.
+//
+// It exists so that a page cannot report success by leaving an argument out:
+// every caller that tells the user something was saved has to look at this
+// first.
+function storageWriteError(response) {
+    // reading it is also what keeps it from being logged as unchecked
+    let lastError = chrome.runtime.lastError;
+    if (!response) {
+        return lastError && lastError.message ? lastError.message :
+               'the extension could not be reached';
+    }
+    if (response.ok === false) {
+        return response.error || 'storage write failed';
+    }
+    return null;
+}
+
+function setIncludeStyle(includeStyle, callback) {
     chrome.runtime.sendMessage({
         type: "set include style",
         includeStyle: includeStyle
     }, function(response) {
+        if (callback) {
+            callback(storageWriteError(response));
+        }
     });
 }
 
@@ -34,7 +59,7 @@ function saveStyleLibrary(library, callback) {
         library: library
     }, function(response) {
         if (callback) {
-            callback();
+            callback(storageWriteError(response));
         }
     });
 }
@@ -55,7 +80,7 @@ function clearStyleSnapshot(callback) {
         type: "clear style snapshot"
     }, function(response) {
         if (callback) {
-            callback();
+            callback(storageWriteError(response));
         }
     });
 }
@@ -68,11 +93,14 @@ function getEbookTitle(callback) {
     });
 }
 
-function saveEbookTitle(title) {
+function saveEbookTitle(title, callback) {
     chrome.runtime.sendMessage({
         type: "set title",
         title: title
     }, function(response) {
+        if (callback) {
+            callback(storageWriteError(response));
+        }
     });
 }
 
@@ -89,11 +117,14 @@ function getBookCss(callback) {
     });
 }
 
-function saveBookCss(css) {
+function saveBookCss(css, callback) {
     chrome.runtime.sendMessage({
         type: "set book css",
         css: css
     }, function(response) {
+        if (callback) {
+            callback(storageWriteError(response));
+        }
     });
 }
 
@@ -115,11 +146,14 @@ function getBookMetadata(callback) {
     });
 }
 
-function saveBookMetadata(metadata) {
+function saveBookMetadata(metadata, callback) {
     chrome.runtime.sendMessage({
         type: "set book metadata",
         metadata: metadata
     }, function(response) {
+        if (callback) {
+            callback(storageWriteError(response));
+        }
     });
 }
 
@@ -161,11 +195,15 @@ function getEbookPages(callback) {
     });
 }
 
-function saveEbookPages(pages) {
+function saveEbookPages(pages, callback) {
     chrome.runtime.sendMessage({
         type: "set",
         pages: pages
-    }, function(response) {});
+    }, function(response) {
+        if (callback) {
+            callback(storageWriteError(response));
+        }
+    });
 }
 
 // Discards the chapters, the title, the identifier and the stylesheet written
@@ -177,7 +215,7 @@ function removeEbook(callback) {
         type: "remove"
     }, function(response) {
         if (callback) {
-            callback();
+            callback(storageWriteError(response));
         }
     });
 }
@@ -600,47 +638,6 @@ function getBase64ImgData(srcTxt) {
         console.log('Error:', e);
         return '';
     }
-}
-
-function getXPath(elm) {
-    if (!elm) return ''
-
-    let allNodes = document.getElementsByTagName('*');
-    for (let segs = []; elm && elm.nodeType === 1; elm = elm.parentNode) {
-        if (elm.hasAttribute('id')) {
-            let uniqueIdCount = 0;
-            for (let n = 0; n < allNodes.length; n++) {
-                if (allNodes[n].hasAttribute('id') && allNodes[n].id === elm.id) {
-                    uniqueIdCount++;
-                }
-                if (uniqueIdCount > 1) {
-                    break;
-                }
-            }
-            if (uniqueIdCount === 1) {
-                segs.unshift('id("' + elm.getAttribute('id') + '")');
-                return segs.join('/');
-            } else {
-                segs.unshift(elm.localName.toLowerCase() + '[@id="' + elm.getAttribute('id') + '"]');
-            }
-        } else if (elm.hasAttribute('class')) {
-            segs.unshift(elm.localName.toLowerCase() + '[@class="' + elm.getAttribute('class') + '"]');
-        } else {
-            for (i = 1, sib = elm.previousSibling; sib; sib = sib.previousSibling) {
-                if (sib.localName === elm.localName) {
-                    i++;
-                }
-            }
-            segs.unshift(elm.localName.toLowerCase() + '[' + i + ']');
-        }
-    }
-    return segs.length ? '/' + segs.join('/') : null;
-}
-
-function lookupElementByXPath(path) {
-    let evaluator = new XPathEvaluator();
-    let result = evaluator.evaluate(path, document.documentElement, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-    return  result.singleNodeValue;
 }
 
 function generateRandomTag(tagLen) {

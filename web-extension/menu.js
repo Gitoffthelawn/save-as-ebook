@@ -33,8 +33,22 @@ document.getElementById('waitMessage').textContent = chrome.i18n.getMessage('wai
 const failureMessages = {
     'restricted-tab': 'restrictedTabMessage',
     'busy': 'busyMessage',
-    'no-tab': 'noTabMessage'
+    'no-tab': 'noTabMessage',
+    // not a command that never started, but the same surface: the checkbox in
+    // the style list showing a state the profile was refused
+    'storage-write': 'storageWriteFailed'
 };
+
+// The three option checkboxes write a preference and nothing else, so there is
+// nothing to redraw and nothing that would look wrong when the write is refused
+// - the box stays ticked for a setting the profile did not keep, and the next
+// capture quietly uses the old one. The popup's own failure line is where that
+// is said.
+function noteOptionWrite(response) {
+    if (storageWriteError(response)) {
+        showFailure('storage-write');
+    }
+}
 
 function showFailure(reason) {
     let messageName = failureMessages[reason];
@@ -97,8 +111,7 @@ document.getElementById('includeStyleCheck').onclick = function () {
     chrome.runtime.sendMessage({
         type: "set include style",
         includeStyle: includeStyleCheck.checked
-    }, function(response) {
-    });
+    }, noteOptionWrite);
     // The list below is not redrawn, because nothing in it depends on this. It
     // used to: this was the switch the whole library hung off, so a list of
     // styles that would not run was greyed out and annotated. prepareStyles
@@ -237,7 +250,17 @@ function setStyleEnabled(id, enabled) {
             return;
         }
         currentLibrary = putStyleEntry(library, Object.assign({}, entry, {enabled: enabled}));
-        saveStyleLibrary(currentLibrary, renderCurrentStyles);
+        saveStyleLibrary(currentLibrary, function (error) {
+            // The list is redrawn either way - it is drawn from this popup's own
+            // copy, and that copy is what the checkbox just changed. What a
+            // refused write costs is that the next capture uses the styles as
+            // they were, which is worth saying rather than leaving the checkbox
+            // to claim otherwise.
+            if (error) {
+                showFailure('storage-write');
+            }
+            renderCurrentStyles();
+        });
     });
 }
 
@@ -257,8 +280,7 @@ document.getElementById('readerModeCheck').onclick = function () {
     chrome.runtime.sendMessage({
         type: "set reader mode",
         readerMode: readerModeCheck.checked
-    }, function(response) {
-    });
+    }, noteOptionWrite);
 }
 
 function createReviewBeforeSaving(data) {
@@ -277,8 +299,7 @@ document.getElementById('reviewBeforeSavingCheck').onclick = function () {
     chrome.runtime.sendMessage({
         type: "set review before saving",
         reviewBeforeSaving: reviewCheck.checked
-    }, function(response) {
-    });
+    }, noteOptionWrite);
 }
 
 // Both editors are extension pages now rather than scripts injected into

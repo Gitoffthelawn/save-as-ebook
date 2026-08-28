@@ -258,6 +258,40 @@ function equal(actual, expected, message) {
         });
     });
 
+    // A blank title used to be filtered out with the malformed records, so a
+    // chapter whose title was cleared in the editor - to retype it, or by a
+    // stray select-all - was dropped from the archive with the row still sitting
+    // in the list and nothing said about it. The label was missing; the chapter
+    // was not.
+    await scenario('a chapter with no title keeps its content and is named in the navigation', async () => {
+        const env = makeSandbox();
+        const pages = [
+            chapter({title: 'Named', content: '<p>first</p>'}),
+            chapter({title: '   ', content: '<p>second</p>'}),
+            chapter({title: undefined, content: '<p>third</p>'})
+        ];
+        const epub = await inspect(env, await build(env, pages));
+
+        equal(epub.pages.length, 3, 'a blank title must not cost the chapter');
+        equal((epub.opf.match(/<itemref /g) || []).length, 3, 'every chapter should reach the spine');
+        const bodies = await Promise.all(epub.pages.map((name, index) => epub.page(index)));
+        ['first', 'second', 'third'].forEach((text, index) => {
+            ok(bodies[index].includes('<p>' + text + '</p>'),
+               'chapter ' + index + ' should hold its own content');
+        });
+
+        // a reader has to have something to click on, so the fallback is a name
+        // and not an empty entry
+        ok(epub.nav.includes('>Untitled chapter 2<'),
+           'the untitled chapter should be listed under a fallback name: ' + epub.nav);
+        ok(epub.nav.includes('>Untitled chapter 3<'),
+           'a chapter with no title field at all should be listed too: ' + epub.nav);
+        ok(bodies[1].includes('<title>Untitled chapter 2</title>'),
+           'the chapter document should carry the fallback title too');
+        equal(epub.pages[1], 'OEBPS/pages/ch1.xhtml',
+              'a fallback title should not be slugged into the file name');
+    });
+
     await scenario('chapter file names are derived from the book, and the same book builds the same names', async () => {
         const pages = [
             chapter({title: 'Café Society — Part 1'}),
@@ -376,6 +410,45 @@ function equal(actual, expected, message) {
         equal(epub.names.filter((name) => name === 'OEBPS/images/kept.jpg').length, 1,
               'duplicate supported image should be stored once');
         ok(!/(unsupported\.bmp|missing\.png|no-data\.png)/.test(epub.opf), 'invalid image reached the manifest');
+    });
+
+    // EPUBCheck warns about an empty directory (PKG-014), and a text-only book
+    // is the common save: every reader-mode article without pictures, and every
+    // plain save of a page that has none.
+    await scenario('a book with no images carries no images directory at all', async () => {
+        const env = makeSandbox();
+        const epub = await inspect(env, await build(env, [chapter({content: '<p>Only text</p>'})]));
+        const entries = Object.keys(epub.zip.files);
+        ok(!entries.some((name) => name.startsWith('OEBPS/images')),
+           'a text-only book should not contain OEBPS/images/: ' + entries.join(', '));
+        ok(entries.includes('OEBPS/pages/') || entries.some((name) => name.startsWith('OEBPS/pages/')),
+           'the chapter itself should still be written');
+    });
+
+    // Same requirement one step later: the images were there in storage, and
+    // every one of them was dropped for having no resolvable media type, so
+    // nothing is written and the directory must not appear either.
+    await scenario('a book whose only images were dropped carries no images directory', async () => {
+        const env = makeSandbox();
+        const page = chapter({
+            images: [{filename: 'unsupported.bmp', data: IMAGE_BYTES},
+                     {filename: 'untyped.TODO-EXTRACT', data: IMAGE_BYTES}],
+            content: '<img src="../images/unsupported.bmp" alt="bad" />' +
+                     '<img src="../images/untyped.TODO-EXTRACT" alt="worse" />'
+        });
+        const epub = await inspect(env, await build(env, [page]));
+        ok(!Object.keys(epub.zip.files).some((name) => name.startsWith('OEBPS/images')),
+           'dropping every image should drop the directory with them');
+    });
+
+    await scenario('a book with an image still gets the images directory', async () => {
+        const env = makeSandbox();
+        const page = chapter({
+            images: [{filename: 'photo.png', data: IMAGE_BYTES}],
+            content: '<img src="../images/photo.png" alt="photo" />'
+        });
+        const epub = await inspect(env, await build(env, [page]));
+        ok(epub.names.includes('OEBPS/images/photo.png'), 'the image should be written');
     });
 
     // A chapter buffered by an older version can still name an image by its

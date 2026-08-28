@@ -216,17 +216,36 @@
     "saveChanges": {
         "message": "Сохранить изменения"
     },
+    "storageWriteFailed": {
+        "message": "Не удалось сохранить изменения: браузер отклонил запись в хранилище этого расширения — обычно это значит, что оно переполнено. Ничего не сохранено — освободите место или удалите накопленные главы и попробуйте снова."
+    },
     "changesSaved": {
         "message": "Изменения сохранены."
     },
     "emptyBookWarning": {
         "message": "Невозможно создать пустую книгу"
     },
+    "blankChapterTitleWarning": {
+        "message": "У каждой главы должно быть название. Глава без названия выделена."
+    },
     "confirmDeleteStyle": {
         "message": "Вы точно хотите удалить этот стиль?"
     },
     "invalidRegex": {
         "message": "Ошибка в регулярном выражении"
+    },
+    "styleRegexUnsafe": {
+        "message": "Такому шаблону на сопоставление может потребоваться неприемлемо много времени, из-за чего расширение зависнет во время сохранения страницы. Перепишите его без повторения внутри повторения — либо используйте glob-шаблон, где такой проблемы быть не может.",
+        "description": "Shown when a regular expression has a shape that can backtrack exponentially. See regexPatternRisk in styleLibrary.js."
+    },
+    "styleRegexTooLong": {
+        "message": "Шаблон слишком длинный — не более $max$ символов.",
+        "placeholders": {
+            "max": {
+                "content": "$1",
+                "example": "500"
+            }
+        }
     },
     "styleSaved": {
         "message": "Стиль сохранен!"
@@ -626,6 +645,13 @@
     },
     "styleImportStrippedWhy": {
         "message": "Такие ссылки при каждом сохранении страницы обращаются к чужому сайту, сообщая ему, что вы читаете. Стилю сайта это не нужно."
+    },
+    "styleImportUnusablePatterns": {
+        "message": "Шаблоны, которые не будут использованы"
+    },
+    "styleImportUnusablePatternsWhy": {
+        "message": "На их сопоставление ушло бы неприемлемо много времени, поэтому они никогда не выполняются, и стили ниже ни к чему не применяются. Перепишите шаблон — в glob-шаблоне такой проблемы быть не может — либо удалите стиль.",
+        "description": "Why an imported regular expression is refused"
     },
     "styleImported": {
         "message": "Импортировано стилей: $count$.",

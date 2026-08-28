@@ -11,6 +11,70 @@ if (typeof importScripts === 'function') {
 // `browser`, and there `chrome` is promise-based under MV3.
 const ext = typeof browser !== 'undefined' ? browser : chrome;
 
+// Every write this file makes goes through these two rather than calling
+// chrome.storage.local directly. The API reports a refused write - the quota,
+// an unwritable profile, Firefox's storage backend saying no - by setting
+// chrome.runtime.lastError inside the callback and in no other way: the callback
+// runs either way. A caller that does not read it goes on to tell the user their
+// chapter was added when nothing was stored, and they find out when they build
+// the book and it is not in it. Reading lastError is also what keeps a genuine
+// failure from being logged as an unchecked error.
+//
+// The error reaches the callback as its first argument - null when the write
+// landed - so that every caller has to decide what to say about it. That is the
+// point of the wrapper: the failure is impossible to take for success by
+// omission.
+function storageSet(items, callback) {
+    chrome.storage.local.set(items, () => {
+        let error = storageError();
+        if (callback) {
+            callback(error);
+        }
+    });
+}
+
+// Removing is as much a write as storing, and fails the same way: a clear that
+// silently did not happen leaves the next save appending to a book the user
+// believes they threw away.
+function storageRemove(keys, callback) {
+    chrome.storage.local.remove(keys, () => {
+        let error = storageError();
+        if (callback) {
+            callback(error);
+        }
+    });
+}
+
+// lastError is a getter that has to be read inside the callback, and read at all
+// - an unread one is what the browser logs as "Unchecked runtime.lastError".
+// Flattened to a string here because that is what crosses a sendResponse to the
+// pages that report it.
+function storageError() {
+    let error = chrome.runtime.lastError;
+    if (!error) {
+        return null;
+    }
+    console.log('Storage write failed:', error.message || error);
+    return error.message || 'storage write failed';
+}
+
+// What a page asking for a write is answered with. Every setter below returns
+// this shape, so a caller can tell a write that happened from one that did not
+// without knowing which key it was about.
+function writeResponse(error) {
+    return error ? {ok: false, error: error} : {ok: true};
+}
+
+// The sentence the content script alerts when a write the user asked for did not
+// happen. It names the likely cause, because it is one of the few storage
+// failures the user can actually do something about.
+function storageFailureAlert(what) {
+    return what + ' could not be saved: the browser refused to write to this ' +
+           "extension's storage, which usually means it is full. Nothing was " +
+           'stored - discarding the buffered chapters in the Chapter Editor ' +
+           'frees the most space.';
+}
+
 ///////////////////
 ///////////////////
 ///////////////////
@@ -486,8 +550,20 @@ function dispatchStyleSnapshot(tab, jobId) {
                 title: response.title || '',
                 capturedAt: Date.now(),
                 page: response
-            }, () => {
+            }, (error) => {
                 endJob(jobId)
+                // The library page renders the snapshot it is opened on. Opening
+                // it after a write that did not happen shows the previous
+                // capture, or none, under a heading saying this page was
+                // captured - so the failure is said here and the tab is not
+                // opened at all.
+                if (error) {
+                    chrome.tabs.sendMessage(tab[0].id,
+                        {'alert': storageFailureAlert('The captured page')}, (r) => {
+                        void chrome.runtime.lastError;
+                    });
+                    return;
+                }
                 chrome.tabs.create({url: chrome.runtime.getURL(styleLibraryUrl(tab[0].url))})
             })
         });
@@ -506,11 +582,7 @@ function styleLibraryUrl(url) {
 // of clearEbook's list on purpose - it belongs to the styles, which outlive any
 // one book.
 function storeStyleSnapshot(snapshot, callback) {
-    chrome.storage.local.set({'styleSnapshot': snapshot}, () => {
-        if (callback) {
-            callback()
-        }
-    })
+    storageSet({'styleSnapshot': snapshot}, callback)
 }
 
 function isIncludeStyles(callback) {
@@ -623,7 +695,11 @@ function getStyleLibrary(callback) {
                 return
             }
 
-            chrome.storage.local.set({'styleLibrary': merged.library}, () => {
+            // The merge is handed over whether or not it could be stored: this
+            // is a read, and the caller asked for the library rather than for a
+            // migration. A write that failed only means the same merge runs
+            // again on the next read - storageSet has logged it.
+            storageSet({'styleLibrary': merged.library}, () => {
                 callback(merged.library, catalog)
             });
         });
@@ -631,11 +707,7 @@ function getStyleLibrary(callback) {
 }
 
 function setStyleLibrary(library, callback) {
-    chrome.storage.local.set({'styleLibrary': library}, () => {
-        if (callback) {
-            callback()
-        }
-    });
+    storageSet({'styleLibrary': library}, callback);
 }
 
 // Puts the selected styles on the page in the order selectStylesForUrl returned
@@ -733,29 +805,52 @@ function prepareStyles(tab, appliedStyles, jobId, callback) {
 // The page names the book, because that is what the immediate build would have
 // called the file. An untitled page is left to the editor's own 'eBook'
 // fallback rather than stored as an empty title.
-function openForReview(response, jobId) {
+function openForReview(tab, response, jobId) {
     let book = {'allPages': [response]};
     if (response.title && response.title.trim() !== '') {
         book.title = response.title;
     }
     clearEbook(() => {
-        chrome.storage.local.set(book, () => {
+        storageSet(book, (error) => {
             endJob(jobId)
+            // The editor is opened on what is in storage, so a write that did
+            // not happen would open it on an empty book with nothing to say why
+            // - the chapter is gone either way, and the difference between the
+            // two is whether the user knows it. Said in the page, since the tab
+            // the capture came from is still the one in front of them.
+            if (error) {
+                chrome.tabs.sendMessage(tab[0].id,
+                    {'alert': storageFailureAlert('The captured page')}, (r) => {
+                    void chrome.runtime.lastError;
+                });
+                return;
+            }
             chrome.tabs.create({url: chrome.runtime.getURL('chapters.html')})
         })
     })
 }
 
 // Appends one extracted page to the chapters already buffered.
+//
+// The buffer is read into a local rather than written back through the object
+// storage handed over: the guard here used to be `if (!data || !data.allPages)
+// { data.allPages = [] }`, which throws on the very null it claims to defend
+// against. Nothing produces that null today, but a stored value of the wrong
+// shape - a book written by an older release, a profile edited by hand - would
+// take the same path, and a chapter is not worth an exception.
+//
+// The alert says which of the two happened. It is the whole point of the
+// wrapper: the callback runs on a refused write exactly as it does on a stored
+// one, and the sentence that used to be sent from it said the chapter was added.
 function addChapter(tab, response, jobId) {
     chrome.storage.local.get('allPages', (data) => {
-        if (!data || !data.allPages) {
-            data.allPages = [];
-        }
-        data.allPages.push(response);
-        chrome.storage.local.set({'allPages': data.allPages}, () => {
+        let allPages = data && Array.isArray(data.allPages) ? data.allPages : [];
+        allPages.push(response);
+        storageSet({'allPages': allPages}, (error) => {
             endJob(jobId)
-            chrome.tabs.sendMessage(tab[0].id, {'alert': 'Page or selection added as chapter!'}, (r) => {
+            chrome.tabs.sendMessage(tab[0].id, {'alert': error ?
+                storageFailureAlert('The chapter') :
+                'Page or selection added as chapter!'}, (r) => {
                 void chrome.runtime.lastError;
             });
         });
@@ -843,7 +938,7 @@ function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, 
         if (justAddToBuffer) {
             addChapter(tab, response, jobId);
         } else if (reviewBeforeSaving) {
-            openForReview(response, jobId);
+            openForReview(tab, response, jobId);
         } else {
             // The one-shot save: the extraction succeeded, so this is where the
             // previous book goes. The build itself reads nothing from storage -
@@ -853,6 +948,12 @@ function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, 
             //
             // the job stays open until the content script reports 'done' - it
             // still has to build and download the zip
+            //
+            // A clear that was refused is logged and not otherwise reported: the
+            // book the user asked for is built and downloaded from the chapter
+            // in hand either way, and all a failure costs is that the next
+            // command starts from the old buffer instead of an empty one. That
+            // is not worth an alert on top of a save that worked.
             clearEbook(() => {
                 chrome.tabs.sendMessage(tab[0].id, {'shortcut': 'build-ebook', response: [response], jobId: jobId}, (r) => {
                     void chrome.runtime.lastError;
@@ -867,7 +968,7 @@ function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, 
 // a caller that clears the book and immediately writes a new one must not have
 // its first chapter removed by a clearing that was still in flight.
 function clearEbook(callback) {
-    chrome.storage.local.remove([
+    storageRemove([
         'allPages',
         'title',
         // the identifier belongs to the discarded set of chapters - the next
@@ -879,11 +980,7 @@ function clearEbook(callback) {
         // ...and what the user said the book was called by, written about the
         // chapters that are going
         'bookMetadata'
-    ], () => {
-        if (callback) {
-            callback()
-        }
-    })
+    ], callback)
 }
 
 chrome.runtime.onMessage.addListener(_execRequest);
@@ -905,15 +1002,20 @@ function _execRequest(request, sender, sendResponse) {
         })
         return true;
     }
+    // Every setter below answers writeResponse(), which is {ok: true} only when
+    // the write actually landed. The pages that call them show what they are
+    // told - see the storage-failure paths in chapterEditor.js and cssEditor.js -
+    // so an answer of {ok: true} on a refused write is the same lie as an alert
+    // saying the chapter was added, one layer further out.
     if (request.type === 'set') {
-        chrome.storage.local.set({'allPages': request.pages}, function () {
-            sendResponse({ok: true});
+        storageSet({'allPages': request.pages}, function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
     if (request.type === 'remove') {
-        clearEbook(function () {
-            sendResponse({ok: true});
+        clearEbook(function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -927,7 +1029,12 @@ function _execRequest(request, sender, sendResponse) {
                 return;
             }
             let uuid = crypto.randomUUID();
-            chrome.storage.local.set({'uuid': uuid}, function () {
+            // The identifier is answered even when it could not be stored. The
+            // build needs one and this one is as good as any; what a failed
+            // write costs is only that a rebuild of the same chapters mints
+            // another, which is not worth refusing to build a book over. It is
+            // logged in storageSet.
+            storageSet({'uuid': uuid}, function () {
                 sendResponse({uuid: uuid});
             });
         })
@@ -944,8 +1051,8 @@ function _execRequest(request, sender, sendResponse) {
         return true;
     }
     if (request.type === 'set title') {
-        chrome.storage.local.set({'title': request.title}, function () {
-            sendResponse({ok: true});
+        storageSet({'title': request.title}, function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -958,10 +1065,10 @@ function _execRequest(request, sender, sendResponse) {
         return true;
     }
     if (request.type === 'set book css') {
-        chrome.storage.local.set({
+        storageSet({
             'bookCss': typeof request.css === 'string' ? request.css : ''
-        }, function () {
-            sendResponse({ok: true});
+        }, function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -975,11 +1082,11 @@ function _execRequest(request, sender, sendResponse) {
         return true;
     }
     if (request.type === 'set book metadata') {
-        chrome.storage.local.set({
+        storageSet({
             'bookMetadata': request.metadata && typeof request.metadata === 'object' ?
                             request.metadata : null
-        }, function () {
-            sendResponse({ok: true});
+        }, function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -995,8 +1102,8 @@ function _execRequest(request, sender, sendResponse) {
     // rather than trusted: this is the shape the capture path reads, and a field
     // the page got wrong would be a style that matches nothing or everything.
     if (request.type === 'set style library') {
-        setStyleLibrary(normalizeStyleLibrary(request.library), function () {
-            sendResponse({ok: true});
+        setStyleLibrary(normalizeStyleLibrary(request.library), function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -1009,8 +1116,8 @@ function _execRequest(request, sender, sendResponse) {
         return true;
     }
     if (request.type === 'clear style snapshot') {
-        chrome.storage.local.remove('styleSnapshot', function () {
-            sendResponse({ok: true});
+        storageRemove('styleSnapshot', function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -1029,8 +1136,8 @@ function _execRequest(request, sender, sendResponse) {
         return true;
     }
     if (request.type === 'set include style') {
-        chrome.storage.local.set({'includeStyle': request.includeStyle}, function () {
-            sendResponse({ok: true});
+        storageSet({'includeStyle': request.includeStyle}, function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -1045,8 +1152,8 @@ function _execRequest(request, sender, sendResponse) {
         return true;
     }
     if (request.type === 'set reader mode') {
-        chrome.storage.local.set({'readerMode': request.readerMode}, function () {
-            sendResponse({ok: true});
+        storageSet({'readerMode': request.readerMode}, function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -1063,10 +1170,10 @@ function _execRequest(request, sender, sendResponse) {
         return true;
     }
     if (request.type === 'set review before saving') {
-        chrome.storage.local.set({
+        storageSet({
             'reviewBeforeSaving': request.reviewBeforeSaving
-        }, function () {
-            sendResponse({ok: true});
+        }, function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }

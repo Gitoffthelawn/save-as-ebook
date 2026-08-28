@@ -66,8 +66,33 @@ function createHarness(options) {
         return copy(store);
     }
 
+    // A write the profile refuses: chrome.storage stores nothing, sets
+    // chrome.runtime.lastError, and runs the callback anyway - which is the
+    // whole shape the storage-failure paths are about. failWrites: true refuses
+    // every local write; a function is asked about each one and returns a
+    // message or null.
+    //
+    // Session writes are left alone under `true`: they are the job record, and a
+    // test about a refused chapter is not a test about a job that cannot be
+    // claimed.
+    function writeFailure(area, operation, keys) {
+        if (!options.failWrites) {
+            return null;
+        }
+        if (typeof options.failWrites === 'function') {
+            return options.failWrites({area: area, operation: operation, keys: keys}) || null;
+        }
+        return area === 'local' ? 'QUOTA_BYTES quota exceeded' : null;
+    }
+
     function storageArea(name) {
         const store = state[name];
+        const answer = (failure, callback) => {
+            if (!callback) return;
+            chrome.runtime.lastError = failure ? {message: failure} : null;
+            callback();
+            chrome.runtime.lastError = null;
+        };
         return {
             get: (keys, callback) => {
                 const invoke = () => callback(storageResult(store, keys));
@@ -78,12 +103,19 @@ function createHarness(options) {
                 }
             },
             set: (items, callback) => {
-                for (const key of Object.keys(items)) store[key] = copy(items[key]);
-                if (callback) callback();
+                const failure = writeFailure(name, 'set', Object.keys(items));
+                if (!failure) {
+                    for (const key of Object.keys(items)) store[key] = copy(items[key]);
+                }
+                answer(failure, callback);
             },
             remove: (keys, callback) => {
-                for (const key of (Array.isArray(keys) ? keys : [keys])) delete store[key];
-                if (callback) callback();
+                const list = Array.isArray(keys) ? keys : [keys];
+                const failure = writeFailure(name, 'remove', list);
+                if (!failure) {
+                    for (const key of list) delete store[key];
+                }
+                answer(failure, callback);
             }
         };
     }
@@ -485,6 +517,134 @@ async function test(name, body) {
         assert.deepStrictEqual(add.state.local.allPages, [response]);
         assert.strictEqual(add.state.session.job, undefined);
         assert.strictEqual(messages(add, (m) => m.alert === 'Page or selection added as chapter!').length, 1);
+    });
+
+    // The class of bug this group is about: chrome.storage runs the callback
+    // whether or not it wrote anything, so every one of these paths used to say
+    // it had done what it had not.
+    await test('a chapter the profile refused to store is reported as a failure', async () => {
+        const h = createHarness({
+            extractionResponse: {title: 'A', content: '<p>chapter</p>'},
+            local: {allPages: []},
+            failWrites: true
+        });
+        h.context.applyAction([{id: 7}], 'extract-page', true, false, [], false, false,
+                              claimJob(h, 7));
+        await settle();
+        assert.deepStrictEqual(h.state.local.allPages, [], 'the refused write stored a chapter');
+        assert.strictEqual(
+            messages(h, (m) => m.alert === 'Page or selection added as chapter!').length, 0,
+            'a refused write was reported as a chapter added');
+        assert.strictEqual(
+            messages(h, (m) => (m.alert || '').startsWith('The chapter could not be saved')).length, 1);
+        // the job still ends - the extraction is over either way, and a spinner
+        // left running is the second half of the same lie
+        assert.strictEqual(h.state.session.job, undefined);
+    });
+
+    // The guard here used to be `if (!data || !data.allPages) { data.allPages = [] }`,
+    // which throws on the null it claims to handle. Nothing produces that null
+    // today; a buffer of the wrong shape takes the same branch.
+    await test('a buffer of the wrong shape is replaced rather than dereferenced', () => {
+        const h = createHarness({
+            extractionResponse: {title: 'A', content: '<p>chapter</p>'},
+            local: {allPages: 'not a list'}
+        });
+        h.context.applyAction([{id: 7}], 'extract-page', true, false, [], false, false,
+                              claimJob(h, 7));
+        assert.deepStrictEqual(h.state.local.allPages, [{title: 'A', content: '<p>chapter</p>'}]);
+        assert.strictEqual(
+            messages(h, (m) => m.alert === 'Page or selection added as chapter!').length, 1);
+    });
+
+    await test('a reviewed save that cannot be stored does not open the editor', async () => {
+        const h = createHarness({
+            extractionResponse: {title: 'Article', content: '<p>chapter</p>'},
+            failWrites: true
+        });
+        h.context.applyAction([{id: 7}], 'extract-page', false, false, [], false, true,
+                              claimJob(h, 7));
+        await settle();
+        // the editor reads the book from storage: opened on a write that did not
+        // happen, it would show an empty page with nothing to say why
+        assert.deepStrictEqual(h.state.createdTabs, []);
+        assert.strictEqual(
+            messages(h, (m) => (m.alert || '').startsWith('The captured page could not be saved')).length, 1);
+        assert.strictEqual(h.state.session.job, undefined);
+    });
+
+    await test('a style snapshot that cannot be stored does not open the library', async () => {
+        const stored = createHarness();
+        stored.context.dispatchStyleSnapshot([{id: 7, url: 'https://example.com/a'}],
+                                             claimJob(stored, 7));
+        await settle();
+        assert.strictEqual(stored.state.local.styleSnapshot.url, 'https://example.com/a');
+        assert.deepStrictEqual(stored.state.createdTabs, [{
+            url: 'chrome-extension://save-as-ebook/styles.html?for=' +
+                 encodeURIComponent('https://example.com/a')
+        }]);
+
+        const refused = createHarness({failWrites: true});
+        refused.context.dispatchStyleSnapshot([{id: 7, url: 'https://example.com/a'}],
+                                              claimJob(refused, 7));
+        await settle();
+        assert.deepStrictEqual(refused.state.createdTabs, [],
+            'the library was opened on a snapshot that was never stored');
+        assert.strictEqual(messages(refused,
+            (m) => (m.alert || '').startsWith('The captured page could not be saved')).length, 1);
+        assert.strictEqual(refused.state.session.job, undefined);
+    });
+
+    // The same failure one layer out: the editor and the library page are told
+    // by the answer to their write, and they say what they are told.
+    await test('setters answer a refused write with ok:false rather than ok:true', () => {
+        const writes = [
+            {type: 'set', pages: [{title: 'a'}]},
+            {type: 'set title', title: 'A Book'},
+            {type: 'set book css', css: 'p{}'},
+            {type: 'set book metadata', metadata: {publisher: 'someone'}},
+            {type: 'set include style', includeStyle: true},
+            {type: 'set reader mode', readerMode: true},
+            {type: 'set review before saving', reviewBeforeSaving: true},
+            {type: 'remove'},
+            {type: 'clear style snapshot'}
+        ];
+        for (const write of writes) {
+            const stored = createHarness({local: {styleSnapshot: {url: 'x'}}});
+            assert.deepStrictEqual(request(stored, write), [{ok: true}],
+                write.type + ' did not report a write that landed');
+
+            const refused = createHarness({
+                local: {styleSnapshot: {url: 'x'}},
+                failWrites: true
+            });
+            assert.deepStrictEqual(request(refused, write),
+                [{ok: false, error: 'QUOTA_BYTES quota exceeded'}],
+                write.type + ' reported a refused write as success');
+        }
+    });
+
+    // The style library is written by the library page and by the popup's
+    // checkboxes, and both of them draw the list from their own copy - so the
+    // answer is the only thing that can tell them the profile did not keep it.
+    await test('a refused style library write is answered as a failure', () => {
+        const library = {version: 2, entries: []};
+        const refused = createHarness({failWrites: true});
+        assert.deepStrictEqual(request(refused, {type: 'set style library', library: library}),
+            [{ok: false, error: 'QUOTA_BYTES quota exceeded'}]);
+
+        // ...and a read that cannot store its migration still hands the library
+        // over: the caller asked for the styles, not for a migration
+        const migrating = createHarness({
+            local: {styles: [{name: 'old', url: 'example.com', css: 'p{}'}]},
+            failWrites: true
+        });
+        let answered = null;
+        migrating.context.getStyleLibrary((merged) => { answered = merged; });
+        return settle().then(() => {
+            assert.ok(answered && answered.entries.length === 1,
+                'a refused migration write swallowed the library');
+        });
     });
 
     await test('review before saving buffers the one-shot save and opens the editor', async () => {

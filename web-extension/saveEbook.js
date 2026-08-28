@@ -120,6 +120,24 @@ function chapterFileName(page, index) {
     return 'ch' + index + (slug ? '-' + slug : '') + '.xhtml';
 }
 
+// A chapter whose title is blank is a chapter, not a corrupt record. The build
+// used to filter it out with the malformed ones, which meant that clearing a
+// title in the editor to retype it and pressing Generate published a book with
+// that chapter's content missing and nothing said about it - the row was still
+// in the list, the file simply was not in the archive. A title is a label; the
+// content is what the chapter is. Naming it here is the same choice the book
+// title already makes when its own box is left empty, and it keeps the table of
+// contents from carrying an entry with nothing to click on.
+//
+// The editor asks before it gets this far - see the Generate button in
+// chapterEditor.js - so what reaches this fallback is a record from storage that
+// no longer has anyone in front of it: one written by an older version, or one
+// edited outside the extension.
+function chapterTitle(title, index) {
+    return typeof title === 'string' && title.trim().length > 0 ?
+           title : 'Untitled chapter ' + (index + 1);
+}
+
 // Only complete chapter records can become spine items. A null or partially
 // written record can be left behind if the browser is closed while storage is
 // being updated; skipping that record is preferable to losing every good
@@ -134,10 +152,10 @@ function normalizeChapters(allPages) {
         // writing this record, not as a value the build goes on to use: the name
         // the chapter is written under is minted below.
         return page && typeof page === 'object' &&
-               typeof page.title === 'string' && page.title.trim().length > 0 &&
                typeof page.url === 'string' && page.url.trim().length > 0;
     }).map(function(page, index) {
         return dropUntypedImages(Object.assign({}, page, {
+            title: chapterTitle(page.title, index),
             content: typeof page.content === 'string' ? page.content : '',
             images: Array.isArray(page.images) ? page.images : [],
             // both names are the build's to decide - see chapterFileName()
@@ -993,12 +1011,6 @@ function navTreeDepth(nodes) {
     }, 0);
 }
 
-function getExternalLinksIndex() { // TODO
-    return allExternalLinks.reduce(function(prev, elem, index) {
-        return prev + '\n' + '<item href="' + elem + '" />';
-    }, '');
-}
-
 // Reads the whole book out of storage and builds it. For a caller that has no
 // chapters in hand - everything else passes its own array to buildEbook(), which
 // is what keeps a build from racing the storage write that preceded it.
@@ -1300,10 +1312,19 @@ function buildEbook(allPages, bookMeta, jobId) {
 
     ///////////////
     try {
-        let imgsFolder = oebps.folder("images");
+        // JSZip.folder() writes a directory entry whether or not anything is put
+        // in it, and an empty OEBPS/images/ is an EPUBCheck warning (PKG-014) on
+        // every text-only book - which is every reader-mode article without
+        // pictures and most plain saves. So the folder is created by the first
+        // image actually written: that holds whether the book never had an
+        // image or had every one of them dropped for having no media type.
+        let imgsFolder = null;
         allImages.forEach(function(tmpImg) {
             // TODO - Must be JSON serializable - see the same comment in extractHtml.js
             let imgOptions = getImageZipOptions(tmpImg.filename)
+            if (!imgsFolder) {
+                imgsFolder = oebps.folder("images");
+            }
             // if (tmpImg.isBinary) {
             //     imgsFolder.file(tmpImg.filename, tmpImg.data, {binary: true, compression: imgOptions.compression})
             // } else {

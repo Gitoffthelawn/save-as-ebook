@@ -216,17 +216,36 @@
     "saveChanges": {
         "message": "Enregistrer les modifications"
     },
+    "storageWriteFailed": {
+        "message": "Vos modifications n'ont pas pu être enregistrées : le navigateur a refusé d'écrire dans le stockage de cette extension, généralement parce qu'il est plein. Rien n'a été enregistré - libérez de l'espace, ou supprimez les chapitres en mémoire, puis réessayez."
+    },
     "changesSaved": {
         "message": "Modifications enregistrées."
     },
     "emptyBookWarning": {
         "message": "Impossible de générer un eBook vide !"
     },
+    "blankChapterTitleWarning": {
+        "message": "Chaque chapitre doit avoir un titre. Le chapitre sans titre est sélectionné."
+    },
     "confirmDeleteStyle": {
         "message": "Êtes-vous sûr de vouloir supprimer ce style ?"
     },
     "invalidRegex": {
         "message": "Expression régulière invalide"
+    },
+    "styleRegexUnsafe": {
+        "message": "Ce motif peut demander un temps de correspondance inexploitable, ce qui figerait l'extension pendant l'enregistrement d'une page. Réécrivez-le sans répétition à l'intérieur d'une répétition - ou utilisez un motif glob, qui ne peut pas avoir ce problème.",
+        "description": "Shown when a regular expression has a shape that can backtrack exponentially. See regexPatternRisk in styleLibrary.js."
+    },
+    "styleRegexTooLong": {
+        "message": "Ce motif est trop long - $max$ caractères au maximum.",
+        "placeholders": {
+            "max": {
+                "content": "$1",
+                "example": "500"
+            }
+        }
     },
     "styleSaved": {
         "message": "Style enregistré !"
@@ -626,6 +645,13 @@
     },
     "styleImportStrippedWhy": {
         "message": "Ces références vont chercher un fichier sur un autre site à chaque capture de page, ce qui indique à ce site ce que vous lisez. Un style de site n'en a aucun besoin."
+    },
+    "styleImportUnusablePatterns": {
+        "message": "Motifs qui ne seront pas utilisés"
+    },
+    "styleImportUnusablePatternsWhy": {
+        "message": "Leur correspondance demanderait un temps inexploitable : ils ne sont donc jamais évalués et les styles ci-dessous ne s'appliquent à rien. Réécrivez le motif - un motif glob ne peut pas avoir ce problème - ou supprimez le style.",
+        "description": "Why an imported regular expression is refused"
     },
     "styleImported": {
         "message": "$count$ style(s) importé(s).",

@@ -1,0 +1,36 @@
+[
+    {
+        "title": "An article with no pictures",
+        "url": "text-only1234.xhtml",
+        "baseUrl": "https://example.com/text/",
+        "sourceUrl": "https://example.com/text/article",
+        "metadata": {
+            "lang": "en",
+            "authors": ["Jane Smith"],
+            "publisher": "Example Press",
+            "description": "A reader-mode article that carries no images at all.",
+            "date": "2024-05-06"
+        },
+        "styleFileName": "style0.css",
+        "styleFileContent": ".t1 {font-size:14px;}",
+        "images": [],
+        "content": "<div><h1>An article with no pictures</h1><p class=\"t1\">Reader mode strips the page down to the article, and an article that illustrates nothing arrives here with an empty image list. That is the ordinary case, not the edge case.</p><h2>A section</h2><p class=\"t1\">More text, so the book has a navigation tree worth checking.</p></div>"
+    },
+    {
+        "title": "A second chapter, still no pictures",
+        "url": "text-only5678.xhtml",
+        "baseUrl": "https://example.com/text/",
+        "sourceUrl": "https://example.com/text/other",
+        "metadata": {
+            "lang": "en",
+            "authors": [],
+            "publisher": "",
+            "description": "",
+            "date": ""
+        },
+        "styleFileName": "style1.css",
+        "styleFileContent": ".t2 {font-size:14px;}",
+        "images": [],
+        "content": "<div><h1>A second chapter, still no pictures</h1><p class=\"t2\">Two chapters, because a compilation takes a different metadata branch than a single saved page.</p></div>"
+    }
+]

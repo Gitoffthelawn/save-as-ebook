@@ -309,6 +309,22 @@ setTimeout(function () {
   report('a style with an unusable regex is not saved', saved.length === 0 &&
          alerts.join('|') === 'invalidRegex', alerts.join('|'));
 
+  // A pattern that compiles but backtracks exponentially is the worse of the
+  // two: matching runs in the service worker on every capture, with nothing
+  // able to interrupt it. It is refused where it is written.
+  alerts = [];
+  pattern.value = '(a+)+example\\.com';
+  pattern.dispatchEvent(new Event('input'));
+  report('a pattern that would hang the worker is called out while it is typed',
+         document.getElementById('cssEditor-matchResult').textContent
+             .indexOf('styleRegexUnsafe') === 0 &&
+         document.getElementById('cssEditor-matchResult').className === 'cssEditor-match-bad',
+         document.getElementById('cssEditor-matchResult').textContent);
+
+  click('cssEditor-saveStyle');
+  report('and is not saved either', saved.length === 0 &&
+         alerts.join('|').indexOf('styleRegexUnsafe') === 0, alerts.join('|'));
+
   // A style that applies to every capture has no pattern to show.
   var scope = document.getElementById('cssEditor-styleScope');
   scope.value = 'theme';
@@ -509,6 +525,21 @@ setTimeout(function () {
          document.getElementById('cssEditor-importSummary').style.display === 'none' &&
          saved.length === savedBeforeImport,
          document.getElementById('cssEditor-importError').textContent);
+
+  // A style file is a file somebody else wrote, and the matcher will not run a
+  // pattern like this one. The style can still be imported - the pattern is the
+  // only unusable part of it - so the panel says so rather than the user
+  // wondering later why the css never appears.
+  document.getElementById('cssEditor-importText').value = JSON.stringify([
+    {id: 'slow', title: 'Slow One', scope: 'site', css: '.s {display: none}',
+     match: {type: 'regex', pattern: '(a+)+b'}}
+  ]);
+  click('cssEditor-importRead');
+  report('a pattern the matcher will not run is named before the import is applied',
+         importSummaryText().indexOf('styleImportUnusablePatterns') > -1 &&
+         importSummaryText().indexOf('Slow One: (a+)+b') > -1 &&
+         saved.length === savedBeforeImport,
+         importSummaryText());
 
   document.getElementById('cssEditor-importText').value = IMPORTED_FILE;
   click('cssEditor-importRead');

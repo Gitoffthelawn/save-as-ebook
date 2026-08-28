@@ -179,11 +179,14 @@ JSZip.loadAsync(raw).then(async (zip) => {
     check('manifest media types match their files', mistyped.length === 0,
           mistyped.map((i) => i.href + ' is ' + i.mediaType).join(', '));
 
-    // webp is a core image type in epub 3.3, so it is embedded as it arrived
+    // webp is a core image type in epub 3.3, so it is embedded as it arrived.
+    // Vacuously true for a book with no webp in it - this runs over books of
+    // several shapes now, and a text-only one has no images to declare at all.
+    // That a webp survives the build at all is asserted in epub-builder.js.
     const webp = items.filter((i) => /\.webp$/i.test(i.href || ''));
     check('webp images are declared image/webp',
-          webp.length > 0 && webp.every((i) => /media-type="image\/webp"/.test(i.attrs)),
-          webp.map((i) => i.attrs).join(' | '));
+          webp.every((i) => /media-type="image\/webp"/.test(i.attrs)),
+          webp.length === 0 ? 'no webp in this book' : webp.map((i) => i.attrs).join(' | '));
 
     // refines targets are built from the chapter index, so a change to how
     // manifest ids are named silently detaches all of the per-chapter metadata

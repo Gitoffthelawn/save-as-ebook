@@ -219,17 +219,36 @@
     "saveChanges": {
         "message": "Save changes"
     },
+    "storageWriteFailed": {
+        "message": "Your changes could not be saved: the browser refused to write to this extension's storage, which usually means it is full. Nothing was stored - free some space, or discard the buffered chapters, and try again."
+    },
     "changesSaved": {
         "message": "Changes saved."
     },
     "emptyBookWarning": {
         "message": "Can't generate an empty eBook!"
     },
+    "blankChapterTitleWarning": {
+        "message": "Every chapter needs a title. The chapter without one is selected."
+    },
     "confirmDeleteStyle": {
         "message": "Are you sure you want to delete this style?"
     },
     "invalidRegex": {
         "message": "Invalid regular expression"
+    },
+    "styleRegexUnsafe": {
+        "message": "This pattern can take an unusable amount of time to match, which would freeze the extension while a page is being saved. Rewrite it without a repeat inside a repeat - or use a glob pattern, which cannot have this problem.",
+        "description": "Shown when a regular expression has a shape that can backtrack exponentially. See regexPatternRisk in styleLibrary.js."
+    },
+    "styleRegexTooLong": {
+        "message": "This pattern is too long - $max$ characters at most.",
+        "placeholders": {
+            "max": {
+                "content": "$1",
+                "example": "500"
+            }
+        }
     },
     "styleSaved": {
         "message": "Style saved!"
@@ -638,6 +657,13 @@
     "styleImportStrippedWhy": {
         "message": "These fetch a file from another site every time a page is captured, which tells that site what you are reading. Nothing a site style does needs one.",
         "description": "Why remote url() and @import are taken out of imported CSS"
+    },
+    "styleImportUnusablePatterns": {
+        "message": "Patterns that will not be used"
+    },
+    "styleImportUnusablePatternsWhy": {
+        "message": "These would take an unusable amount of time to match, so they are never run and the styles below apply to nothing. Rewrite the pattern - a glob pattern cannot have this problem - or delete the style.",
+        "description": "Why an imported regular expression is refused"
     },
     "styleImported": {
         "message": "$count$ style(s) imported.",

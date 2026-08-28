@@ -831,16 +831,27 @@ function showEditor() {
     // Whether the pattern being typed covers the url in the box. Three answers,
     // not two: a pattern that does not compile matches nothing, and saying "does
     // not match" about a half-typed regex would read as a fact about the url.
+    //
+    // A regex the matcher refuses to run - too long, or able to backtrack
+    // exponentially - is the same kind of answer: it matches nothing either, and
+    // it is said here rather than only at save time so that it is said while the
+    // pattern is still being written.
     function renderMatchResult() {
         let pattern = patternInput.value.trim();
         let url = testUrlInput.value.trim();
+        let isRegex = matchTypeSelect.value === 'regex';
         let state = 'cssEditor-match-none';
         let text = '';
 
         if (pattern === '') {
             text = chrome.i18n.getMessage('stylePatternMissing');
-        } else if (matchTypeSelect.value === 'regex' && !compileRegExp(pattern)) {
+        } else if (isRegex && !compileRegExp(pattern)) {
             text = chrome.i18n.getMessage('styleTestInvalid');
+            state = 'cssEditor-match-bad';
+        } else if (isRegex && regexPatternRisk(pattern) !== '') {
+            text = chrome.i18n.getMessage(regexPatternRisk(pattern) === 'length' ?
+                'styleRegexTooLong' : 'styleRegexUnsafe',
+                [String(MAX_STYLE_PATTERN_LENGTH)]);
             state = 'cssEditor-match-bad';
         } else if (url === '') {
             text = chrome.i18n.getMessage('styleTestNoUrl');
@@ -1132,7 +1143,13 @@ function showEditor() {
             return;
         }
         styleSnapshot = null;
-        clearStyleSnapshot();
+        clearStyleSnapshot(function (error) {
+            // the pane is already empty, so a refused removal is a snapshot that
+            // comes back the next time this page is opened
+            if (error) {
+                alert(chrome.i18n.getMessage('storageWriteFailed'));
+            }
+        });
         renderPreview();
     }
 
@@ -1140,7 +1157,20 @@ function showEditor() {
     // Changing the library. Every one of these writes.
 
     function persist(callback) {
-        saveStyleLibrary(styleLibrary, callback);
+        saveStyleLibrary(styleLibrary, function (error) {
+            // Every "style saved" / "styles imported" message on this page is
+            // said as the write is issued, because what they describe is this
+            // page's own copy of the library being redrawn. A refused write
+            // leaves that copy ahead of storage - the style is on the screen and
+            // not in the profile - so the failure is said out loud here rather
+            // than left for the next reload to reveal.
+            if (error) {
+                alert(chrome.i18n.getMessage('storageWriteFailed'));
+            }
+            if (callback) {
+                callback();
+            }
+        });
     }
 
     // Every write goes through here, which is also every way the set of styles
@@ -1248,6 +1278,19 @@ function showEditor() {
         if (scope === 'site' && matchTypeSelect.value === 'regex' && !compileRegExp(pattern)) {
             alert(chrome.i18n.getMessage('invalidRegex'));
             return;
+        }
+        // The third way, and the one that costs more than the style: a regex the
+        // worker cannot afford to run would freeze the extension mid-capture, so
+        // it is refused here rather than stored to be discovered later. See
+        // regexPatternRisk.
+        if (scope === 'site' && matchTypeSelect.value === 'regex') {
+            let risk = regexPatternRisk(pattern);
+            if (risk !== '') {
+                alert(chrome.i18n.getMessage(
+                    risk === 'length' ? 'styleRegexTooLong' : 'styleRegexUnsafe',
+                    [String(MAX_STYLE_PATTERN_LENGTH)]));
+                return;
+            }
         }
 
         let edited = Object.assign({}, entry, {
@@ -1390,7 +1433,8 @@ function showEditor() {
             entries: result.entries,
             additions: plan.additions,
             collisions: plan.collisions,
-            stripped: result.stripped
+            stripped: result.stripped,
+            unusable: result.unusable
         };
         renderImportSummary();
         renderImportStep();
@@ -1450,6 +1494,21 @@ function showEditor() {
                          collision.incoming.css === collision.existing.css ?
                              chrome.i18n.getMessage('styleImportSameCss') :
                              chrome.i18n.getMessage('styleImportDifferentCss')]),
+                     'cssEditor-import-side');
+            }
+        }
+
+        // A pattern the matcher will not run, for the same reason the editor will
+        // not save one: the style arrives, but it would apply to nothing until
+        // its pattern is rewritten, and being told that now beats wondering later
+        // why the css never appears.
+        if (importPlan.unusable.length > 0) {
+            let holder = section(chrome.i18n.getMessage('styleImportUnusablePatterns'),
+                                 'cssEditor-import-warn');
+            line(holder, chrome.i18n.getMessage('styleImportUnusablePatternsWhy'),
+                 'cssEditor-import-side');
+            for (let entry of importPlan.unusable) {
+                line(holder, importStyleName(entry) + ': ' + entry.pattern,
                      'cssEditor-import-side');
             }
         }

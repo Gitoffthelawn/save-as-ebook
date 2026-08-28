@@ -125,6 +125,79 @@ test('an unusable url matches no site style but still takes the themes', () => {
     assert.deepStrictEqual(selected(null, entries), ['t']);
 });
 
+// ---- what a match rule is allowed to cost ---------------------------------
+//
+// Every stored pattern is run against the url on every capture, in the service
+// worker, which has no way to interrupt a regex that does not come back. See
+// regexPatternRisk.
+
+test('a regex that can backtrack exponentially is refused', () => {
+    for (const pattern of ['(a+)+b', '(a*)*b', '(a|a)*b', '([a-z]+)*x', '(?:a+|b)+c',
+                           '(a+){20}', '((a)+)+b', 'x(\\s+)*y']) {
+        assert.strictEqual(lib.regexPatternRisk(pattern), 'backtracking', pattern);
+    }
+    // repeats in sequence are not free either: each one is another exponent on
+    // the length of a url that never matches
+    assert.strictEqual(lib.regexPatternRisk('.*x.*x.*x.*x.*x.*y'), 'backtracking');
+    assert.strictEqual(lib.regexPatternRisk('a'.repeat(lib.MAX_STYLE_PATTERN_LENGTH + 1)),
+                       'length');
+});
+
+test('the patterns people actually write are not refused', () => {
+    for (const pattern of ['reddit\\.com\\/r\\/[^\\/]+\\/comments', 'medium\\.com',
+                           '^(www\\.)?example\\.com', 'twitter\\.com\\/.+',
+                           'news\\.ycombinator\\.com\\/item\\?id=[0-9]+',
+                           'example\\.com\\/(news|blog)\\/[0-9]{4}', '.*\\.example\\.com.*',
+                           'a{3}b{2}', '[({]+', 'x{,5}y']) {
+        assert.strictEqual(lib.regexPatternRisk(pattern), '', pattern);
+    }
+});
+
+test('a refused pattern matches nothing rather than being run', () => {
+    // the same answer as a pattern that does not compile: a style that applies
+    // to no page is something the user can see and fix, a wedged worker is not
+    assert.deepStrictEqual(selected('https://example.com/aaaa', [
+        siteEntry('slow', 'regex', '(a+)+b'),
+        siteEntry('fine', 'domain', 'example.com')
+    ]), ['fine']);
+});
+
+test('matching a whole library against a hostile url is quick', () => {
+    // What this is really testing is that nothing here hands a backtracking
+    // pattern to the regex engine. Run against the shipped matcher before the
+    // refusal existed, this case does not finish.
+    const entries = [
+        siteEntry('r1', 'regex', '(a+)+b'),
+        siteEntry('r2', 'regex', '([a-z]+)*!'),
+        siteEntry('r3', 'regex', '(a|aa)+c'),
+        siteEntry('g', 'glob', '*a*a*a*a*a*a*a*a*a*a*a*a*b'),
+        siteEntry('p', 'prefix', 'example.com')
+    ];
+    const url = 'https://example.com/' + 'a'.repeat(4000) + '!';
+    const started = Date.now();
+    assert.deepStrictEqual(selected(url, entries), ['p']);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1000, 'matching took ' + elapsed + 'ms');
+});
+
+test('a url longer than any real page url is capped before it is matched', () => {
+    const url = 'https://example.com/' + 'x'.repeat(lib.MAX_MATCH_URL_LENGTH * 3);
+    assert.strictEqual(lib.normalizeUrlForMatch(url).length, lib.MAX_MATCH_URL_LENGTH);
+    // the front of the url is the part every pattern type reads, so capping the
+    // tail changes no answer anybody was relying on
+    assert.deepStrictEqual(selected(url, [siteEntry('d', 'domain', 'example.com')]), ['d']);
+});
+
+test('a glob with many wildcards is matched without a regex', () => {
+    const entries = [siteEntry('g', 'glob', 'example.com/*/b/*/c*d')];
+    assert.deepStrictEqual(selected('https://example.com/x/b/y/c-and-d', entries), ['g']);
+    assert.deepStrictEqual(selected('https://example.com/x/b/y/d-then-c', entries), []);
+    // leftmost is as good as any later occurrence when the wildcards are open
+    assert.deepStrictEqual(
+        selected('https://example.com/a/a/b/a/cd', [siteEntry('g', 'glob', 'example.com/*a/b*')]),
+        ['g']);
+});
+
 // ---- what gets selected ---------------------------------------------------
 
 test('styles that are switched off, empty, or for another site are skipped', () => {
@@ -873,6 +946,19 @@ test('replacing takes the style\'s place; keeping both leaves it where it was', 
         'the caller has to be able to point at what it just wrote');
 });
 
+test('an import says which patterns will never be run', () => {
+    const result = lib.readStyleImport(JSON.stringify([
+        {title: 'Slow', scope: 'site', css: '.a {}', match: {type: 'regex', pattern: '(a+)+b'}},
+        {title: 'Fine', scope: 'site', css: '.b {}', match: {type: 'regex', pattern: 'example\\.com'}}
+    ]));
+
+    assert.strictEqual(result.error, '');
+    assert.deepStrictEqual(result.entries.map((entry) => entry.title), ['Slow', 'Fine'],
+        'the style still arrives - the pattern is the only part of it that is unusable');
+    assert.deepStrictEqual(result.unusable,
+        [{title: 'Slow', pattern: '(a+)+b', reason: 'backtracking'}]);
+});
+
 test('an import with nothing to collide with is added either way', () => {
     const before = lib.normalizeStyleLibrary({entries: [{id: 'own', css: 'p{}'}]});
     const incoming = [lib.normalizeStyleEntry({id: 'fresh', css: '.y {}', origin: 'imported'})];
@@ -926,6 +1012,8 @@ test('styles/catalog.json says what the merge and the library UI expect of it', 
             assert.strictEqual(entry.enabled, true, where + ' ships off, so nobody would find it');
             if (entry.match.type === 'regex') {
                 assert.ok(new RegExp(entry.match.pattern), where + ' has a pattern that does not compile');
+                assert.strictEqual(lib.regexPatternRisk(entry.match.pattern), '',
+                    where + ' ships a pattern the matcher refuses to run');
             }
         } else {
             assert.strictEqual(entry.enabled, false,
