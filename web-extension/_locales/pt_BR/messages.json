@@ -51,6 +51,15 @@
     "waitMessage": {
         "message": "Por favor, aguarde ..."
     },
+    "restrictedTabMessage": {
+        "message": "Salvar como eBook não consegue ler esta aba. Páginas do navegador, a loja de extensões e arquivos PDF não são acessíveis - tente em uma página web comum."
+    },
+    "busyMessage": {
+        "message": "Trabalho em andamento! Por favor, aguarde até que o eBook atual seja gerado."
+    },
+    "noTabMessage": {
+        "message": "Salvar como eBook não encontrou a página para ler - por favor, tente novamente."
+    },
     "chapterEditorTitle": {
         "message": "Editor de capítulos"
     },
@@ -183,6 +192,9 @@
     "discardEditsConfirm": {
         "message": "Este capítulo tem alterações não salvas. Fechar sem salvar?"
     },
+    "discardChangesConfirm": {
+        "message": "Este livro tem alterações não salvas. Fechar sem salvar?"
+    },
     "remove": {
         "message": "Remover"
     },
@@ -204,17 +216,36 @@
     "saveChanges": {
         "message": "Salvar alterações"
     },
+    "storageWriteFailed": {
+        "message": "Suas alterações não puderam ser salvas: o navegador recusou a gravação no armazenamento desta extensão, o que normalmente significa que ele está cheio. Nada foi armazenado - libere espaço, ou descarte os capítulos em memória, e tente novamente."
+    },
     "changesSaved": {
         "message": "Alterações salvas."
     },
     "emptyBookWarning": {
         "message": "Não é possível gerar um eBook vazio!"
     },
+    "blankChapterTitleWarning": {
+        "message": "Todo capítulo precisa de um título. O capítulo sem título está selecionado."
+    },
     "confirmDeleteStyle": {
         "message": "Tem certeza de que deseja excluir este estilo?"
     },
     "invalidRegex": {
         "message": "Expressão regular inválida"
+    },
+    "styleRegexUnsafe": {
+        "message": "Este padrão pode levar um tempo inviável para corresponder, o que travaria a extensão enquanto uma página é salva. Reescreva-o sem uma repetição dentro de outra - ou use um padrão glob, que não tem como ter esse problema.",
+        "description": "Shown when a regular expression has a shape that can backtrack exponentially. See regexPatternRisk in styleLibrary.js."
+    },
+    "styleRegexTooLong": {
+        "message": "Este padrão é longo demais - no máximo $max$ caracteres.",
+        "placeholders": {
+            "max": {
+                "content": "$1",
+                "example": "500"
+            }
+        }
     },
     "styleSaved": {
         "message": "Estilo salvo!"
@@ -614,6 +645,13 @@
     },
     "styleImportStrippedWhy": {
         "message": "Isto busca um arquivo em outro site sempre que uma página é capturada, o que conta àquele site o que você está lendo. Nada num estilo de site precisa disso."
+    },
+    "styleImportUnusablePatterns": {
+        "message": "Padrões que não serão usados"
+    },
+    "styleImportUnusablePatternsWhy": {
+        "message": "A correspondência destes levaria um tempo inviável, por isso eles nunca são executados e os estilos abaixo não se aplicam a nada. Reescreva o padrão - um padrão glob não tem como ter esse problema - ou exclua o estilo.",
+        "description": "Why an imported regular expression is refused"
     },
     "styleImported": {
         "message": "$count$ estilo(s) importado(s).",

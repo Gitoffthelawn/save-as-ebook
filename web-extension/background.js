@@ -1,15 +1,79 @@
-// The shared style matcher. Chrome loads only the single file named by
-// background.service_worker, so it has to be pulled in here; Firefox runs the
-// background.scripts list, which already names it, and has no importScripts in
-// an event page.
+// The shared style matcher, and the css sanitizer it strips imported styles
+// with. Chrome loads only the single file named by background.service_worker,
+// so they have to be pulled in here; Firefox runs the background.scripts list,
+// which already names them, and has no importScripts in an event page.
 if (typeof importScripts === 'function') {
-    importScripts('styleLibrary.js');
+    importScripts('cssSanitizer.js', 'styleLibrary.js');
 }
 
 // Firefox's `chrome` namespace is callback-only - those calls return undefined,
 // so anything promise-based has to go through `browser`. Chrome has no
 // `browser`, and there `chrome` is promise-based under MV3.
 const ext = typeof browser !== 'undefined' ? browser : chrome;
+
+// Every write this file makes goes through these two rather than calling
+// chrome.storage.local directly. The API reports a refused write - the quota,
+// an unwritable profile, Firefox's storage backend saying no - by setting
+// chrome.runtime.lastError inside the callback and in no other way: the callback
+// runs either way. A caller that does not read it goes on to tell the user their
+// chapter was added when nothing was stored, and they find out when they build
+// the book and it is not in it. Reading lastError is also what keeps a genuine
+// failure from being logged as an unchecked error.
+//
+// The error reaches the callback as its first argument - null when the write
+// landed - so that every caller has to decide what to say about it. That is the
+// point of the wrapper: the failure is impossible to take for success by
+// omission.
+function storageSet(items, callback) {
+    chrome.storage.local.set(items, () => {
+        let error = storageError();
+        if (callback) {
+            callback(error);
+        }
+    });
+}
+
+// Removing is as much a write as storing, and fails the same way: a clear that
+// silently did not happen leaves the next save appending to a book the user
+// believes they threw away.
+function storageRemove(keys, callback) {
+    chrome.storage.local.remove(keys, () => {
+        let error = storageError();
+        if (callback) {
+            callback(error);
+        }
+    });
+}
+
+// lastError is a getter that has to be read inside the callback, and read at all
+// - an unread one is what the browser logs as "Unchecked runtime.lastError".
+// Flattened to a string here because that is what crosses a sendResponse to the
+// pages that report it.
+function storageError() {
+    let error = chrome.runtime.lastError;
+    if (!error) {
+        return null;
+    }
+    console.log('Storage write failed:', error.message || error);
+    return error.message || 'storage write failed';
+}
+
+// What a page asking for a write is answered with. Every setter below returns
+// this shape, so a caller can tell a write that happened from one that did not
+// without knowing which key it was about.
+function writeResponse(error) {
+    return error ? {ok: false, error: error} : {ok: true};
+}
+
+// The sentence the content script alerts when a write the user asked for did not
+// happen. It names the likely cause, because it is one of the few storage
+// failures the user can actually do something about.
+function storageFailureAlert(what) {
+    return what + ' could not be saved: the browser refused to write to this ' +
+           "extension's storage, which usually means it is full. Nothing was " +
+           'stored - discarding the buffered chapters in the Chapter Editor ' +
+           'frees the most space.';
+}
 
 ///////////////////
 ///////////////////
@@ -67,13 +131,64 @@ let jobClaimPending = false
 // acted on, and the alternative - injecting it separately when the setting is on
 // - leaves a tab that was injected with the setting off unable to honour it when
 // the user turns it on without reloading.
-const CONTENT_SCRIPTS = ['libs/jszip.js', 'libs/readability.js', 'utils.js', 'sanitizeHtml.js', 'extractHtml.js', 'saveEbook.js']
+const CONTENT_SCRIPTS = ['libs/jszip.js', 'libs/readability.js', 'utils.js', 'cssSanitizer.js', 'sanitizeHtml.js', 'extractHtml.js', 'saveEbook.js']
 
 // The styles that ship with the extension live in styles/catalog.json, read
 // through loadStyleCatalog() below. They used to be an array here, which meant a
 // new one could only reach a user who had never saved a style of their own.
 
-// job: {tabId, startedAt, lastHeartbeat, injectedCss: [css, ...]}
+// Identifies one run of a job to the messages sent about it. It only has to
+// tell this job apart from the one before it - these messages come from this
+// extension's own content scripts, nothing else can send them - so a counter is
+// enough, except that the service worker is torn down between jobs while
+// session storage is not, and a counter alone would restart at 1 beside a
+// stored record already claiming that number. The clock reading separates the
+// runs; the counter separates two jobs started in the same millisecond.
+let jobSequence = 0
+function nextJobId() {
+    jobSequence += 1
+    return Date.now() + '-' + jobSequence
+}
+
+// Whether two job records are the same run. A record written by a previous
+// release carries no jobId; it still has to be recognisable so that the job it
+// describes can be cleaned up after an update, so fall back to what it does have.
+function isSameJob(a, b) {
+    if (!a || !b) {
+        return false
+    }
+    if (a.jobId || b.jobId) {
+        return a.jobId === b.jobId
+    }
+    return a.tabId === b.tabId && a.startedAt === b.startedAt
+}
+
+// Whether a message is about this job. Two questions, and both matter:
+//
+//   the job id, which is what stops a late message from a job that already timed
+//   out - the tab is the same, so the tab alone would not tell them apart;
+//
+//   the sending tab, for a message that came from a content script. Only content
+//   scripts carry a sender.tab; the popup and the editor page do not, and neither
+//   of those owns a job, which is why a message from one matches nothing that has
+//   an id.
+//
+// A job and a content script left over from a previous release both send no id
+// at all, so they match each other while nothing from this release does.
+function ownsJob(job, jobId, sender) {
+    if (!job) {
+        return false
+    }
+    if ((job.jobId || null) !== (jobId || null)) {
+        return false
+    }
+    if (sender && sender.tab && sender.tab.id != null && job.tabId !== sender.tab.id) {
+        return false
+    }
+    return true
+}
+
+// job: {jobId, tabId, startedAt, lastHeartbeat, injectedCss: [css, ...]}
 function getJob(callback) {
     chrome.storage.session.get('job', (data) => {
         let job = data && data.job ? data.job : null
@@ -90,15 +205,19 @@ function isBusy(callback) {
     getJob((job) => callback(!!job))
 }
 
+// The id goes to the caller, which passes it to everything that will later
+// report about this job - see applyAction and the 'job-heartbeat' / 'done'
+// handlers.
 function startJob(tabId, callback) {
     let now = Date.now()
+    let jobId = nextJobId()
     chrome.storage.session.set({
-        'job': {tabId: tabId, startedAt: now, lastHeartbeat: now, injectedCss: []}
+        'job': {jobId: jobId, tabId: tabId, startedAt: now, lastHeartbeat: now, injectedCss: []}
     }, () => {
         chrome.action.setBadgeBackgroundColor({color: "red"})
         chrome.action.setBadgeText({text: "Busy"})
         if (callback) {
-            callback()
+            callback(jobId)
         }
     })
 }
@@ -108,7 +227,7 @@ function startJob(tabId, callback) {
 // the same turn can both observe an empty session store and both start.
 function tryStartJob(tabId, callback) {
     if (jobClaimPending) {
-        callback(false)
+        callback(false, null)
         return
     }
 
@@ -116,33 +235,39 @@ function tryStartJob(tabId, callback) {
     getJob((job) => {
         if (job) {
             jobClaimPending = false
-            callback(false)
+            callback(false, null)
             return
         }
 
-        startJob(tabId, () => {
+        startJob(tabId, (jobId) => {
             jobClaimPending = false
-            callback(true)
+            callback(true, jobId)
         })
     })
 }
 
-// Records that the job is still making progress. Only touches an existing job,
-// so a stray heartbeat from an abandoned tab cannot resurrect one.
-function touchJob() {
+// Records that the job is still making progress. Only touches the job the
+// heartbeat is about: an existence check alone keeps a stray heartbeat from
+// resurrecting a finished job, but it would still let a job that timed out
+// extend the timeout of the one that replaced it.
+function touchJob(jobId, sender) {
     chrome.storage.session.get('job', (data) => {
-        if (!data || !data.job) {
+        let job = data && data.job ? data.job : null
+        if (!ownsJob(job, jobId, sender)) {
             return
         }
-        data.job.lastHeartbeat = Date.now()
-        chrome.storage.session.set({'job': data.job})
+        job.lastHeartbeat = Date.now()
+        chrome.storage.session.set({'job': job})
     })
 }
 
-// Records what still has to be undone when the job ends
-function updateJob(fields, callback) {
+// Records what still has to be undone when the job ends. Scoped the same way:
+// the sheets one job inserted must not be written over the record of another,
+// which would leave them on the page forever and take that job's own sheets off
+// the list that removes them.
+function updateJob(jobId, fields, callback) {
     chrome.storage.session.get('job', (data) => {
-        if (!data || !data.job) {
+        if (!ownsJob(data && data.job ? data.job : null, jobId)) {
             if (callback) {
                 callback(false)
             }
@@ -187,6 +312,25 @@ function removeStyleSheets(tabId, sheets) {
 // more, and the popup that would receive the message is the one that just
 // opened and asked whether the extension was busy.
 function finishJob(job, closePopup, callback) {
+    // Compare-and-remove rather than a bare remove. Between the read that
+    // produced this record and this write, the record in storage can already be
+    // a later job's: removing that one would clear a live job's badge, strip its
+    // stylesheets off the page it is still reading, and close the popup waiting
+    // on it. A record that is already gone is still cleaned up after - every
+    // step below is idempotent, and the sheets it left have to come off.
+    chrome.storage.session.get('job', (data) => {
+        let current = data && data.job ? data.job : null
+        if (current && !isSameJob(current, job)) {
+            if (callback) {
+                callback()
+            }
+            return
+        }
+        removeJobRecord(job, closePopup, callback)
+    })
+}
+
+function removeJobRecord(job, closePopup, callback) {
     chrome.storage.session.remove('job', () => {
         chrome.action.setBadgeText({text: ""})
 
@@ -209,10 +353,33 @@ function finishJob(job, closePopup, callback) {
     })
 }
 
+// The other message the popup listens for. popup-close is the end of a job, and
+// only a job that was started can reach it: a command refused before tryStartJob
+// never claims one, so nothing would ever take the spinner down and the popup
+// waits on work that is not happening.
+//
+// The alerts these failures show go through the content script, which is exactly
+// what a restricted tab does not have - so on that path this message is the only
+// thing the user is told. The reason travels as a key rather than a sentence:
+// the popup is the localized surface, and it already has the strings.
+//
+// Most of the time no popup is open, which rejects with "Receiving end does not
+// exist" - ignore it, the same as popup-close.
+function reportToPopup(reason) {
+    ext.runtime.sendMessage({type: 'popup-failed', reason: reason}).catch(() => {})
+}
+
 // The single terminal path - every way a live job can end goes through here.
-function endJob() {
+// Ends the job it is told about and no other: by the time a command's callback
+// or a content script's 'done' arrives, the job it belongs to may have timed out
+// and been replaced by one that is still working.
+function endJob(jobId, sender) {
     chrome.storage.session.get('job', (data) => {
-        finishJob(data && data.job ? data.job : null, true)
+        let job = data && data.job ? data.job : null
+        if (!ownsJob(job, jobId, sender)) {
+            return
+        }
+        finishJob(job, true)
     })
 }
 
@@ -220,7 +387,7 @@ function endJob() {
 chrome.tabs.onRemoved.addListener((tabId) => {
     chrome.storage.session.get('job', (data) => {
         if (data && data.job && data.job.tabId === tabId) {
-            endJob()
+            finishJob(data.job, true)
         }
     })
 })
@@ -261,6 +428,7 @@ function executeCommand(command) {
         active: true
     }, (tab) => {
         if (!tab || !tab[0]) {
+            reportToPopup('no-tab');
             return;
         }
         let tabId = tab[0].id;
@@ -273,60 +441,68 @@ function executeCommand(command) {
         ensureContentScripts(tabId, (injected) => {
             if (!injected) {
                 // a chrome:// page, the web store, a pdf viewer, or no activeTab
-                // grant - there is nowhere to show a message either
+                // grant - there is nowhere to show a message in the page, which
+                // is what the alert below would have used. The popup is the
+                // extension's own page and is still open, so it is told instead.
                 console.log('Save as eBook cannot run in this tab');
+                reportToPopup('restricted-tab');
                 return;
             }
 
-            tryStartJob(tabId, (started) => {
+            tryStartJob(tabId, (started, jobId) => {
                 if (!started) {
                     chrome.tabs.sendMessage(tabId, {'alert': 'Work in progress! Please wait until the current eBook is generated!'}, (r) => {
                         void chrome.runtime.lastError;
                     });
+                    // no job was claimed, so the running one's finishJob will not
+                    // close this popup - and closing it on that job's completion
+                    // would be wrong anyway, since this command never ran
+                    reportToPopup('busy');
                     return;
                 }
 
+                // Everything below is handed the id of the job it was started
+                // for, and hands it on to the page. Nothing that reports about
+                // this job - a heartbeat, a completion, a callback that arrives
+                // after a timeout - can then be mistaken for a report about the
+                // next one.
                 if (command.type === 'save-page') {
-                    dispatch(tab, 'extract-page', false, []);
+                    dispatch(tab, 'extract-page', false, [], jobId);
                 } else if (command.type === 'save-selection') {
-                    dispatch(tab, 'extract-selection', false, []);
+                    dispatch(tab, 'extract-selection', false, [], jobId);
                 } else if (command.type === 'add-page') {
-                    dispatch(tab, 'extract-page', true, []);
+                    dispatch(tab, 'extract-page', true, [], jobId);
                 } else if (command.type === 'add-selection') {
-                    dispatch(tab, 'extract-selection', true, []);
+                    dispatch(tab, 'extract-selection', true, [], jobId);
                 } else if (command.type === 'style-snapshot') {
-                    dispatchStyleSnapshot(tab);
+                    dispatchStyleSnapshot(tab, jobId);
                 } else {
-                    endJob();
+                    endJob(jobId);
                 }
             })
         })
     });
 }
 
-function dispatch(tab, action, justAddToBuffer, appliedStyles) {
-    // a save starts a new book, so the previous one is cleared first - and the
-    // extraction only starts once it is gone, or the chapter it produces could
-    // be written before the removal it was supposed to follow
-    let start = () => {
-        isIncludeStyles((result) => {
-            let isIncludeStyle = result.includeStyle
-            isReaderMode((readerResult) => {
-                isReviewBeforeSaving((reviewResult) => {
-                    prepareStyles(tab, appliedStyles, (tmpAppliedStyles) => {
-                        applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles,
-                            readerResult.readerMode, reviewResult.reviewBeforeSaving)
-                    })
+// A save starts a new book, but nothing is discarded here. The book the user has
+// buffered is only replaced once a capture has actually produced a chapter to
+// replace it with - see the !justAddToBuffer branches of applyAction below. The
+// extraction still has three ways to end with nothing (the tab refuses the
+// content script, the extraction is interrupted, the selection is empty), and
+// clearing on the way in made every one of them destroy a book for a command
+// that never ran.
+function dispatch(tab, action, justAddToBuffer, appliedStyles, jobId) {
+    isIncludeStyles((result) => {
+        let isIncludeStyle = result.includeStyle
+        isReaderMode((readerResult) => {
+            isReviewBeforeSaving((reviewResult) => {
+                prepareStyles(tab, appliedStyles, jobId, (tmpAppliedStyles) => {
+                    applyAction(tab, action, justAddToBuffer, isIncludeStyle, tmpAppliedStyles,
+                        readerResult.readerMode, reviewResult.reviewBeforeSaving, jobId)
                 })
             })
         })
-    }
-
-    if (justAddToBuffer) {
-        start()
-    } else {
-        clearEbook(start)
-    }
+    })
 }
 
 // "Style this page ..." in the popup: a capture of the page in front of the user
@@ -348,19 +524,20 @@ function dispatch(tab, action, justAddToBuffer, appliedStyles) {
 //   extractionSanitizeOptions(). Nothing else has any use for them.
 //
 // The buffered chapters are not touched: styling a page is not saving one.
-function dispatchStyleSnapshot(tab) {
+function dispatchStyleSnapshot(tab, jobId) {
     isIncludeStyles((result) => {
         chrome.tabs.sendMessage(tab[0].id, {
             type: 'extract-page',
             includeStyle: result.includeStyle,
             appliedStyles: [],
             readerMode: false,
-            styleSnapshot: true
+            styleSnapshot: true,
+            jobId: jobId
         }, (response) => {
             void chrome.runtime.lastError;
 
             if (!response || !response.content || response.content.trim() === '') {
-                endJob()
+                endJob(jobId)
                 chrome.tabs.sendMessage(tab[0].id,
                     {'alert': 'Save as eBook could not read this page to style it!'}, (r) => {
                     void chrome.runtime.lastError;
@@ -373,8 +550,20 @@ function dispatchStyleSnapshot(tab) {
                 title: response.title || '',
                 capturedAt: Date.now(),
                 page: response
-            }, () => {
-                endJob()
+            }, (error) => {
+                endJob(jobId)
+                // The library page renders the snapshot it is opened on. Opening
+                // it after a write that did not happen shows the previous
+                // capture, or none, under a heading saying this page was
+                // captured - so the failure is said here and the tab is not
+                // opened at all.
+                if (error) {
+                    chrome.tabs.sendMessage(tab[0].id,
+                        {'alert': storageFailureAlert('The captured page')}, (r) => {
+                        void chrome.runtime.lastError;
+                    });
+                    return;
+                }
                 chrome.tabs.create({url: chrome.runtime.getURL(styleLibraryUrl(tab[0].url))})
             })
         });
@@ -393,11 +582,7 @@ function styleLibraryUrl(url) {
 // of clearEbook's list on purpose - it belongs to the styles, which outlive any
 // one book.
 function storeStyleSnapshot(snapshot, callback) {
-    chrome.storage.local.set({'styleSnapshot': snapshot}, () => {
-        if (callback) {
-            callback()
-        }
-    })
+    storageSet({'styleSnapshot': snapshot}, callback)
 }
 
 function isIncludeStyles(callback) {
@@ -510,7 +695,11 @@ function getStyleLibrary(callback) {
                 return
             }
 
-            chrome.storage.local.set({'styleLibrary': merged.library}, () => {
+            // The merge is handed over whether or not it could be stored: this
+            // is a read, and the caller asked for the library rather than for a
+            // migration. A write that failed only means the same merge runs
+            // again on the next read - storageSet has logged it.
+            storageSet({'styleLibrary': merged.library}, () => {
                 callback(merged.library, catalog)
             });
         });
@@ -518,18 +707,14 @@ function getStyleLibrary(callback) {
 }
 
 function setStyleLibrary(library, callback) {
-    chrome.storage.local.set({'styleLibrary': library}, () => {
-        if (callback) {
-            callback()
-        }
-    });
+    storageSet({'styleLibrary': library}, callback);
 }
 
 // Puts the selected styles on the page in the order selectStylesForUrl returned
 // them in. One insertCSS at a time, and the next only after the last resolved:
 // the sheets are a cascade, and issued together they would land in whatever
 // order they happened to finish in, which is the opposite of a rule.
-function insertStyleSheets(tabId, styles, appliedStyles, callback) {
+function insertStyleSheets(tabId, styles, appliedStyles, jobId, callback) {
     let inserted = [];
 
     let finish = () => {
@@ -539,7 +724,7 @@ function insertStyleSheets(tabId, styles, appliedStyles, callback) {
         }
 
         // remembered so endJob() can take them off the page again
-        updateJob({injectedCss: inserted.map((style) => style.css)}, (updated) => {
+        updateJob(jobId, {injectedCss: inserted.map((style) => style.css)}, (updated) => {
             if (updated) {
                 for (let style of inserted) {
                     appliedStyles.push(style);
@@ -587,7 +772,7 @@ function insertStyleSheets(tabId, styles, appliedStyles, callback) {
 // What the checkbox still decides is what happens to the css: with it on the book
 // gets the computed style of what survived, with it off it gets these sheets and
 // nothing else.
-function prepareStyles(tab, appliedStyles, callback) {
+function prepareStyles(tab, appliedStyles, jobId, callback) {
     getStyleLibrary((library) => {
         let styles = selectStylesForUrl(tab[0].url, library);
 
@@ -596,7 +781,7 @@ function prepareStyles(tab, appliedStyles, callback) {
             return
         }
 
-        insertStyleSheets(tab[0].id, styles, appliedStyles, callback);
+        insertStyleSheets(tab[0].id, styles, appliedStyles, jobId, callback);
     });
 }
 
@@ -607,42 +792,96 @@ function prepareStyles(tab, appliedStyles, callback) {
 // here - the editor's own Generate button builds the file.
 //
 // This is the whole book, not an addition to one: the buffer, the title and the
-// identifier were all discarded when the command started (see dispatch), which
-// is what keeps a saved page a new book every time even though it is now stored
-// on the way out - the rule getBookId() in saveEbook.js states.
+// identifier of the previous book are discarded here, which is what keeps a
+// saved page a new book every time even though it is now stored on the way out -
+// the rule getBookId() in saveEbook.js states.
+//
+// The discarding happens here, at the write, rather than when the command
+// started. That is the whole point: by now there is a chapter in hand, so the
+// clearing and the replacement are one step and no failed capture can leave the
+// user with an emptied book. clearEbook's callback runs with the last key
+// already gone, so this write cannot be caught by a removal still in flight.
 //
 // The page names the book, because that is what the immediate build would have
 // called the file. An untitled page is left to the editor's own 'eBook'
 // fallback rather than stored as an empty title.
-function openForReview(response) {
+function openForReview(tab, response, jobId) {
     let book = {'allPages': [response]};
     if (response.title && response.title.trim() !== '') {
         book.title = response.title;
     }
-    chrome.storage.local.set(book, () => {
-        endJob()
-        chrome.tabs.create({url: chrome.runtime.getURL('chapters.html')})
+    clearEbook(() => {
+        storageSet(book, (error) => {
+            endJob(jobId)
+            // The editor is opened on what is in storage, so a write that did
+            // not happen would open it on an empty book with nothing to say why
+            // - the chapter is gone either way, and the difference between the
+            // two is whether the user knows it. Said in the page, since the tab
+            // the capture came from is still the one in front of them.
+            if (error) {
+                chrome.tabs.sendMessage(tab[0].id,
+                    {'alert': storageFailureAlert('The captured page')}, (r) => {
+                    void chrome.runtime.lastError;
+                });
+                return;
+            }
+            chrome.tabs.create({url: chrome.runtime.getURL('chapters.html')})
+        })
     })
 }
 
 // Appends one extracted page to the chapters already buffered.
-function addChapter(tab, response) {
+//
+// The buffer is read into a local rather than written back through the object
+// storage handed over: the guard here used to be `if (!data || !data.allPages)
+// { data.allPages = [] }`, which throws on the very null it claims to defend
+// against. Nothing produces that null today, but a stored value of the wrong
+// shape - a book written by an older release, a profile edited by hand - would
+// take the same path, and a chapter is not worth an exception.
+//
+// The alert says which of the two happened. It is the whole point of the
+// wrapper: the callback runs on a refused write exactly as it does on a stored
+// one, and the sentence that used to be sent from it said the chapter was added.
+function addChapter(tab, response, jobId) {
     chrome.storage.local.get('allPages', (data) => {
-        if (!data || !data.allPages) {
-            data.allPages = [];
-        }
-        data.allPages.push(response);
-        chrome.storage.local.set({'allPages': data.allPages}, () => {
-            endJob()
-            chrome.tabs.sendMessage(tab[0].id, {'alert': 'Page or selection added as chapter!'}, (r) => {
+        let allPages = data && Array.isArray(data.allPages) ? data.allPages : [];
+        allPages.push(response);
+        storageSet({'allPages': allPages}, (error) => {
+            endJob(jobId)
+            chrome.tabs.sendMessage(tab[0].id, {'alert': error ?
+                storageFailureAlert('The chapter') :
+                'Page or selection added as chapter!'}, (r) => {
                 void chrome.runtime.lastError;
             });
         });
     })
 }
 
+// The warning text for the images extraction had to leave behind, or null when
+// nothing was lost. Split out from applyAction so the wording is testable
+// without driving a whole capture through the harness.
+//
+// The two reasons are worth separating: a failed download is almost always a
+// cross-origin image server that serves no Access-Control-Allow-Origin header -
+// the page renders it because loading an <img> is not a fetch, and the extension
+// asks for no host permissions, so nothing about it is fixable from the page's
+// side. An unusable type is the extension's own limit, not the server's.
+function describeDroppedImages(droppedImages) {
+    if (!Array.isArray(droppedImages) || droppedImages.length === 0) {
+        return null;
+    }
+    let count = droppedImages.length;
+    let noun = count === 1 ? '1 image' : count + ' images';
+    let blocked = droppedImages.filter((image) => !image || image.reason !== 'type').length;
+    let why = blocked === count ? ' The image server did not allow the download.' :
+              blocked > 0 ? ' Some were not allowed by the image server, the rest are in a format this extension cannot store.' :
+              ' They are in a format this extension cannot store.';
+    return noun + ' could not be downloaded and ' + (count === 1 ? 'was' : 'were') +
+           ' left out of the chapter.' + why + ' Everything else on the page was saved.';
+}
+
 function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, readerMode,
-                     reviewBeforeSaving) {
+                     reviewBeforeSaving, jobId) {
     chrome.tabs.sendMessage(tab[0].id, {
         type: action,
         includeStyle: includeStyle,
@@ -650,14 +889,17 @@ function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, 
         // Save Page and Add Page as Chapter only. A selection is the user having
         // already said what the content is, so there is nothing to distil and
         // nothing the checkbox should quietly do to it.
-        readerMode: !!readerMode && action === 'extract-page'
+        readerMode: !!readerMode && action === 'extract-page',
+        // What the page quotes back in every heartbeat and in the 'done' that
+        // ends this job
+        jobId: jobId
     }, (response) => {
         // the content script can go away mid-extraction - a navigation tears it
         // down and the callback fires with no response and lastError set
         void chrome.runtime.lastError;
 
         if (!response) {
-            endJob()
+            endJob(jobId)
             chrome.tabs.sendMessage(tab[0].id, {'alert': 'Save as eBook does not work on this web site!'}, (r) => {
                 void chrome.runtime.lastError;
             });
@@ -665,7 +907,7 @@ function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, 
         }
 
         if (!response.content || response.content.trim() === '') {
-            endJob()
+            endJob(jobId)
             if (justAddToBuffer) {
                 chrome.tabs.sendMessage(tab[0].id, {'alert': 'Cannot add an empty selection as chapter!'}, (r) => {});
             } else {
@@ -681,16 +923,42 @@ function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, 
                 void chrome.runtime.lastError;
             });
         }
-        if (justAddToBuffer) {
-            addChapter(tab, response);
-        } else if (reviewBeforeSaving) {
-            openForReview(response);
-        } else {
-            // the job stays open until the content script reports 'done' - it
-            // still has to build and download the zip
-            chrome.tabs.sendMessage(tab[0].id, {'shortcut': 'build-ebook', response: [response]}, (r) => {
+        // Same contract as the reader mode fallback above: the chapter is kept,
+        // and the user is told what it cost. Extraction removes an <img> whose
+        // bytes never arrived because a reference to a file that is not in the
+        // archive fails the whole book - but a picture that is on the page and
+        // not in the chapter is indistinguishable from one the page never had,
+        // so the removal has to be said out loud.
+        let droppedImagesAlert = describeDroppedImages(response.droppedImages);
+        if (droppedImagesAlert) {
+            chrome.tabs.sendMessage(tab[0].id, {'alert': droppedImagesAlert}, (r) => {
                 void chrome.runtime.lastError;
             });
+        }
+        if (justAddToBuffer) {
+            addChapter(tab, response, jobId);
+        } else if (reviewBeforeSaving) {
+            openForReview(tab, response, jobId);
+        } else {
+            // The one-shot save: the extraction succeeded, so this is where the
+            // previous book goes. The build itself reads nothing from storage -
+            // it is handed the chapter directly - so the clearing is here to
+            // make the *next* command start from an empty book, which is the
+            // documented meaning of Save Page.
+            //
+            // the job stays open until the content script reports 'done' - it
+            // still has to build and download the zip
+            //
+            // A clear that was refused is logged and not otherwise reported: the
+            // book the user asked for is built and downloaded from the chapter
+            // in hand either way, and all a failure costs is that the next
+            // command starts from the old buffer instead of an empty one. That
+            // is not worth an alert on top of a save that worked.
+            clearEbook(() => {
+                chrome.tabs.sendMessage(tab[0].id, {'shortcut': 'build-ebook', response: [response], jobId: jobId}, (r) => {
+                    void chrome.runtime.lastError;
+                });
+            })
         }
     });
 }
@@ -700,7 +968,7 @@ function applyAction(tab, action, justAddToBuffer, includeStyle, appliedStyles, 
 // a caller that clears the book and immediately writes a new one must not have
 // its first chapter removed by a clearing that was still in flight.
 function clearEbook(callback) {
-    chrome.storage.local.remove([
+    storageRemove([
         'allPages',
         'title',
         // the identifier belongs to the discarded set of chapters - the next
@@ -712,11 +980,7 @@ function clearEbook(callback) {
         // ...and what the user said the book was called by, written about the
         // chapters that are going
         'bookMetadata'
-    ], () => {
-        if (callback) {
-            callback()
-        }
-    })
+    ], callback)
 }
 
 chrome.runtime.onMessage.addListener(_execRequest);
@@ -738,15 +1002,20 @@ function _execRequest(request, sender, sendResponse) {
         })
         return true;
     }
+    // Every setter below answers writeResponse(), which is {ok: true} only when
+    // the write actually landed. The pages that call them show what they are
+    // told - see the storage-failure paths in chapterEditor.js and cssEditor.js -
+    // so an answer of {ok: true} on a refused write is the same lie as an alert
+    // saying the chapter was added, one layer further out.
     if (request.type === 'set') {
-        chrome.storage.local.set({'allPages': request.pages}, function () {
-            sendResponse({ok: true});
+        storageSet({'allPages': request.pages}, function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
     if (request.type === 'remove') {
-        clearEbook(function () {
-            sendResponse({ok: true});
+        clearEbook(function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -760,7 +1029,12 @@ function _execRequest(request, sender, sendResponse) {
                 return;
             }
             let uuid = crypto.randomUUID();
-            chrome.storage.local.set({'uuid': uuid}, function () {
+            // The identifier is answered even when it could not be stored. The
+            // build needs one and this one is as good as any; what a failed
+            // write costs is only that a rebuild of the same chapters mints
+            // another, which is not worth refusing to build a book over. It is
+            // logged in storageSet.
+            storageSet({'uuid': uuid}, function () {
                 sendResponse({uuid: uuid});
             });
         })
@@ -777,8 +1051,8 @@ function _execRequest(request, sender, sendResponse) {
         return true;
     }
     if (request.type === 'set title') {
-        chrome.storage.local.set({'title': request.title}, function () {
-            sendResponse({ok: true});
+        storageSet({'title': request.title}, function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -791,10 +1065,10 @@ function _execRequest(request, sender, sendResponse) {
         return true;
     }
     if (request.type === 'set book css') {
-        chrome.storage.local.set({
+        storageSet({
             'bookCss': typeof request.css === 'string' ? request.css : ''
-        }, function () {
-            sendResponse({ok: true});
+        }, function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -808,11 +1082,11 @@ function _execRequest(request, sender, sendResponse) {
         return true;
     }
     if (request.type === 'set book metadata') {
-        chrome.storage.local.set({
+        storageSet({
             'bookMetadata': request.metadata && typeof request.metadata === 'object' ?
                             request.metadata : null
-        }, function () {
-            sendResponse({ok: true});
+        }, function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -828,8 +1102,8 @@ function _execRequest(request, sender, sendResponse) {
     // rather than trusted: this is the shape the capture path reads, and a field
     // the page got wrong would be a style that matches nothing or everything.
     if (request.type === 'set style library') {
-        setStyleLibrary(normalizeStyleLibrary(request.library), function () {
-            sendResponse({ok: true});
+        setStyleLibrary(normalizeStyleLibrary(request.library), function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -842,8 +1116,8 @@ function _execRequest(request, sender, sendResponse) {
         return true;
     }
     if (request.type === 'clear style snapshot') {
-        chrome.storage.local.remove('styleSnapshot', function () {
-            sendResponse({ok: true});
+        storageRemove('styleSnapshot', function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -862,8 +1136,8 @@ function _execRequest(request, sender, sendResponse) {
         return true;
     }
     if (request.type === 'set include style') {
-        chrome.storage.local.set({'includeStyle': request.includeStyle}, function () {
-            sendResponse({ok: true});
+        storageSet({'includeStyle': request.includeStyle}, function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -878,8 +1152,8 @@ function _execRequest(request, sender, sendResponse) {
         return true;
     }
     if (request.type === 'set reader mode') {
-        chrome.storage.local.set({'readerMode': request.readerMode}, function () {
-            sendResponse({ok: true});
+        storageSet({'readerMode': request.readerMode}, function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -896,10 +1170,10 @@ function _execRequest(request, sender, sendResponse) {
         return true;
     }
     if (request.type === 'set review before saving') {
-        chrome.storage.local.set({
+        storageSet({
             'reviewBeforeSaving': request.reviewBeforeSaving
-        }, function () {
-            sendResponse({ok: true});
+        }, function (error) {
+            sendResponse(writeResponse(error));
         });
         return true;
     }
@@ -909,9 +1183,11 @@ function _execRequest(request, sender, sendResponse) {
         })
         return true;
     }
-    // the extraction is still running - see JOB_TIMEOUT
+    // the extraction is still running - see JOB_TIMEOUT. The job it is about is
+    // named, and the tab it came from is checked: a job that timed out while its
+    // page kept working must not keep the job that replaced it alive.
     if (request.type === 'job-heartbeat') {
-        touchJob()
+        touchJob(request.jobId, sender)
         sendResponse({ok: true});
         return false;
     }
@@ -925,9 +1201,14 @@ function _execRequest(request, sender, sendResponse) {
         executeCommand({type: request.type})
         return false;
     }
+    // The page reporting that the build is over. Ends the job it names and no
+    // other: a late 'done' from a reclaimed job used to take the badge off, strip
+    // the injected styles from a page the next job was still reading, and close
+    // the popup waiting on it. A 'done' with no job to match - the chapter
+    // editor's own Generate button, which never claimed one - now ends nothing.
     if (request.type === 'done') {
         sendResponse({ok: true});
-        endJob()
+        endJob(request.jobId, sender)
         return false;
     }
     // an unknown type still has a sender waiting on a callback

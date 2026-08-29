@@ -90,6 +90,21 @@ window.chrome = {
 </math>
 </p>
 
+<!-- Invented attributes, and real attributes on the wrong element. EPUBCheck
+     rejects both with RSC-005 and the book fails as a whole - which is why the
+     sanitizer enumerates each element's vocabulary instead of denying only the
+     dangerous names. data-mjx-* is here because it is what a real page supplies:
+     MathJax writes it on its own output. -->
+<p>Invalid attributes:
+<math xmlns="http://www.w3.org/1998/Math/MathML" foo="bar">
+  <mi bogus="x" data-mjx-alternate="1" aria-hidden="true"
+      rowspan="4" displaystyle="true">x</mi>
+  <mtd rowspan="2" columnspan="3" alttext="not allowed here" invented-hyphen="y">
+    <mo INDENTALIGN="left">+</mo>
+  </mtd>
+</math>
+</p>
+
 <script>
 // The runner reads results with a line-based grep, so a detail carrying a
 // newline - a slice of the extracted content is full of them - makes the whole
@@ -182,6 +197,44 @@ window.addEventListener('load', function () {
   var leaked = dropped.filter(function (a) { return content.indexOf(a) > -1; });
   report('scripting, links, page styling and page ids do not survive',
          leaked.length === 0, 'leaked ' + leaked.join(', '));
+
+  // Not "these five names are gone" but "every name is allowed on the element
+  // that carries it", which is the property epubcheck actually validates. A
+  // flat union is insufficient: rowspan is real MathML on <mtd> and still an
+  // RSC-005 error on <mi>. The parse is safe here because the sanitizer
+  // guarantees every value is double quoted.
+  var disallowed = [];
+  var mathTagRe = /<(m[a-z]*|none|semantics)\b([^>]*)>/g;
+  var tagMatch;
+  while ((tagMatch = mathTagRe.exec(content)) !== null) {
+    if (mathMLTags.indexOf(tagMatch[1]) < 0) continue;
+    var attrRe = /([^\s=]+)="[^"]*"/g;
+    var attrMatch;
+    while ((attrMatch = attrRe.exec(tagMatch[2])) !== null) {
+      if (attrMatch[1] === 'xmlns' && tagMatch[1] === 'math') continue;
+      if (!isAllowedMathMLAttribute(tagMatch[1], attrMatch[1])) {
+        disallowed.push(tagMatch[1] + '/' + attrMatch[1]);
+      }
+    }
+  }
+  report('every MathML attribute is allowed on the element that carries it',
+         disallowed.length === 0, 'leaked ' + disallowed.join(', '));
+
+  var invented = ['foo="bar"', 'bogus=', 'data-mjx-alternate', 'aria-hidden',
+                  'invented-hyphen', 'INDENTALIGN', 'indentalign'];
+  var inventedLeaked = invented.filter(function (a) { return content.indexOf(a) > -1; });
+  report('invented and unlisted attribute names are dropped by name',
+         inventedLeaked.length === 0, 'leaked ' + inventedLeaked.join(', '));
+
+  report('real MathML attributes are dropped from elements that do not take them',
+         !/<mi[^>]*\s(?:rowspan|displaystyle)=/.test(content) &&
+         !/<mtd[^>]*\salttext=/.test(content));
+
+  // The same list is what keeps a real MathML attribute alive, so the check
+  // above has to be paired with one that the sweep is not simply removing
+  // everything: <mtd> spans are the reason a matrix lines up at all.
+  report('a real attribute on the element that takes it still survives',
+         content.indexOf('rowspan="2"') > -1 && content.indexOf('columnspan="3"') > -1);
 
   report('mmultiscripts keeps its <mprescripts> and <none>',
          content.indexOf('<mprescripts>') > -1 && content.indexOf('<none>') > -1);

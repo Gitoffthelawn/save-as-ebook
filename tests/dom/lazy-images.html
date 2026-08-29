@@ -1,0 +1,203 @@
+<!doctype html>
+<html>
+<head>
+<!-- The extension scripts are loaded before <base> on purpose: <base> is what
+     gives the fixture a realistic document.baseURI to resolve image urls
+     against, but it would also redirect these relative script paths. -->
+<script>
+window.chrome = {
+  runtime: {onMessage: {addListener: function(){}}, sendMessage: function(){}},
+  i18n: {getMessage: function(){ return ''; }}
+};
+</script>
+<script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/sanitizeHtml.js"></script>
+<script src="../../web-extension/extractHtml.js"></script>
+<base href="https://example.com/blog/">
+</head>
+<body>
+
+<!-- The shapes a lazy loader actually ships. Reading the src attribute alone
+     dropped the first, third and fourth of these and embedded the 1x1 tracking
+     gif of the second in place of the photograph. None of the urls resolve -
+     the fixture has no network - which is the realistic case: what the read
+     phase has to work from is the markup and the browser's own selection, not
+     bytes that arrived.
+
+     The width and height attributes are here because a lazy image without them
+     lays out at zero and is dropped as invisible long before its source is
+     read; a loader that avoids layout shift writes them, and #h is the one
+     that does not, so the behaviour is recorded either way. -->
+<article>
+  <img id="a" data-src="real-photo.jpg" alt="LAZYONE" width="120" height="80">
+  <img id="b" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+       data-src="real2.jpg" alt="LAZYTWO" width="120" height="80">
+  <img id="c" srcset="only.jpg 1200w" alt="LAZYTHREE" width="120" height="80">
+  <img id="d" srcset="wide.jpg 1200w, small.jpg 400w" alt="LAZYFOUR" width="120" height="80">
+  <img id="e" src="/img/spacer.gif" data-src="real5.jpg" alt="LAZYFIVE" width="120" height="80">
+  <picture>
+    <source srcset="picked.jpg 1200w">
+    <img id="f" src="fallback.jpg" alt="LAZYSIX" width="120" height="80">
+  </picture>
+  <img id="g" src="plain.jpg" alt="PLAIN" width="120" height="80">
+  <img id="h" data-src="unsized.jpg" alt="UNSIZED">
+</article>
+
+<script>
+function report(name, ok, detail) {
+  var li = document.createElement('li');
+  li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' -- ' + detail : '');
+  document.getElementById('results').appendChild(li);
+}
+
+function eq(name, actual, expected) {
+  report(name, actual === expected,
+         actual === expected ? '' : 'got [' + actual + '] wanted [' + expected + ']');
+}
+
+window.addEventListener('load', function () {
+  var out = document.createElement('ul');
+  out.id = 'results';
+  document.body.appendChild(out);
+
+  // ---- 1. what a source url alone can say --------------------------------
+
+  eq('a 1x1 gif data uri is a placeholder',
+     isPlaceholderImageSrc('data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'),
+     true);
+  eq('a photograph as a data uri is not',
+     isPlaceholderImageSrc('data:image/jpeg;base64,' + new Array(900).join('A')), false);
+  eq('spacer.gif is a placeholder', isPlaceholderImageSrc('/img/spacer.gif'), true);
+  eq('1x1.gif is a placeholder', isPlaceholderImageSrc('https://cdn.example.com/1x1.gif'), true);
+  eq('a query string does not hide the name',
+     isPlaceholderImageSrc('/img/blank.png?v=3'), true);
+  eq('an ordinary photograph is not a placeholder',
+     isPlaceholderImageSrc('/img/holder-house.jpg'), false);
+  eq('an empty source is a placeholder', isPlaceholderImageSrc(''), true);
+
+  // ---- 2. srcset, when nothing has selected from it ------------------------
+
+  eq('the widest candidate wins',
+     pickFromSrcset('a.jpg 400w, b.jpg 1200w, c.jpg 800w'), 'b.jpg');
+  eq('the densest candidate wins', pickFromSrcset('a.jpg, b.jpg 2x'), 'b.jpg');
+  eq('a bare candidate is 1x', pickFromSrcset('a.jpg'), 'a.jpg');
+  eq('an empty srcset names nothing', pickFromSrcset(''), '');
+  // one url, commas and all - splitting on every comma handed back the tail of
+  // the base64 as if it were a filename
+  eq('a data uri is one candidate, not two',
+     pickFromSrcset('data:image/gif;base64,R0lGODlhAQABAAAAACw= 1x'),
+     'data:image/gif;base64,R0lGODlhAQABAAAAACw=');
+  eq('a placeholder in the set loses to the picture beside it',
+     pickFromSrcset('/img/blank.gif 1200w, photo.jpg 400w'), 'photo.jpg');
+
+  // ---- 3. the order the sources are tried in -------------------------------
+
+  function candidates(attrs, currentSrc, rendered) {
+    return imageSrcCandidates(function (name) { return attrs[name]; },
+                              currentSrc || null, !!rendered).join(' ');
+  }
+
+  eq('a real src beats a lazy attribute',
+     candidates({src: 'photo.jpg', 'data-src': 'other.jpg'}), 'photo.jpg other.jpg');
+  eq('a placeholder src loses to the lazy attribute it stands in for',
+     candidates({src: '/img/blank.gif', 'data-src': 'photo.jpg'}), 'photo.jpg /img/blank.gif');
+  eq('a src that loaded as a 1x1 loses, whatever it is called',
+     candidates({src: '/img/hero.png', 'data-src': 'photo.jpg'},
+                'https://example.com/img/hero.png', true),
+     'photo.jpg /img/hero.png');
+  eq('the browser’s own srcset choice beats the fallback in src',
+     candidates({src: 'small.jpg', srcset: 'wide.jpg 1200w'},
+                'https://example.com/blog/wide.jpg'),
+     'https://example.com/blog/wide.jpg small.jpg');
+  eq('with no src at all the lazy srcset is read',
+     candidates({'data-srcset': 'a.jpg 400w, b.jpg 1200w'}), 'b.jpg');
+  eq('nothing to go on names nothing', candidates({}), '');
+  // The heuristics above are guesses; shipping the placeholder is what the
+  // extension did before, and is still better than dropping the image.
+  eq('a placeholder with no alternative is still kept',
+     candidates({src: '/img/blank.gif'}), '/img/blank.gif');
+
+  // ---- 4. the real pipeline ------------------------------------------------
+
+  // The article rather than the whole body: the assertions below are still
+  // being appended to the results list while this runs.
+  var beforeHtml = document.querySelector('article').outerHTML;
+
+  allImages = []; extractedImages = []; imageFileNames.clear();
+  classNameToCss.clear(); cssToClassName.clear();
+
+  var state = readLivePage(false, []);
+  var clone = document.body.cloneNode(true);
+  clearLiveMarks(state);
+  var content = getContent(clone, state);
+
+  var queued = allImages.map(function (i) { return i.originalUrl; });
+  var queuedNames = queued.map(function (u) { return u.split('/').pop(); }).sort().join(' ');
+
+  function saved(name) {
+    return queued.some(function (u) { return u.indexOf('/' + name) > -1; });
+  }
+
+  report('an image with only data-src is saved, not dropped',
+         saved('real-photo.jpg'), queuedNames);
+  report('the photograph replaces the 1x1 placeholder it hides behind',
+         saved('real2.jpg') && extractedImages.length === 0,
+         'extractedImages=' + extractedImages.length + ' queued=' + queuedNames);
+  report('an image with only a srcset is saved',
+         saved('only.jpg'), queuedNames);
+  report('a multi-candidate srcset resolves to one of its candidates',
+         saved('wide.jpg') || saved('small.jpg'), queuedNames);
+  report('a src named like a spacer loses to the lazy attribute',
+         saved('real5.jpg') && !saved('spacer.gif'), queuedNames);
+  report('the <source> the browser picked beats the <img> fallback',
+         saved('picked.jpg') && !saved('fallback.jpg'), queuedNames);
+  report('an ordinary image is untouched', saved('plain.jpg'), queuedNames);
+
+  // Recorded rather than required: an image the page gave no size to lays out
+  // at zero, and the visibility filter drops it before any of this runs.
+  report('an unsized lazy image: ' + (saved('unsized.jpg') ? 'saved' : 'dropped as invisible'),
+         true, 'clientRects=' + document.getElementById('h').getClientRects().length);
+
+  var refs = content.match(/\.\.\/images\/[^"']+/g) || [];
+  report('every image in the content resolves to a file the book will hold',
+         refs.length >= 7 && refs.length === new Set(refs).size,
+         'refs=' + refs.join(' '));
+  // the detail is one line on purpose - the harness reads results line by line
+  report('no placeholder data uri reaches the content',
+         content.indexOf('data:') < 0, content.replace(/\s+/g, ' ').slice(0, 200));
+  // an img tag rather than the whole content: the results list, which the body
+  // clone also holds, has the word in its assertion names
+  report('no img keeps a srcset', !/<img[^>]*srcset/.test(content),
+         content.replace(/\s+/g, ' ').slice(0, 200));
+
+  // ---- 5. the live page is still the page ---------------------------------
+
+  report('live dom unchanged',
+         document.querySelector('article').outerHTML === beforeHtml);
+  eq('the lazy image still has no src of its own',
+     document.getElementById('a').getAttribute('src'), null);
+  eq('the placeholder is still the placeholder on the page',
+     document.getElementById('e').getAttribute('src'), '/img/spacer.gif');
+  report('no marker attributes left behind',
+         document.querySelectorAll('[data-sae-mark]').length === 0);
+
+  // ---- 6. content that never had a live element ---------------------------
+  //
+  // The inside of a same-origin iframe is lifted as markup, and a chapter can
+  // be re-sanitized long after the page is gone. Neither has a currentSrc to
+  // read, so the attributes have to be enough on their own.
+
+  eq('the string path reads a lazy attribute too',
+     sanitizeChapterContent('<img data-src="../images/a.png" alt="x">'),
+     '<img src="../images/a.png" alt="x"/>');
+  eq('and prefers the real src when there is one',
+     sanitizeChapterContent('<img src="../images/a.png" data-src="../images/b.png" alt="x">'),
+     '<img src="../images/a.png" alt="x"/>');
+  eq('an image with no usable source anywhere is still dropped',
+     sanitizeChapterContent('<img data-src="https://example.com/a.png" alt="x">'), '');
+
+  document.title = 'DONE';
+});
+</script>
+</body>
+</html>

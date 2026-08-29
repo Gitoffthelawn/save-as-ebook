@@ -15,8 +15,10 @@ const source = fs.readFileSync(
 // What the worker gets from importScripts, which the VM has no equivalent of.
 // Kept a separate evaluation rather than concatenated so that a line number in a
 // stack trace still points at the file it came from.
-const styleLibrarySource = fs.readFileSync(
-    path.join(__dirname, '..', 'web-extension', 'styleLibrary.js'), 'utf8');
+const backgroundDependencies = ['cssSanitizer.js', 'styleLibrary.js'].map((file) => ({
+    filename: file,
+    source: fs.readFileSync(path.join(__dirname, '..', 'web-extension', file), 'utf8')
+}));
 
 function copy(value) {
     return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
@@ -64,8 +66,33 @@ function createHarness(options) {
         return copy(store);
     }
 
+    // A write the profile refuses: chrome.storage stores nothing, sets
+    // chrome.runtime.lastError, and runs the callback anyway - which is the
+    // whole shape the storage-failure paths are about. failWrites: true refuses
+    // every local write; a function is asked about each one and returns a
+    // message or null.
+    //
+    // Session writes are left alone under `true`: they are the job record, and a
+    // test about a refused chapter is not a test about a job that cannot be
+    // claimed.
+    function writeFailure(area, operation, keys) {
+        if (!options.failWrites) {
+            return null;
+        }
+        if (typeof options.failWrites === 'function') {
+            return options.failWrites({area: area, operation: operation, keys: keys}) || null;
+        }
+        return area === 'local' ? 'QUOTA_BYTES quota exceeded' : null;
+    }
+
     function storageArea(name) {
         const store = state[name];
+        const answer = (failure, callback) => {
+            if (!callback) return;
+            chrome.runtime.lastError = failure ? {message: failure} : null;
+            callback();
+            chrome.runtime.lastError = null;
+        };
         return {
             get: (keys, callback) => {
                 const invoke = () => callback(storageResult(store, keys));
@@ -76,12 +103,19 @@ function createHarness(options) {
                 }
             },
             set: (items, callback) => {
-                for (const key of Object.keys(items)) store[key] = copy(items[key]);
-                if (callback) callback();
+                const failure = writeFailure(name, 'set', Object.keys(items));
+                if (!failure) {
+                    for (const key of Object.keys(items)) store[key] = copy(items[key]);
+                }
+                answer(failure, callback);
             },
             remove: (keys, callback) => {
-                for (const key of (Array.isArray(keys) ? keys : [keys])) delete store[key];
-                if (callback) callback();
+                const list = Array.isArray(keys) ? keys : [keys];
+                const failure = writeFailure(name, 'remove', list);
+                if (!failure) {
+                    for (const key of list) delete store[key];
+                }
+                answer(failure, callback);
             }
         };
     }
@@ -170,7 +204,9 @@ function createHarness(options) {
         clearTimeout: () => {}
     };
     vm.createContext(context);
-    vm.runInContext(styleLibrarySource, context, {filename: 'styleLibrary.js'});
+    for (const dependency of backgroundDependencies) {
+        vm.runInContext(dependency.source, context, {filename: dependency.filename});
+    }
     vm.runInContext(source, context, {filename: 'background.js'});
 
     return {
@@ -181,6 +217,16 @@ function createHarness(options) {
             for (const invoke of pending) invoke();
         }
     };
+}
+
+// Claims a job the way a command does and hands back its id. Everything the
+// command goes on to do quotes that id, and the background acts on nothing that
+// does not - so a test that drives applyAction or prepareStyles by hand has to
+// carry it too.
+function claimJob(harness, tabId) {
+    let jobId = null;
+    harness.context.startJob(tabId, (id) => { jobId = id; });
+    return jobId;
 }
 
 function messages(harness, predicate) {
@@ -215,20 +261,23 @@ async function test(name, body) {
 (async () => {
     await test('jobs start with persisted timestamps and a busy badge', () => {
         const h = createHarness({now: 2500});
-        h.context.startJob(17);
+        const jobId = claimJob(h, 17);
         assert.deepStrictEqual(h.state.session.job, {
-            tabId: 17, startedAt: 2500, lastHeartbeat: 2500, injectedCss: []
+            jobId: jobId, tabId: 17, startedAt: 2500, lastHeartbeat: 2500, injectedCss: []
         });
         assert.deepStrictEqual(h.state.badgeColors, [{color: 'red'}]);
         assert.deepStrictEqual(h.state.badgeTexts, [{text: 'Busy'}]);
+        // the clock alone cannot tell two jobs apart when they are claimed in the
+        // same millisecond - which, with a stubbed Date.now(), is all of them
+        assert.notStrictEqual(claimJob(h, 17), jobId);
     });
 
     await test('jobs finish by clearing state, badge, every injected sheet, and popup', async () => {
         const h = createHarness();
-        h.context.startJob(17);
-        h.context.updateJob({injectedCss: ['.theme { font-family: serif; }',
-                                           '.reader { color: black; }']});
-        h.context.endJob();
+        const jobId = claimJob(h, 17);
+        h.context.updateJob(jobId, {injectedCss: ['.theme { font-family: serif; }',
+                                                  '.reader { color: black; }']});
+        h.context.endJob(jobId);
         await settle();
         assert.strictEqual(h.state.session.job, undefined);
         assert.deepStrictEqual(h.state.badgeTexts.at(-1), {text: ''});
@@ -288,26 +337,88 @@ async function test(name, body) {
         assert.deepStrictEqual(
             h.state.runtimeMessages.filter((message) => message.type === 'popup-close'), []);
 
-        h.context.startJob(9);
-        h.context.endJob();
+        h.context.endJob(claimJob(h, 9));
         await settle();
         assert.deepStrictEqual(h.state.runtimeMessages.at(-1), {type: 'popup-close'});
     });
 
     await test('heartbeats extend live jobs and cannot resurrect finished jobs', () => {
         const h = createHarness({now: 1000});
-        h.context.startJob(4);
+        const jobId = claimJob(h, 4);
         h.state.now = 29000;
-        h.context.touchJob();
+        h.context.touchJob(jobId, {tab: {id: 4}});
         assert.strictEqual(h.state.session.job.lastHeartbeat, 29000);
         h.state.now = 58000;
         let live;
         h.context.getJob((job) => { live = job; });
         assert.strictEqual(live.tabId, 4);
-        h.context.endJob();
+        h.context.endJob(jobId);
         h.state.now = 59000;
-        h.context.touchJob();
+        h.context.touchJob(jobId, {tab: {id: 4}});
         assert.strictEqual(h.state.session.job, undefined);
+    });
+
+    // The case the job id exists for. A job that stopped reporting is reclaimed
+    // and replaced while its page is still working - same tab, so the tab alone
+    // cannot tell the two apart - and everything that page says from then on is
+    // about a job that is already over.
+    await test('a reclaimed job cannot heartbeat, record css for, or finish its successor', async () => {
+        const h = createHarness({now: 1000});
+        const stale = claimJob(h, 7);
+
+        h.state.now = 40000;
+        let started;
+        let live;
+        h.context.tryStartJob(7, (ok, jobId) => { started = ok; live = jobId; });
+        await settle();
+        assert.strictEqual(started, true, 'the timed-out job was not reclaimed');
+        assert.notStrictEqual(live, stale);
+        h.context.updateJob(live, {injectedCss: ['.b {}']});
+
+        // the old extraction is still downloading images and still says so
+        h.state.now = 45000;
+        request(h, {type: 'job-heartbeat', jobId: stale}, {tab: {id: 7}});
+        assert.strictEqual(h.state.session.job.lastHeartbeat, 40000,
+            'a reclaimed job extended the timeout of the job that replaced it');
+
+        // and still finishes inserting the sheets it was asked for
+        h.context.updateJob(stale, {injectedCss: ['.a {}']});
+        assert.deepStrictEqual(h.state.session.job.injectedCss, ['.b {}'],
+            'a reclaimed job overwrote the record of what is on the page now');
+
+        // ... and then reports itself done, long after anything was waiting
+        request(h, {type: 'done', jobId: stale}, {tab: {id: 7}});
+        await settle();
+        assert.strictEqual(h.state.session.job.jobId, live, 'a stale done ended the live job');
+        assert.strictEqual(h.state.badgeTexts.at(-1).text, 'Busy');
+        assert.deepStrictEqual(h.state.removedCss, [],
+            'a stale done stripped the live job\'s stylesheet off the page');
+        assert.deepStrictEqual(
+            h.state.runtimeMessages.filter((message) => message.type === 'popup-close'), [],
+            'a stale done closed the popup waiting on the live job');
+
+        // the other half of the check: the right id from the wrong tab
+        request(h, {type: 'done', jobId: live}, {tab: {id: 99}});
+        await settle();
+        assert.strictEqual(h.state.session.job.jobId, live);
+
+        // and the job's own report ends it, with the cleanup it is owed
+        request(h, {type: 'done', jobId: live}, {tab: {id: 7}});
+        await settle();
+        assert.strictEqual(h.state.session.job, undefined);
+        assert.deepStrictEqual(h.state.removedCss, [{target: {tabId: 7}, css: '.b {}'}]);
+    });
+
+    // The chapter editor builds the same book through the same code, but nothing
+    // claimed a job for it: it is an extension page, so its messages carry no tab
+    // and no job id, and they are about nobody's job.
+    await test('a build with no job behind it does not end a capture in progress', async () => {
+        const h = createHarness();
+        const jobId = claimJob(h, 7);
+        request(h, {type: 'done'}, {});
+        await settle();
+        assert.strictEqual(h.state.session.job.jobId, jobId);
+        assert.strictEqual(h.state.badgeTexts.at(-1).text, 'Busy');
     });
 
     await test('closing an unrelated tab preserves the job; closing its tab ends it', () => {
@@ -351,8 +462,8 @@ async function test(name, body) {
         // globals the scripts after them use at load time, and sanitizeHtml.js
         // defines the tag lists extractHtml.js reads while it loads.
         assert.deepStrictEqual(absent.state.executeScripts[0].files,
-            ['libs/jszip.js', 'libs/readability.js', 'utils.js', 'sanitizeHtml.js',
-             'extractHtml.js', 'saveEbook.js']);
+            ['libs/jszip.js', 'libs/readability.js', 'utils.js', 'cssSanitizer.js',
+             'sanitizeHtml.js', 'extractHtml.js', 'saveEbook.js']);
 
         const denied = createHarness({pingResponse: undefined, executeScriptFailure: true});
         let deniedResult;
@@ -367,8 +478,8 @@ async function test(name, body) {
             {response: {title: 'No content'}, justAdd: true, text: 'Cannot add'}
         ]) {
             const h = createHarness({extractionResponse: scenario.response});
-            h.context.startJob(7);
-            h.context.applyAction([{id: 7}], 'extract-selection', scenario.justAdd, false, []);
+            h.context.applyAction([{id: 7}], 'extract-selection', scenario.justAdd, false, [],
+                                  false, false, claimJob(h, 7));
             assert.strictEqual(h.state.session.job, undefined);
             assert.strictEqual(messages(h, (m) => (m.alert || '').startsWith(scenario.text)).length, 1);
         }
@@ -379,8 +490,8 @@ async function test(name, body) {
             extractionResponse: undefined,
             interruptedExtraction: true
         });
-        h.context.startJob(7);
-        h.context.applyAction([{id: 7}], 'extract-page', false, false, []);
+        h.context.applyAction([{id: 7}], 'extract-page', false, false, [], false, false,
+                              claimJob(h, 7));
         assert.strictEqual(h.state.session.job, undefined);
         assert.strictEqual(messages(h,
             (m) => m.alert === 'Save as eBook does not work on this web site!').length, 1);
@@ -389,26 +500,159 @@ async function test(name, body) {
     await test('successful extraction builds an ebook or appends one chapter', () => {
         const response = {title: 'A', content: '<p>chapter</p>'};
         const build = createHarness({extractionResponse: response});
-        build.context.startJob(7);
-        build.context.applyAction([{id: 7}], 'extract-page', false, false, []);
+        const buildJob = claimJob(build, 7);
+        build.context.applyAction([{id: 7}], 'extract-page', false, false, [], false, false,
+                                  buildJob);
         assert.deepStrictEqual(messages(build, (m) => m.shortcut === 'build-ebook')[0].message.response,
             [response]);
         assert.strictEqual(build.state.session.job.tabId, 7);
+        // the build was told which job it is finishing, so that the 'done' it
+        // sends back cannot end a later one
+        assert.strictEqual(messages(build, (m) => m.shortcut === 'build-ebook')[0].message.jobId,
+            buildJob);
 
         const add = createHarness({extractionResponse: response, local: {allPages: []}});
-        add.context.startJob(7);
-        add.context.applyAction([{id: 7}], 'extract-page', true, false, []);
+        add.context.applyAction([{id: 7}], 'extract-page', true, false, [], false, false,
+                                claimJob(add, 7));
         assert.deepStrictEqual(add.state.local.allPages, [response]);
         assert.strictEqual(add.state.session.job, undefined);
         assert.strictEqual(messages(add, (m) => m.alert === 'Page or selection added as chapter!').length, 1);
+    });
+
+    // The class of bug this group is about: chrome.storage runs the callback
+    // whether or not it wrote anything, so every one of these paths used to say
+    // it had done what it had not.
+    await test('a chapter the profile refused to store is reported as a failure', async () => {
+        const h = createHarness({
+            extractionResponse: {title: 'A', content: '<p>chapter</p>'},
+            local: {allPages: []},
+            failWrites: true
+        });
+        h.context.applyAction([{id: 7}], 'extract-page', true, false, [], false, false,
+                              claimJob(h, 7));
+        await settle();
+        assert.deepStrictEqual(h.state.local.allPages, [], 'the refused write stored a chapter');
+        assert.strictEqual(
+            messages(h, (m) => m.alert === 'Page or selection added as chapter!').length, 0,
+            'a refused write was reported as a chapter added');
+        assert.strictEqual(
+            messages(h, (m) => (m.alert || '').startsWith('The chapter could not be saved')).length, 1);
+        // the job still ends - the extraction is over either way, and a spinner
+        // left running is the second half of the same lie
+        assert.strictEqual(h.state.session.job, undefined);
+    });
+
+    // The guard here used to be `if (!data || !data.allPages) { data.allPages = [] }`,
+    // which throws on the null it claims to handle. Nothing produces that null
+    // today; a buffer of the wrong shape takes the same branch.
+    await test('a buffer of the wrong shape is replaced rather than dereferenced', () => {
+        const h = createHarness({
+            extractionResponse: {title: 'A', content: '<p>chapter</p>'},
+            local: {allPages: 'not a list'}
+        });
+        h.context.applyAction([{id: 7}], 'extract-page', true, false, [], false, false,
+                              claimJob(h, 7));
+        assert.deepStrictEqual(h.state.local.allPages, [{title: 'A', content: '<p>chapter</p>'}]);
+        assert.strictEqual(
+            messages(h, (m) => m.alert === 'Page or selection added as chapter!').length, 1);
+    });
+
+    await test('a reviewed save that cannot be stored does not open the editor', async () => {
+        const h = createHarness({
+            extractionResponse: {title: 'Article', content: '<p>chapter</p>'},
+            failWrites: true
+        });
+        h.context.applyAction([{id: 7}], 'extract-page', false, false, [], false, true,
+                              claimJob(h, 7));
+        await settle();
+        // the editor reads the book from storage: opened on a write that did not
+        // happen, it would show an empty page with nothing to say why
+        assert.deepStrictEqual(h.state.createdTabs, []);
+        assert.strictEqual(
+            messages(h, (m) => (m.alert || '').startsWith('The captured page could not be saved')).length, 1);
+        assert.strictEqual(h.state.session.job, undefined);
+    });
+
+    await test('a style snapshot that cannot be stored does not open the library', async () => {
+        const stored = createHarness();
+        stored.context.dispatchStyleSnapshot([{id: 7, url: 'https://example.com/a'}],
+                                             claimJob(stored, 7));
+        await settle();
+        assert.strictEqual(stored.state.local.styleSnapshot.url, 'https://example.com/a');
+        assert.deepStrictEqual(stored.state.createdTabs, [{
+            url: 'chrome-extension://save-as-ebook/styles.html?for=' +
+                 encodeURIComponent('https://example.com/a')
+        }]);
+
+        const refused = createHarness({failWrites: true});
+        refused.context.dispatchStyleSnapshot([{id: 7, url: 'https://example.com/a'}],
+                                              claimJob(refused, 7));
+        await settle();
+        assert.deepStrictEqual(refused.state.createdTabs, [],
+            'the library was opened on a snapshot that was never stored');
+        assert.strictEqual(messages(refused,
+            (m) => (m.alert || '').startsWith('The captured page could not be saved')).length, 1);
+        assert.strictEqual(refused.state.session.job, undefined);
+    });
+
+    // The same failure one layer out: the editor and the library page are told
+    // by the answer to their write, and they say what they are told.
+    await test('setters answer a refused write with ok:false rather than ok:true', () => {
+        const writes = [
+            {type: 'set', pages: [{title: 'a'}]},
+            {type: 'set title', title: 'A Book'},
+            {type: 'set book css', css: 'p{}'},
+            {type: 'set book metadata', metadata: {publisher: 'someone'}},
+            {type: 'set include style', includeStyle: true},
+            {type: 'set reader mode', readerMode: true},
+            {type: 'set review before saving', reviewBeforeSaving: true},
+            {type: 'remove'},
+            {type: 'clear style snapshot'}
+        ];
+        for (const write of writes) {
+            const stored = createHarness({local: {styleSnapshot: {url: 'x'}}});
+            assert.deepStrictEqual(request(stored, write), [{ok: true}],
+                write.type + ' did not report a write that landed');
+
+            const refused = createHarness({
+                local: {styleSnapshot: {url: 'x'}},
+                failWrites: true
+            });
+            assert.deepStrictEqual(request(refused, write),
+                [{ok: false, error: 'QUOTA_BYTES quota exceeded'}],
+                write.type + ' reported a refused write as success');
+        }
+    });
+
+    // The style library is written by the library page and by the popup's
+    // checkboxes, and both of them draw the list from their own copy - so the
+    // answer is the only thing that can tell them the profile did not keep it.
+    await test('a refused style library write is answered as a failure', () => {
+        const library = {version: 2, entries: []};
+        const refused = createHarness({failWrites: true});
+        assert.deepStrictEqual(request(refused, {type: 'set style library', library: library}),
+            [{ok: false, error: 'QUOTA_BYTES quota exceeded'}]);
+
+        // ...and a read that cannot store its migration still hands the library
+        // over: the caller asked for the styles, not for a migration
+        const migrating = createHarness({
+            local: {styles: [{name: 'old', url: 'example.com', css: 'p{}'}]},
+            failWrites: true
+        });
+        let answered = null;
+        migrating.context.getStyleLibrary((merged) => { answered = merged; });
+        return settle().then(() => {
+            assert.ok(answered && answered.entries.length === 1,
+                'a refused migration write swallowed the library');
+        });
     });
 
     await test('review before saving buffers the one-shot save and opens the editor', async () => {
         const response = {title: 'Article', content: '<p>chapter</p>'};
         for (const action of ['extract-page', 'extract-selection']) {
             const h = createHarness({extractionResponse: response});
-            h.context.startJob(7);
-            h.context.applyAction([{id: 7}], action, false, false, [], false, true);
+            h.context.applyAction([{id: 7}], action, false, false, [], false, true,
+                                  claimJob(h, 7));
             await settle();
             // nothing was built or downloaded - the editor's own button does that
             assert.strictEqual(messages(h, (m) => m.shortcut === 'build-ebook').length, 0,
@@ -426,14 +670,14 @@ async function test(name, body) {
         // an untitled page is left to the editor's own fallback rather than
         // stored as a title of ''
         const untitled = createHarness({extractionResponse: {title: '  ', content: '<p>c</p>'}});
-        untitled.context.startJob(7);
-        untitled.context.applyAction([{id: 7}], 'extract-page', false, false, [], false, true);
+        untitled.context.applyAction([{id: 7}], 'extract-page', false, false, [], false, true,
+                                     claimJob(untitled, 7));
         assert.strictEqual(untitled.state.local.title, undefined);
 
         // and with the option off the save still downloads without touching the buffer
         const off = createHarness({extractionResponse: response});
-        off.context.startJob(7);
-        off.context.applyAction([{id: 7}], 'extract-page', false, false, [], false, false);
+        off.context.applyAction([{id: 7}], 'extract-page', false, false, [], false, false,
+                                claimJob(off, 7));
         assert.strictEqual(messages(off, (m) => m.shortcut === 'build-ebook').length, 1);
         assert.strictEqual(off.state.local.allPages, undefined);
         assert.deepStrictEqual(off.state.createdTabs, []);
@@ -455,8 +699,8 @@ async function test(name, body) {
             },
             uuids: ['a-new-book']
         });
-        h.context.startJob(7);
-        h.context.dispatch([{id: 7, url: 'https://example.com/article'}], 'extract-page', false, []);
+        h.context.dispatch([{id: 7, url: 'https://example.com/article'}], 'extract-page', false, [],
+                           claimJob(h, 7));
         await settle();
         assert.deepStrictEqual(h.state.local.allPages,
             [{title: 'Article', content: '<p>chapter</p>'}]);
@@ -470,14 +714,176 @@ async function test(name, body) {
         assert.strictEqual(h.state.local.reviewBeforeSaving, true);
     });
 
+    // The buffered book is work the user did by hand, one chapter at a time, and
+    // a save used to discard it before anyone knew whether the save could even
+    // run. Each scenario here is a command that ends without a chapter to put in
+    // its place: the book has to still be there afterwards.
+    await test('a save that never produces a chapter leaves the buffered book alone', async () => {
+        const buffered = () => ({
+            allPages: [{title: 'a chapter the user collected'}],
+            title: 'The Book So Far',
+            uuid: 'the-buffered-book',
+            bookCss: 'p{}',
+            bookMetadata: {publisher: 'the user'}
+        });
+        // every key clearEbook() takes, and only those: capturing also merges the
+        // shipped style catalog into local storage, which is not part of the book
+        const book = (h) => {
+            const kept = {};
+            for (const key of ['allPages', 'title', 'uuid', 'bookCss', 'bookMetadata']) {
+                if (h.state.local[key] !== undefined) kept[key] = h.state.local[key];
+            }
+            return kept;
+        };
+
+        // a capture is already running, so the command is refused outright
+        const busy = createHarness({
+            local: buffered(),
+            session: {job: {tabId: 9, startedAt: 1000, lastHeartbeat: 1000, injectedCss: []}}
+        });
+        busy.context.executeCommand({type: 'save-page'});
+        await settle();
+        assert.strictEqual(
+            messages(busy, (m) => (m.alert || '').startsWith('Work in progress')).length, 1);
+        assert.deepStrictEqual(book(busy), buffered(),
+            'a refused command discarded the book the running one is not touching');
+
+        // a chrome:// page, the web store, a pdf viewer: nothing can be injected,
+        // so the command returns without ever claiming a job
+        const restricted = createHarness({
+            local: buffered(),
+            pingResponse: undefined,
+            executeScriptFailure: true
+        });
+        restricted.context.executeCommand({type: 'save-page'});
+        await settle();
+        await settle();
+        assert.strictEqual(restricted.state.session.job, undefined);
+        assert.strictEqual(messages(restricted, (m) => /^extract-/.test(m.type || '')).length, 0);
+        assert.deepStrictEqual(book(restricted), buffered(),
+            'a tab that cannot be captured cost the user the book');
+
+        // the tab navigated mid-extraction and the content script went with it
+        const interrupted = createHarness({
+            local: buffered(),
+            extractionResponse: undefined,
+            interruptedExtraction: true
+        });
+        interrupted.context.executeCommand({type: 'save-page'});
+        await settle();
+        assert.strictEqual(messages(interrupted,
+            (m) => m.alert === 'Save as eBook does not work on this web site!').length, 1);
+        assert.deepStrictEqual(book(interrupted), buffered(),
+            'an interrupted extraction discarded the book it never replaced');
+
+        // nothing was selected - the failure is only discovered after extraction,
+        // which is why it has to be the write that replaces the book and not the
+        // command that starts it
+        const empty = createHarness({
+            local: buffered(),
+            extractionResponse: {title: 'Article', content: '   \n '}
+        });
+        empty.context.executeCommand({type: 'save-selection'});
+        await settle();
+        assert.strictEqual(messages(empty,
+            (m) => (m.alert || '').startsWith('Cannot generate')).length, 1);
+        assert.deepStrictEqual(book(empty), buffered(),
+            'an empty selection discarded the book it produced nothing to replace');
+
+        // and the same empty selection on the way to the editor, where the
+        // replacement is a storage write rather than a build
+        const emptyReview = createHarness({
+            local: Object.assign(buffered(), {reviewBeforeSaving: true}),
+            extractionResponse: {title: 'Article', content: ''}
+        });
+        emptyReview.context.executeCommand({type: 'save-selection'});
+        await settle();
+        assert.deepStrictEqual(emptyReview.state.createdTabs, []);
+        assert.deepStrictEqual(book(emptyReview), buffered());
+        // the preference is not part of the book either way
+        assert.strictEqual(emptyReview.state.local.reviewBeforeSaving, true);
+    });
+
+    // The popup starts spinning on the click and is taken out of it by the
+    // background - normally by the popup-close that finishJob sends when the job
+    // ends. A command refused before tryStartJob never claims a job, so there is
+    // no finishJob to reach: without a message of its own the spinner ran until
+    // the user dismissed the popup, over a save that was not happening. The
+    // alerts these paths show go through the content script, which on a
+    // restricted tab is the thing that is missing.
+    await test('a command refused before a job exists tells the popup why', async () => {
+        const failures = (h) => h.state.runtimeMessages.filter(
+            (message) => message.type === 'popup-failed');
+
+        // a chrome:// page, the web store, a pdf viewer, no activeTab grant
+        const restricted = createHarness({pingResponse: undefined, executeScriptFailure: true});
+        restricted.context.executeCommand({type: 'save-page'});
+        await settle();
+        await settle();
+        assert.deepStrictEqual(failures(restricted),
+            [{type: 'popup-failed', reason: 'restricted-tab'}]);
+        assert.strictEqual(restricted.state.session.job, undefined);
+
+        // a capture is already running: the page gets the alert, and the popup
+        // waiting on the command that was turned away gets the same verdict -
+        // the running job's popup-close is not about this popup
+        const busy = createHarness({
+            session: {job: {tabId: 9, startedAt: 1000, lastHeartbeat: 1000, injectedCss: []}}
+        });
+        busy.context.executeCommand({type: 'save-page'});
+        await settle();
+        assert.strictEqual(
+            messages(busy, (m) => (m.alert || '').startsWith('Work in progress')).length, 1);
+        assert.deepStrictEqual(failures(busy), [{type: 'popup-failed', reason: 'busy'}]);
+        // the job it was refused for is still the one in storage
+        assert.strictEqual(busy.state.session.job.tabId, 9);
+
+        // no active tab to read at all
+        const noTab = createHarness({tabs: []});
+        noTab.context.executeCommand({type: 'save-page'});
+        await settle();
+        assert.deepStrictEqual(failures(noTab), [{type: 'popup-failed', reason: 'no-tab'}]);
+        assert.strictEqual(noTab.state.executeScripts.length, 0);
+
+        // and a command that does start says nothing: popup-close ends that one
+        const running = createHarness({extractionResponse: {title: 'A', content: '<p>a</p>'}});
+        running.context.executeCommand({type: 'save-page'});
+        await settle();
+        assert.deepStrictEqual(failures(running), []);
+    });
+
+    // The other half of the same rule: a capture that does produce a chapter
+    // still starts a new book, so the next command must not find the old one.
+    await test('a completed one-shot save replaces the buffered book', async () => {
+        const response = {title: 'Article', content: '<p>chapter</p>'};
+        const h = createHarness({
+            local: {
+                allPages: [{title: 'a chapter the user collected'}],
+                title: 'The Book So Far',
+                uuid: 'the-buffered-book',
+                bookCss: 'p{}',
+                bookMetadata: {publisher: 'the user'}
+            },
+            extractionResponse: response
+        });
+        h.context.executeCommand({type: 'save-page'});
+        await settle();
+        assert.deepStrictEqual(
+            messages(h, (m) => m.shortcut === 'build-ebook')[0].message.response, [response]);
+        for (const key of ['allPages', 'title', 'uuid', 'bookCss', 'bookMetadata']) {
+            assert.strictEqual(h.state.local[key], undefined,
+                'the save left ' + key + ' behind for the next book to inherit');
+        }
+    });
+
     await test('reader mode reaches a page extraction and never a selection', () => {
         const extractions = (h) => messages(h,
             (m) => m.type === 'extract-page' || m.type === 'extract-selection');
 
         for (const action of ['extract-page', 'extract-selection']) {
             const on = createHarness();
-            on.context.startJob(7);
-            on.context.applyAction([{id: 7}], action, true, false, [], true);
+            on.context.applyAction([{id: 7}], action, true, false, [], true, false,
+                                   claimJob(on, 7));
             assert.strictEqual(extractions(on)[0].message.readerMode,
                 action === 'extract-page',
                 action + ' was sent the wrong reader mode flag');
@@ -486,16 +892,16 @@ async function test(name, body) {
         // The checkbox being off has to be sent as false rather than left out:
         // the content script reads the flag, it does not default it.
         const off = createHarness();
-        off.context.startJob(7);
-        off.context.applyAction([{id: 7}], 'extract-page', true, false, [], undefined);
+        off.context.applyAction([{id: 7}], 'extract-page', true, false, [], undefined, false,
+                                claimJob(off, 7));
         assert.strictEqual(extractions(off)[0].message.readerMode, false);
     });
 
     await test('a reader mode fallback is reported and the page still saved', () => {
         const response = {title: 'A', content: '<p>chapter</p>', readerModeFailed: true};
         const h = createHarness({extractionResponse: response, local: {allPages: []}});
-        h.context.startJob(7);
-        h.context.applyAction([{id: 7}], 'extract-page', true, false, [], true);
+        h.context.applyAction([{id: 7}], 'extract-page', true, false, [], true, false,
+                              claimJob(h, 7));
         assert.strictEqual(messages(h,
             (m) => (m.alert || '').startsWith('Readability.js found no article')).length, 1);
         // the point of the fallback: telling the user does not cost them the save
@@ -505,10 +911,76 @@ async function test(name, body) {
             extractionResponse: {title: 'A', content: '<p>chapter</p>'},
             local: {allPages: []}
         });
-        succeeded.context.startJob(7);
-        succeeded.context.applyAction([{id: 7}], 'extract-page', true, false, [], true);
+        succeeded.context.applyAction([{id: 7}], 'extract-page', true, false, [], true, false,
+                                      claimJob(succeeded, 7));
         assert.strictEqual(messages(succeeded,
             (m) => (m.alert || '').indexOf('Readability.js') > -1).length, 0);
+    });
+
+    // F-03: an image the content script could not download is removed from the
+    // chapter, because a reference to a file that is not in the archive fails
+    // the whole book. Removing it silently is what makes a capture that is
+    // missing a picture indistinguishable from a page that never had one.
+    await test('images left out of a capture are reported and the chapter still saved', () => {
+        const response = {
+            title: 'A', content: '<p>chapter</p>',
+            droppedImages: [
+                {url: 'https://cdn.example.com/a.png', reason: 'fetch'},
+                {url: 'https://cdn.example.com/b.png', reason: 'fetch'}
+            ]
+        };
+        const h = createHarness({extractionResponse: response, local: {allPages: []}});
+        h.context.applyAction([{id: 7}], 'extract-page', true, false, [], false, false,
+                              claimJob(h, 7));
+        const warnings = messages(h, (m) => (m.alert || '').indexOf('could not be downloaded') > -1);
+        assert.strictEqual(warnings.length, 1, 'the lost images were not reported');
+        assert.ok(warnings[0].message.alert.indexOf('2 images') > -1,
+                  'the warning did not say how many were lost: ' + warnings[0].message.alert);
+        // same contract as the reader mode fallback: being told costs nothing
+        assert.deepStrictEqual(h.state.local.allPages, [response]);
+
+        const intact = createHarness({
+            extractionResponse: {title: 'A', content: '<p>chapter</p>'},
+            local: {allPages: []}
+        });
+        intact.context.applyAction([{id: 7}], 'extract-page', true, false, [], false, false,
+                                   claimJob(intact, 7));
+        assert.strictEqual(messages(intact,
+            (m) => (m.alert || '').indexOf('could not be downloaded') > -1).length, 0,
+            'a capture that lost nothing still warned');
+    });
+
+    // The wording is asserted separately from the plumbing above: it is the
+    // whole product of this fix, and the reason a download failed is the part
+    // the user can act on - a blocked cdn is not something they can fix, an
+    // unsupported format tells them the picture was reachable but unusable.
+    await test('the dropped-image warning names the count and the cause', () => {
+        const h = createHarness();
+        const describe = h.context.describeDroppedImages;
+        const blocked = (n) => Array.from({length: n}, () => ({reason: 'fetch'}));
+
+        assert.strictEqual(describe(undefined), null);
+        assert.strictEqual(describe([]), null, 'an empty list is not a warning');
+
+        const one = describe(blocked(1));
+        assert.ok(one.indexOf('1 image ') > -1 && one.indexOf('was left out') > -1,
+                  'a single lost image was described in the plural: ' + one);
+        assert.ok(one.indexOf('image server did not allow') > -1, one);
+
+        const many = describe(blocked(3));
+        assert.ok(many.indexOf('3 images') > -1 && many.indexOf('were left out') > -1, many);
+
+        const typed = describe([{reason: 'type'}, {reason: 'type'}]);
+        assert.ok(typed.indexOf('format this extension cannot store') > -1 &&
+                  typed.indexOf('did not allow') < 0,
+                  'a format failure was blamed on the server: ' + typed);
+
+        const mixed = describe([{reason: 'type'}, {reason: 'fetch'}]);
+        assert.ok(mixed.indexOf('Some were not allowed') > -1, mixed);
+
+        // reason is absent on records written before it existed, and unknown
+        // reasons must not be silently counted as format failures
+        assert.ok(describe([{url: 'x'}]).indexOf('image server did not allow') > -1);
     });
 
     // The v1 storage this reads is what every existing install has: the whole
@@ -523,11 +995,11 @@ async function test(name, body) {
             {title: 'Elsewhere', url: 'other\\.example\\.net', style: '.elsewhere {}'}
         ];
         const h = createHarness({local: {styles: styles}, deferSessionGets: true});
-        h.context.startJob(12);
+        const jobId = claimJob(h, 12);
         let applied;
         h.context.prepareStyles(
             [{id: 12, url: 'https://www.example.com/articles/42?print=1'}],
-            [], (value) => { applied = value; });
+            [], jobId, (value) => { applied = value; });
         await settle();
         assert.strictEqual(applied, undefined,
             'action continued before the CSS cleanup record was persisted');
@@ -564,9 +1036,8 @@ async function test(name, body) {
                 {id: 'empty', scope: 'theme', css: '   '}
             ]}}
         });
-        h.context.startJob(3);
         let applied;
-        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], [],
+        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], [], claimJob(h, 3),
                                 (value) => { applied = value; });
         await settle();
         h.flushSessionGets();
@@ -592,8 +1063,8 @@ async function test(name, body) {
                 ]}
             }
         });
-        h.context.startJob(9);
-        h.context.dispatch([{id: 9, url: 'https://example.com/a'}], 'extract-page', true, []);
+        h.context.dispatch([{id: 9, url: 'https://example.com/a'}], 'extract-page', true, [],
+                           claimJob(h, 9));
         await settle();
         assert.deepStrictEqual(h.state.insertedCss,
             [{target: {tabId: 9}, css: '.banner {display: none}'}]);
@@ -615,9 +1086,8 @@ async function test(name, body) {
                 {id: 'one', scope: 'theme', css: '.one {}'}
             ]}}
         });
-        h.context.startJob(3);
         let applied = 'not called';
-        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], [],
+        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], [], claimJob(h, 3),
                                 (value) => { applied = value; });
         await settle();
         assert.deepStrictEqual(applied, []);
@@ -637,7 +1107,7 @@ async function test(name, body) {
         });
         // no startJob: nothing is in flight, so updateJob has nothing to record
         let applied = 'not called';
-        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], [],
+        h.context.prepareStyles([{id: 3, url: 'https://example.com/a'}], [], null,
                                 (value) => { applied = value; });
         await settle();
         assert.deepStrictEqual(applied, []);
@@ -792,9 +1262,8 @@ async function test(name, body) {
             'a style that applies to every capture cannot arrive switched on');
 
         async function stylesFor(url) {
-            h.context.startJob(4);
             let applied;
-            h.context.prepareStyles([{id: 4, url: url}], [],
+            h.context.prepareStyles([{id: 4, url: url}], [], claimJob(h, 4),
                                     (value) => { applied = value; });
             await settle();
             h.flushSessionGets();

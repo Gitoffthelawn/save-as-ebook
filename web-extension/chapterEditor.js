@@ -18,6 +18,93 @@ function showEditor() {
     var modalFooter = document.createElement('div');
     modalFooter.id = 'chapterEditor-modalFooter';
 
+    /////////////////////
+    // Unsaved work
+    //
+    // The list holds work just as the preview panel does: the book title, the
+    // book stylesheet, the metadata boxes, every rename, the order the rows were
+    // dragged into and every row marked removed all live in this page until
+    // something writes them. Escape, a click on the grey margin either side of
+    // the modal, and the X used to take all of it with no question asked.
+    //
+    // "Has anything changed" is answered by comparing a serialization of that
+    // state against the one taken when the page finished loading - the same way
+    // the metadata fieldset answers it, and for the same reason: a dirty flag
+    // has to be cleared in every place that saves, and one place missed is a
+    // book lost or a question asked about nothing.
+    var listStateOriginal = null;
+    // Set for a departure the user has already agreed to - or one there is
+    // nothing left to ask about - so that beforeunload does not ask a second
+    // time on the way out.
+    var leaving = false;
+
+    // Read from the page rather than from storage, and without collectChapters()
+    // - that one writes the boxes back onto the records it returns, which is not
+    // something a question about whether anything changed should do. Each row
+    // carries its index as well as its title, so that reordering shows up as a
+    // change even in a book whose chapters are all called the same thing.
+    function serializeListState() {
+        var chapters = [];
+        var rows = document.getElementsByClassName('chapterEditor-chapter-item');
+        for (var i = 0; i < rows.length; i++) {
+            var listIndex = Number(rows[i].id.replace('li', ''));
+            var titleInput = rows[i].children.namedItem('text' + listIndex);
+            chapters.push({
+                index: listIndex,
+                title: titleInput ? titleInput.value : '',
+                removed: !!(allPagesRef && allPagesRef[listIndex] &&
+                            allPagesRef[listIndex].removed)
+            });
+        }
+        return JSON.stringify({
+            title: ebookTilte.value,
+            bookCss: bookCssArea.value,
+            metadata: bookMetaFields.serialize(),
+            chapters: chapters
+        });
+    }
+
+    // What is on screen becomes the new baseline: once when the page has
+    // finished loading, and again after every successful write.
+    //
+    // A write takes a message round trip to the background and back, so the
+    // state it stored is taken when it is issued and handed in here when it is
+    // confirmed - not read again on arrival, which would record anything typed
+    // in the meantime as saved. And only when it is confirmed: a baseline reset
+    // over a refused write is this page's version of the same bug, letting the
+    // tab close without a word about work that was never stored.
+    function resetDirtyBaseline(state) {
+        listStateOriginal = state === undefined ? serializeListState() : state;
+    }
+
+    function isListDirty() {
+        return listStateOriginal !== null && serializeListState() !== listStateOriginal;
+    }
+
+    // The preview panel's own unsaved work counts too. Escape and the panel's
+    // backdrop reach closePreview(), which asks for itself, but the tab can
+    // still be closed from the browser with the panel standing open.
+    function isPreviewDirty() {
+        return (editSession !== null && editSession.isDirty()) ||
+               isChapterCssDirty() || isChapterMetaDirty();
+    }
+
+    function hasUnsavedWork() {
+        return isListDirty() || isPreviewDirty();
+    }
+
+    // The four things this page loads are loaded independently and land in any
+    // order, and the baseline is only meaningful once all of them are in: taken
+    // any earlier it would record an empty box that is about to be filled, and
+    // the filling would then read as an edit.
+    var pendingLoads = 4;
+    function noteLoaded() {
+        pendingLoads--;
+        if (pendingLoads === 0) {
+            resetDirtyBaseline();
+        }
+    }
+
     ////////
     // Header
     var title = document.createElement('span');
@@ -45,6 +132,7 @@ function showEditor() {
     ebookTilte.type = 'text';
     getEbookTitle(function (title) {
         ebookTilte.value = title;
+        noteLoaded();
     });
     titleHolder.appendChild(ebookTilte);
     modalList.appendChild(titleHolder);
@@ -82,6 +170,7 @@ function showEditor() {
     bookCssArea.placeholder = chrome.i18n.getMessage('bookCssPlaceholder');
     getBookCss(function (css) {
         bookCssArea.value = css;
+        noteLoaded();
     });
     // The preview reads this box rather than storage, so a rule takes effect as
     // it is typed and without being saved first - which is the only way to write
@@ -131,6 +220,7 @@ function showEditor() {
     });
     getBookMetadata(function (metadata) {
         bookMetaFields.fill(metadata);
+        noteLoaded();
     });
 
     // What the boxes would produce if they were left alone, from the chapters as
@@ -238,15 +328,48 @@ function showEditor() {
     removeButton.onclick = function() {
         var result = confirm(chrome.i18n.getMessage('removeChaptersConfirm'));
         if (result) {
-            removeEbook();
-            closeModal();
+            removeEbook(function (error) {
+                // A refused removal leaves the book where it was, so leaving the
+                // page on it would be the same false report the other way round:
+                // the chapters are still there and the user has been shown a
+                // closed tab as the answer.
+                if (error) {
+                    alert(chrome.i18n.getMessage('storageWriteFailed'));
+                    return;
+                }
+                // straight out rather than through closeModal(): the question
+                // has been asked, and asking again about unsaved changes to a
+                // book that has just been thrown away is asking about nothing
+                leavePage();
+            });
         }
     };
     buttons.appendChild(removeButton);
 
     var saveButton = document.createElement('button');
     saveButton.onclick = function() {
-        prepareEbook(saveChanges());
+        // A row whose title box has been emptied is one the user is part way
+        // through renaming, not one they want named for them: the build has a
+        // fallback for records that reach it blank, but while the box is on the
+        // screen the useful answer is to say which row it is and put the cursor
+        // back in it. Asked here rather than in saveChanges(), because a saved
+        // blank title can still be typed over next time this page is opened,
+        // while a built book cannot.
+        var blank = firstBlankChapterTitle();
+        if (blank) {
+            alert(chrome.i18n.getMessage('blankChapterTitleWarning'));
+            blank.focus();
+            blank.select();
+            return;
+        }
+        // The build is handed the chapters directly, so it produces the same
+        // file whether or not the buffer could be updated - but a user who was
+        // not told would go on editing a book whose last save did not happen.
+        prepareEbook(saveChanges(function (error) {
+            if (error) {
+                alert(chrome.i18n.getMessage('storageWriteFailed'));
+            }
+        }));
     };
     saveButton.innerText = chrome.i18n.getMessage('generateEbook');
     saveButton.className = 'chapterEditor-footer-button chapterEditor-float-right chapterEditor-generate-button';
@@ -258,15 +381,22 @@ function showEditor() {
         // then leaves - otherwise the tab stays open looking exactly as it did
         // before, with nothing to say whether the click landed.
         //
-        // The confirmation is also what makes closing safe: saveChanges() writes
-        // by messaging the background, and alert() holds the tab open until it
-        // is dismissed, which is long enough for those messages to be delivered.
+        // What it says is decided by the writes rather than by having issued
+        // them: this button is the clearest case of the whole class of bug -
+        // "Changes saved", then a tab closed on changes that were refused.
         // Nothing is said and nothing is closed when there was nothing to save.
-        if (!saveChanges()) {
-            return;
-        }
-        alert(chrome.i18n.getMessage('changesSaved'));
-        closeModal();
+        //
+        // Waiting for the answers is also what makes closing safe: the writes
+        // are messages to the background, and by the time they have been
+        // answered they have been delivered.
+        saveChanges(function (error) {
+            if (error) {
+                alert(chrome.i18n.getMessage('storageWriteFailed'));
+                return;
+            }
+            alert(chrome.i18n.getMessage('changesSaved'));
+            closeModal();
+        });
     };
     saveChangesButton.innerText = chrome.i18n.getMessage('saveChanges');
     saveChangesButton.className = 'chapterEditor-footer-button chapterEditor-float-right';
@@ -534,6 +664,18 @@ function showEditor() {
         }
     };
 
+    // The ways out of this page that are not ours: the tab's own close button,
+    // a reload, a navigation. leavePage() is not one of them - it is taken after
+    // a question of our own, or after a save, and it says so.
+    window.addEventListener('beforeunload', function(event) {
+        if (leaving || !hasUnsavedWork()) {
+            return;
+        }
+        event.preventDefault();
+        // what browsers that do not act on preventDefault here still act on
+        event.returnValue = '';
+    });
+
     modal.style.display = "block";
 
     document.onkeydown = function(evt) {
@@ -550,8 +692,29 @@ function showEditor() {
     };
 
     function closeModal() {
-        // the editor is the whole tab now, so closing it closes the tab
+        // Everything this page holds is held only here, so a close is the last
+        // chance to keep it. Asked with confirm() rather than left to
+        // beforeunload because this path is a click on one of our own buttons:
+        // beforeunload is for the ways out the page does not own, and letting
+        // both fire would ask the same question twice on the same close.
+        if (hasUnsavedWork() &&
+            !confirm(chrome.i18n.getMessage('discardChangesConfirm'))) {
+            return;
+        }
+        leavePage();
+    }
+
+    // the editor is the whole tab now, so closing it closes the tab
+    function leavePage() {
+        leaving = true;
         window.close();
+        // The suppression lasts as long as the attempt and no longer: a tab the
+        // browser declines to close is a tab still holding the book, and one
+        // whose guard has been switched off for good would then discard it on
+        // the next reload without a word.
+        setTimeout(function() {
+            leaving = false;
+        }, 0);
     }
 
     function removeListItem(atIndex) {
@@ -775,7 +938,13 @@ function showEditor() {
             allPagesRef[previewIndex].metadataOverride =
                 chapterMetaFields.isEmpty() ? null : chapterMetaFields.read();
             chapterMetaOriginal = chapterMetaFields.serialize();
-            saveChanges();
+            // The hint below says the chapter was saved, and is overwritten by
+            // this one when the write comes back refused.
+            saveChanges(function (error) {
+                if (error) {
+                    setHint(chrome.i18n.getMessage('storageWriteFailed'));
+                }
+            });
             if (editSession) {
                 editSession.markSaved();
             }
@@ -874,6 +1043,27 @@ function showEditor() {
         }
     }
 
+    // The title box of the first chapter that has been left without a title, or
+    // null when every chapter still has one. Rows marked removed are not asked
+    // about: their titles are not going into any book.
+    function firstBlankChapterTitle() {
+        var rows = document.getElementsByClassName('chapterEditor-chapter-item');
+        if (!allPagesRef) {
+            return null;
+        }
+        for (var i = 0; i < rows.length; i++) {
+            var listIndex = Number(rows[i].id.replace('li', ''));
+            if (!allPagesRef[listIndex] || allPagesRef[listIndex].removed !== false) {
+                continue;
+            }
+            var titleInput = rows[i].children.namedItem('text' + listIndex);
+            if (titleInput && titleInput.value.trim() === '') {
+                return titleInput;
+            }
+        }
+        return null;
+    }
+
     // The chapters as this page currently shows them: in list order, without the
     // ones marked removed, carrying the titles as they stand in their boxes.
     // What saveChanges() writes, and what the book metadata placeholders are
@@ -899,7 +1089,14 @@ function showEditor() {
 
     // Persists what the page currently shows, and hands it back so that a build
     // can use it without waiting for storage.
-    function saveChanges() {
+    //
+    // The four writes are four messages, and any of them can be refused - the
+    // profile's storage is full, or unwritable. `done` is called once, with the
+    // first error or with null, after all four have been answered; the return
+    // value is still the chapters, immediately, because the build is handed them
+    // rather than reading them back. A caller that says "saved" says it from
+    // `done`, not from the return.
+    function saveChanges(done) {
         var newEbookTitle = ebookTilte.value;
         if (newEbookTitle.trim() === '') {
             newEbookTitle = 'eBook';
@@ -915,10 +1112,34 @@ function showEditor() {
             // saying it was described with five empty strings
             var newMetadata = bookMetaFields.isEmpty() ? null : bookMetaFields.read();
 
-            saveEbookTitle(newEbookTitle);
-            saveBookCss(bookCssArea.value);
-            saveBookMetadata(newMetadata);
-            saveEbookPages(newChapters);
+            // what is being written, captured now rather than when the writes
+            // come back - see resetDirtyBaseline()
+            var savedState = serializeListState();
+            var pending = 4;
+            var firstError = null;
+            var noteWrite = function (error) {
+                if (error && !firstError) {
+                    firstError = error;
+                }
+                pending--;
+                if (pending > 0) {
+                    return;
+                }
+                // what was written is what the page shows, so nothing here is
+                // unsaved any more - and closing after a save asks nothing.
+                // Nothing was written when one of them failed, so it still is.
+                if (!firstError) {
+                    resetDirtyBaseline(savedState);
+                }
+                if (done) {
+                    done(firstError);
+                }
+            };
+
+            saveEbookTitle(newEbookTitle, noteWrite);
+            saveBookCss(bookCssArea.value, noteWrite);
+            saveBookMetadata(newMetadata, noteWrite);
+            saveEbookPages(newChapters, noteWrite);
             return {
                 chapters: newChapters,
                 title: newEbookTitle,
@@ -932,7 +1153,10 @@ function showEditor() {
 
     /////////////////////
 
-    getEbookPages(createChapterList);
+    getEbookPages(function (allPages) {
+        createChapterList(allPages);
+        noteLoaded();
+    });
 }
 
 // ---- the metadata boxes ------------------------------------------------------

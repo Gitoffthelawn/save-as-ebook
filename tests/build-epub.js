@@ -52,6 +52,20 @@ const chapters = [
             description: 'A description with <angle brackets> & an ampersand.',
             date: '2024-03-01'
         },
+        // Junk typed into the editor for this chapter. Both values are shaped
+        // like the thing they claim to be and neither is one: "1" is not a
+        // script, a region or a variant, and February has no 31st. Nothing here
+        // may reach the package document - the page's own en-US and 2024-03-01
+        // are what the checks below expect - and this is the one-chapter book,
+        // so this chapter is where dc:language and dc:date come from. Before
+        // they were range-checked these produced OPF-092 and OPF-053.
+        metadataOverride: {
+            lang: 'en-1',
+            authors: [],
+            publisher: '',
+            description: '',
+            date: '2024-02-31'
+        },
         styleFileName: 'style0.css',
         styleFileContent: '.a1 {color:rgb(0, 0, 0);font-size:12px;}',
         // Css the user wrote for this one chapter, alongside the book-wide
@@ -261,6 +275,7 @@ if (!sandbox.JSZip && sandbox.window.JSZip) {
     sandbox.JSZip = sandbox.window.JSZip;
 }
 load('utils.js');
+load('cssSanitizer.js');
 load('saveEbook.js');
 
 // ---- build ------------------------------------------------------------------

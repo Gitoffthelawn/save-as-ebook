@@ -117,7 +117,70 @@ window.addEventListener('load', function () {
      getImageSrc(document.getElementById('bad').src), '');
   eq('...and contributes no image to the book', extractedImages.length, 0);
 
-  document.title = 'DONE';
+  // ---- an image that is dropped is reported, not only removed -------------
+
+  // The case this exists for is a cross-origin image server that sends no
+  // Access-Control-Allow-Origin header: the page renders the picture, because
+  // loading an <img> is not a fetch, and the content script's fetch for the
+  // same url rejects. The <img> has to go - a reference to a file the archive
+  // does not contain fails the whole book - but the loss has to be visible.
+  var fetchResults = {};
+  fetchBinaryContent = function (url) {
+    var result = fetchResults[url];
+    return result === undefined ?
+        Promise.reject(new Error('blocked by CORS: ' + url)) :
+        Promise.resolve(result);
+  };
+
+  var pngBytes = bytes(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a);
+  fetchResults['https://cdn.example.com/good.png'] = pngBytes;
+  // types as nothing: downloaded, but no media type to declare for it
+  fetchResults['https://cdn.example.com/untypable'] = bytes(0x00, 0x01, 0x02, 0x03);
+
+  droppedImages = [];
+  extractedImages = [];
+  tmpGlobalContent =
+      '<p><img src="../images/img-1.png" alt="fetched" />' +
+      '<img src="../images/img-2.png" alt="blocked" />' +
+      '<img src="../images/img-3.TODO-EXTRACT" alt="untypable" /></p>';
+
+  Promise.all([
+    deferredAddZip('https://cdn.example.com/good.png', 'img-1.png'),
+    deferredAddZip('https://cdn.example.com/blocked.png', 'img-2.png'),
+    deferredAddZip('https://cdn.example.com/untypable', 'img-3.TODO-EXTRACT')
+  ]).then(function () {
+    // the promise resolves whatever happened - one unreachable image must not
+    // stop the rest of the book from being built
+    eq('the image that downloaded is in the book', extractedImages.length, 1);
+    eq('...and it is the one that was reachable',
+       extractedImages[0].filename, 'img-1.png');
+
+    eq('both unreachable images are reported', droppedImages.length, 2);
+    var byReason = {};
+    droppedImages.forEach(function (image) { byReason[image.reason] = image; });
+    eq('a blocked download is reported as a fetch failure',
+       byReason.fetch && byReason.fetch.url, 'https://cdn.example.com/blocked.png');
+    // the url, not the generated filename: by this point the placeholder has
+    // been rewritten, and the filename means nothing outside the archive anyway
+    eq('an undeclarable type is reported against its url',
+       byReason.type && byReason.type.url, 'https://cdn.example.com/untypable');
+
+    // reporting does not replace the removal - the reference still has to go
+    eq('the dropped <img> tags are still removed',
+       (tmpGlobalContent.match(/<img/g) || []).length, 1);
+    report('the image that survived is the fetched one',
+           tmpGlobalContent.indexOf('img-1.png') > -1, tmpGlobalContent);
+
+    // and a capture that loses nothing says nothing
+    droppedImages = [];
+    return deferredAddZip('https://cdn.example.com/good.png', 'img-4.png');
+  }).then(function () {
+    eq('a capture with no losses reports none', droppedImages.length, 0);
+  }).catch(function (e) {
+    report('the dropped-image checks ran', false, String(e));
+  }).then(function () {
+    document.title = 'DONE';
+  });
 });
 </script>
 </body>

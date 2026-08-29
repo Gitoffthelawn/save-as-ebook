@@ -8,6 +8,13 @@ var tmpGlobalContent = null
 
 var allImages = [];
 var extractedImages = [];
+// The images that were meant to be in this chapter and are not: one entry per
+// <img> whose bytes never arrived. Dropping the tag keeps the book valid (see
+// dropImage), but doing it with no trace is the failure the user cannot tell
+// apart from a page that simply had no picture there - the most common cause is
+// a cross-origin cdn that serves no Access-Control-Allow-Origin header, which
+// the page itself renders fine because an <img> load is not a fetch.
+var droppedImages = [];
 // Resolved image url (or the data uri itself) -> the filename generated for it.
 // A page that shows the same image in several places - a repeated logo, an icon
 // in every list row - would otherwise download, store and index it once per
@@ -279,6 +286,20 @@ function readCanvases(state) {
     });
 }
 
+// A laid-out size is a double, and an <img> in xhtml wants an integer: an icon
+// measuring 16.296875px reaches epubcheck as width="16.296875", which is an
+// error rather than a rounding difference. A size that is not a usable number -
+// a detached or display:none svg measures 0, a broken layout can measure NaN or
+// Infinity - drops the attribute instead of writing a nonsense one, and the
+// image is then sized by the stylesheet like any other.
+function imageDimensionAttribute(name, size) {
+    if (typeof size !== 'number' || !isFinite(size) || size <= 0) {
+        return '';
+    }
+    let rounded = Math.round(size);
+    return rounded > 0 ? ' ' + name + '="' + rounded + '"' : '';
+}
+
 // svg: getBoundingClientRect() needs the live layout - the serialized markup
 // alone renders at the wrong size
 function readSvgs(state) {
@@ -289,8 +310,43 @@ function readSvgs(state) {
             let svgXml = serializer.serializeToString(elem);
             let imgSrc = 'data:image/svg+xml;base64,' + window.btoa(unescape(encodeURIComponent(svgXml)));
             getMark(state, elem).replaceWithHtml =
-                '<img src="' + imgSrc + '" width="' + bbox.width + '" height="' + bbox.height + '"' +
+                '<img src="' + imgSrc + '"' +
+                imageDimensionAttribute('width', bbox.width) +
+                imageDimensionAttribute('height', bbox.height) +
                 altAttribute(accessibleLabel(elem)) + ' />';
+        } catch (e) {
+            console.log('Error:', e);
+        }
+    });
+}
+
+// imgs: a lazily loaded one does not name its picture in the markup - see
+// imageSrcCandidates - and the live element is where the missing half of the
+// answer is. The browser has already applied srcset and sizes and written the
+// candidate it chose into currentSrc, which no later pass can recompute without
+// a viewport, and an image that has finished loading knows whether what it got
+// is a photograph or a pixel.
+//
+// The verdict is applied to the clone, so the live page keeps the placeholder it
+// was displaying.
+function readImages(state) {
+    document.body.querySelectorAll('img').forEach(function (elem) {
+        try {
+            // complete is also true for an image that never had a source, so
+            // the size only means anything once there are bytes behind it. Two
+            // pixels rather than one because a "1x1" spacer is occasionally 2x2
+            // and nothing that small is content.
+            let renderedPlaceholder = elem.complete && elem.naturalWidth > 0 &&
+                                      elem.naturalWidth <= 2 && elem.naturalHeight <= 2;
+            let candidates = imageSrcCandidates(function (name) {
+                return elem.getAttribute(name);
+            }, elem.currentSrc, renderedPlaceholder);
+            // Only the first is written: the rest are the sanitizer's fallbacks
+            // if this one turns out not to resolve, and the attributes holding
+            // them are still on the clone for it to read.
+            if (candidates.length > 0 && candidates[0] !== elem.getAttribute('src')) {
+                getMark(state, elem).imageSrc = candidates[0];
+            }
         } catch (e) {
             console.log('Error:', e);
         }
@@ -435,6 +491,7 @@ function readLivePage(includeStyle, appliedStyles, styleSnapshot) {
         // rest of the subtree.
         readMathMl(state);
         readSvgs(state);
+        readImages(state);
         readVisibilityAndCss(state, includeStyle, appliedStyles);
     } catch (e) {
         console.log('Error:', e);
@@ -459,6 +516,22 @@ function clearLiveMarks(state) {
 
 ///// Reader mode - an optional step between the clone and the write phase
 
+// Writes the read phase's answer onto a cloned <img>. srcset goes with it: the
+// candidates it lists are the ones this src was chosen from, and leaving it
+// behind lets the browser pick a different one again while the clone is still
+// loading. Applied twice on the reader-mode path, which is why it is written to
+// be idempotent.
+function setResolvedImageSrc(elem, imageSrc) {
+    try {
+        if (elem.getAttribute('src') !== imageSrc) {
+            elem.setAttribute('src', imageSrc);
+        }
+        elem.removeAttribute('srcset');
+    } catch (e) {
+        console.log('Error:', e);
+    }
+}
+
 // Applies to the clone the verdicts that change the shape of the tree, in the
 // same precedence applyReadState() uses. Only reader mode needs this: it is the
 // write phase running early, on the nodes Readability is about to score.
@@ -482,6 +555,12 @@ function applyStructuralMarks(cloneRoot, state) {
         if (mark.hidden) {
             elem.remove();
             return;
+        }
+        if (mark.imageSrc) {
+            // Readability scores an image by what it points at and promotes
+            // lazy attributes of its own, so the resolved source has to be in
+            // place before it runs rather than after it.
+            setResolvedImageSrc(elem, mark.imageSrc);
         }
         if (mark.replaceWithHtml) {
             elem.removeAttribute(SAE_MARK_ATTR);
@@ -713,6 +792,9 @@ function applyReadState(cloneRoot, state) {
                 elem.setAttribute('data-class', mark.cssClassName);
             }
         }
+        if (mark.imageSrc) {
+            setResolvedImageSrc(elem, mark.imageSrc);
+        }
         if (mark.replaceWithHtml) {
             // no-op when the element was already dropped with an ancestor
             replaceElementWithHTML(elem, mark.replaceWithHtml);
@@ -872,8 +954,14 @@ function getSelectedNodes() {
 // them behind points the content at a file that is not in the book, which fails
 // validation for the whole thing - a strictly worse outcome than one missing
 // picture, and the reason both exits below call this rather than only logging.
-function dropImage(filename) {
+//
+// The url, not the filename, is what gets recorded: the filename is generated
+// here and means nothing outside the archive, and in the placeholder case it has
+// already been rewritten by the time the drop happens. The url is what the user
+// can go and look at.
+function dropImage(filename, url, reason) {
     tmpGlobalContent = removeImgTags(tmpGlobalContent, filename);
+    droppedImages.push({url: url || '', reason: reason});
 }
 
 // Always resolves - one image that cannot be downloaded must not stop the rest
@@ -886,7 +974,7 @@ function deferredAddZip(url, filename) {
                 // A format no reading system is required to render - or not an
                 // image at all. Either way there is no media type to declare.
                 console.log("Error! Unable to extract the image type!");
-                dropImage(filename);
+                dropImage(filename, url, 'type');
                 return;
             }
             let oldFilename = filename
@@ -904,7 +992,7 @@ function deferredAddZip(url, filename) {
     }).catch((err) => {
         console.log('Error:', err);
         // filename is whatever it was rewritten to above, if it got that far
-        dropImage(filename);
+        dropImage(filename, url, 'fetch');
     });
 }
 
@@ -913,10 +1001,13 @@ function deferredAddZip(url, filename) {
 // was closed or navigated away stops, and the background reclaims it.
 var HEARTBEAT_INTERVAL = 5000;
 
-function startHeartbeat() {
+// The job id is the one the background sent with the extraction request, so a
+// heartbeat from an extraction that outlived its job cannot extend the job that
+// replaced it.
+function startHeartbeat(jobId) {
     let send = () => {
         try {
-            chrome.runtime.sendMessage({type: 'job-heartbeat'}, () => {
+            chrome.runtime.sendMessage({type: 'job-heartbeat', jobId: jobId}, () => {
                 // the background may be asleep or gone - nothing to do
                 void chrome.runtime.lastError;
             });
@@ -1250,6 +1341,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // several ranges calls getContent() for each one.
     allImages = [];
     extractedImages = [];
+    droppedImages = [];
     imageFileNames.clear();
     classNameToCss.clear();
     cssToClassName.clear();
@@ -1257,7 +1349,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     // Downloading the images can take far longer than the background's job
     // timeout, so tell it we are still alive while they run.
-    let heartbeat = startHeartbeat();
+    let heartbeat = startHeartbeat(request.jobId);
 
     // read phase: <head> is gone from the clone, and a single-page app can
     // rewrite it while the images download
@@ -1310,6 +1402,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             sourceUrl: getPageSourceUrl(),
             metadata: pageMetadata,
             styleFileContent: styleFile,
+            // as with url above: a label on the stored record, not the name the
+            // stylesheet is written into the archive under. buildEbook() derives
+            // that from the chapter's position, because a random number is not
+            // unique and one stylesheet overwriting another is silent.
             styleFileName: 'style' + generateRandomNumber() + '.css',
             images: extractedImages,
             content: tmpGlobalContent
@@ -1318,6 +1414,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         // and how a chapter was extracted is not part of what a chapter is.
         if (readerModeFailed) {
             result.readerModeFailed = true;
+        }
+        // Same rule, same reason: absent unless something was actually lost. The
+        // urls travel with the chapter rather than only being logged, so that a
+        // user who reads the warning after the editor has already opened still
+        // has a way to find out which pictures are missing.
+        if (droppedImages.length > 0) {
+            result.droppedImages = droppedImages.slice();
         }
         sendResponse(result);
     }).catch((e) => {

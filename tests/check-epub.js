@@ -70,10 +70,24 @@ JSZip.loadAsync(raw).then(async (zip) => {
     check('every chapter contributes a dc:source', sources.length > 0, sources.join(', '));
 
     // dc:language is read from the page, so a page with lang="javascript" must
-    // not be able to put that in the package document
+    // not be able to put that in the package document. The grammar is spelled
+    // out here rather than borrowed from utils.js: this file is the independent
+    // reader of the built book, and a check that reuses the code that wrote the
+    // value can only ever agree with it. Subtags are positional - "en-1" is
+    // alphanumeric and still not a tag, which is what epubcheck says with
+    // OPF-092.
+    const LANGTAG = new RegExp(
+        '^[a-z]{2,3}' +                          // language
+        '(-[a-z]{3}){0,3}' +                     // extlang
+        '(-[a-z]{4})?' +                         // script
+        '(-([a-z]{2}|[0-9]{3}))?' +              // region
+        '(-([a-z0-9]{5,8}|[0-9][a-z0-9]{3}))*' + // variant
+        '(-[a-wy-z0-9](-[a-z0-9]{2,8})+)*' +     // extension
+        '(-x(-[a-z0-9]{1,8})+)?$',               // private use
+        'i');
     const language = (opf.match(/<dc:language>([^<]*)<\/dc:language>/) || [])[1];
     check('dc:language is a well-formed language tag',
-          /^[a-z]{2,3}(-[a-zA-Z0-9]{1,8})*$/.test(language || ''), language);
+          LANGTAG.test(language || ''), language);
 
     // an empty element is how a metadata field that was scraped as '' reaches
     // the file - readers show it as a blank author or publisher
@@ -90,9 +104,27 @@ JSZip.loadAsync(raw).then(async (zip) => {
     // dc:date and dcterms:created must be W3C-DTF or a reader shows no date
     const dates = [...opf.matchAll(/<dc:date>([^<]*)<\/dc:date>/g)].map((m) => m[1])
         .concat([...opf.matchAll(/property="dcterms:(?:created|modified)">([^<]*)</g)].map((m) => m[1]));
-    const badDates = dates.filter((d) =>
-        !/^\d{4}(-\d{2}(-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2}))?)?)?$/.test(d));
-    check('every date is W3C-DTF', badDates.length === 0, badDates.join(', '));
+    // The shape and then the fields, because a shape test alone passes
+    // "2024-02-31" and "2024-01-01T29:70Z" - both of which epubcheck reports on
+    // dc:date as OPF-053.
+    const badDates = dates.filter((d) => {
+        if (!/^\d{4}(-\d{2}(-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2}))?)?)?$/.test(d)) {
+            return true;
+        }
+        // Not new Date(): it rolls a day over rather than rejecting it, so
+        // "2024-02-31" parses as March 2nd and the bug this is here to catch
+        // reads as a pass.
+        const [, year, month, day, hour, minute, second] =
+            /^(\d{4})(?:-(\d{2})(?:-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?)?)?/.exec(d);
+        const leap = (+year % 4 === 0 && +year % 100 !== 0) || +year % 400 === 0;
+        const lengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        if (month !== undefined && (+month < 1 || +month > 12)) return true;
+        if (day !== undefined && (+day < 1 || +day > lengths[+month - 1])) return true;
+        return hour !== undefined &&
+               (+hour > 23 || +minute > 59 || (second !== undefined && +second > 59));
+    });
+    check('every date is a real moment in W3C-DTF', badDates.length === 0,
+          badDates.join(', '));
 
     // every manifest item must have a file behind it, and a unique id
     const items = [...opf.matchAll(/<item\s+([^>]*)\/>/g)].map((m) => ({
@@ -110,6 +142,15 @@ JSZip.loadAsync(raw).then(async (zip) => {
     const ids = items.map((i) => i.id);
     const dupes = ids.filter((id, i) => ids.indexOf(id) !== i);
     check('manifest ids are unique', dupes.length === 0, dupes.join(', '));
+
+    // Two items naming one file is what a chapter overwritten by the chapter
+    // after it looks like from outside: the archive holds the later one, the
+    // package claims both, and the reader is told about a chapter that is not
+    // in the book. epubcheck reports it as OPF-074.
+    const hrefs = items.map((i) => i.href);
+    const sharedHrefs = hrefs.filter((href, i) => hrefs.indexOf(href) !== i);
+    check('no two manifest items name the same file', sharedHrefs.length === 0,
+          sharedHrefs.join(', '));
 
     // An item whose type could not be worked out used to be declared anyway, as
     // media-type="image/" - one unrecognized picture invalidating the whole
@@ -138,11 +179,14 @@ JSZip.loadAsync(raw).then(async (zip) => {
     check('manifest media types match their files', mistyped.length === 0,
           mistyped.map((i) => i.href + ' is ' + i.mediaType).join(', '));
 
-    // webp is a core image type in epub 3.3, so it is embedded as it arrived
+    // webp is a core image type in epub 3.3, so it is embedded as it arrived.
+    // Vacuously true for a book with no webp in it - this runs over books of
+    // several shapes now, and a text-only one has no images to declare at all.
+    // That a webp survives the build at all is asserted in epub-builder.js.
     const webp = items.filter((i) => /\.webp$/i.test(i.href || ''));
     check('webp images are declared image/webp',
-          webp.length > 0 && webp.every((i) => /media-type="image\/webp"/.test(i.attrs)),
-          webp.map((i) => i.attrs).join(' | '));
+          webp.every((i) => /media-type="image\/webp"/.test(i.attrs)),
+          webp.length === 0 ? 'no webp in this book' : webp.map((i) => i.attrs).join(' | '));
 
     // refines targets are built from the chapter index, so a change to how
     // manifest ids are named silently detaches all of the per-chapter metadata

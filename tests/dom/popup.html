@@ -35,6 +35,9 @@ function fixtureLibrary() {
 
 var sent = [];
 var saved = [];
+// what menu.js registers for popup-close and popup-failed, so a test can play
+// the background's part and send one
+var messageListeners = [];
 var opened = [];
 var includeStyle = true;
 // What the background has on hand for the library to preview. Null unless a test
@@ -44,7 +47,7 @@ var snapshot = null;
 
 window.chrome = {
   runtime: {
-    onMessage: {addListener: function(){}},
+    onMessage: {addListener: function(l){ messageListeners.push(l); }},
     lastError: null,
     getURL: function(p){ return 'chrome-extension://fake/' + p; },
     sendMessage: function(msg, cb) {
@@ -97,6 +100,7 @@ for (var node of Array.prototype.slice.call(markup.body.childNodes)) {
 
 <!-- the same list menu.html loads, in the same order -->
 <script src="../../web-extension/utils.js"></script>
+<script src="../../web-extension/cssSanitizer.js"></script>
 <script src="../../web-extension/styleLibrary.js"></script>
 <script src="../../web-extension/menu.js"></script>
 
@@ -235,6 +239,25 @@ function afterToggle() {
                                        encodeURIComponent(TARGET_URL),
          opened.join('|'));
 
+  // ---- what a save does to the book already buffered ----
+  //
+  // It used to remove it from here, before the command had been sent, let alone
+  // accepted: a save onto a chrome:// tab, or while another capture was running,
+  // took the user's collected chapters with it and produced nothing. The popup
+  // does not know whether the command can run, so it does not get to decide -
+  // the background replaces the book once it has a chapter in hand.
+  for (var command of ['savePage', 'saveSelection', 'pageChapter', 'selectionChapter']) {
+    var sentBeforeSave = sent.length;
+    document.getElementById(command).click();
+    var afterSave = sent.slice(sentBeforeSave);
+    report(command + ' sends its command and discards nothing on the way',
+           afterSave.indexOf('remove') < 0 && afterSave.length > 0,
+           afterSave.join('|'));
+  }
+  report('a save still puts the popup into its waiting state',
+         document.getElementById('busy').style.display === 'block');
+  document.getElementById('busy').style.display = 'none';
+
   // ---- a page nothing covers ----
   //
   // The real predicate against a different url, rather than a second fixture:
@@ -275,6 +298,53 @@ function afterToggle() {
          rowNames().join('|') === 'Serif Reading|Example Site|Switched Off|Example Articles' &&
          !document.getElementById('currentStylesNone'),
          rowNames().join('|'));
+
+  // ---- a command that never started ----
+  //
+  // The popup is put into its waiting state by the click, and taken out of it by
+  // the background: normally by popup-close when the job ends. A command refused
+  // before a job exists - a chrome:// tab, a capture already running - has no job
+  // to end, so it says so instead. Without that the spinner ran until the user
+  // dismissed the popup, over a save that was not happening.
+  function sendToPopup(message) {
+    for (var listener of messageListeners) { listener(message, {}, function(){}); }
+  }
+
+  for (var failure of [{reason: 'restricted-tab', text: 'restrictedTabMessage'},
+                       {reason: 'busy', text: 'busyMessage'},
+                       {reason: 'no-tab', text: 'noTabMessage'}]) {
+    document.getElementById('savePage').click();
+    var spinning = document.getElementById('busy').style.display === 'block';
+    sendToPopup({type: 'popup-failed', reason: failure.reason});
+    var failed = document.getElementById('failedMessage');
+    report(failure.reason + ' stops the spinner and says why',
+           spinning &&
+           document.getElementById('busy').style.display === 'none' &&
+           failed.style.display === 'block' &&
+           failed.textContent === failure.text,
+           document.getElementById('busy').style.display + '|' +
+           failed.style.display + '|' + failed.textContent);
+  }
+
+  // The next command clears the last one's verdict - it says nothing about this
+  // one - and the popup is usable again rather than sitting behind an overlay.
+  document.getElementById('savePage').click();
+  report('the next command clears the message and waits again',
+         document.getElementById('failedMessage').style.display === 'none' &&
+         document.getElementById('busy').style.display === 'block',
+         document.getElementById('failedMessage').style.display + '|' +
+         document.getElementById('busy').style.display);
+
+  // A reason this popup has no string for leaves the busy state alone: the
+  // spinner is a worse outcome than a wrong message only until the message is
+  // the raw key, which is what showing an unknown reason would print.
+  sendToPopup({type: 'popup-failed', reason: 'something-later'});
+  report('an unrecognised reason is not rendered as its own key',
+         document.getElementById('failedMessage').style.display === 'none' &&
+         document.getElementById('busy').style.display === 'block',
+         document.getElementById('failedMessage').style.display + '|' +
+         document.getElementById('busy').style.display);
+  document.getElementById('busy').style.display = 'none';
 
   report('nothing threw', errors.length === 0, errors.join(' | '));
   document.title = 'DONE';

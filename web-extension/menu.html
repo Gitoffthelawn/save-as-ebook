@@ -81,6 +81,22 @@
       padding: 5px;
     }
 
+    /* A command that ended before it started, said in the popup because the
+       content script that shows the extension's other messages is the thing a
+       restricted tab does not have. Not an overlay: the menu stays usable, so
+       the user can go straight to another action. */
+    #failedMessage {
+      display: none;
+      font-family: sans-serif;
+      font-size: 12px;
+      line-height: 1.4;
+      color: #7f1d1d;
+      background-color: #fdecea;
+      border-left: 3px solid #d93025;
+      margin: 4px 5px 0 5px;
+      padding: 6px 8px;
+    }
+
     @keyframes rotate {
       0% {
         transform: rotate(0deg);
@@ -191,6 +207,7 @@
 <body>
   <div class="menu-holder">
     <div id="menuTitle"></div>
+    <div id="failedMessage"></div>
     <hr/>
     <div class="optionContainer" id="includeStyleOption">
         <input type="checkbox" name="button" id="includeStyleCheck"></input><span id="includeStyle"></span>
@@ -239,6 +256,7 @@
        on and off, so it needs the same matcher the capture path uses - and the
        message wrappers that read and write the library. -->
   <script src="utils.js" charset="utf-8"></script>
+  <script src="cssSanitizer.js" charset="utf-8"></script>
   <script src="styleLibrary.js" charset="utf-8"></script>
   <script src="menu.js" charset="utf-8"></script>
 </body>

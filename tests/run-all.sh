@@ -45,6 +45,22 @@ for build in "fixture.epub" "single.epub --single"; do
     ./run-epubcheck.sh "out/$1" || status=1
 done
 
+# A book with no images at all: every reader-mode article that illustrates
+# nothing, and most plain saves. It is the one shape that used to ship an empty
+# OEBPS/images/ directory, so it is held to a warning-free run rather than only
+# an error-free one.
+echo
+echo "### building out/text-only.epub (a book with no images)"
+node build-epub.js out/text-only.epub --chapters text-only-chapters.json || status=1
+
+echo
+echo "### epub structure: text-only.epub"
+node check-epub.js "out/text-only.epub" || status=1
+
+echo
+echo "### EPUBCheck: text-only.epub, warning-free"
+./run-epubcheck.sh out/text-only.epub --strict || status=1
+
 # The build stage relies on invariants the extraction pipeline guarantees. Once
 # a user has edited the content in a live DOM, the only thing standing between
 # that DOM and an unparseable chapter is the shared sanitizer - and EPUBCheck is

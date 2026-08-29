@@ -27,7 +27,7 @@ const sandbox = {
     chrome: {runtime: {onMessage: {addListener: () => {}}, sendMessage: () => {}, lastError: null}}
 };
 vm.createContext(sandbox);
-for (const file of ['utils.js', 'saveEbook.js']) {
+for (const file of ['utils.js', 'cssSanitizer.js', 'saveEbook.js']) {
     vm.runInContext(fs.readFileSync(path.join(EXT, file), 'utf8'), sandbox, {filename: file});
 }
 

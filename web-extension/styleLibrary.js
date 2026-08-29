@@ -7,6 +7,9 @@
 // has one answer instead of one per caller. Nothing here touches chrome.* or the
 // DOM: the matcher and the migration are the two things that have to be right,
 // and both are testable on their own.
+//
+// Its one dependency is cssSanitizer.js, which the import path below calls and
+// which is loaded alongside this file everywhere this file is.
 
 // Bumped when the stored shape changes. A library written by a later version is
 // read as best it can be but never rewritten - see migrateStyleLibrary.
@@ -38,10 +41,17 @@ function normalizeUrlForMatch(url) {
     if (!url || typeof url !== 'string') {
         return '';
     }
-    return url.trim()
-              .replace(/^[a-z][a-z0-9+.\-]*:\/\//i, '')
-              .replace(/^www\./i, '')
-              .toLowerCase();
+    let normalized = url.trim()
+                        .replace(/^[a-z][a-z0-9+.\-]*:\/\//i, '')
+                        .replace(/^www\./i, '')
+                        .toLowerCase();
+    // Capped rather than refused. Every pattern type here reads the front of the
+    // url - a domain is at the start of it, prefix and glob are anchored there,
+    // and a regex written against a page is written against something near it -
+    // so the tail of a url longer than any real page's decides nothing, and
+    // dropping it bounds how much text a pattern can be made to chew through.
+    return normalized.length > MAX_MATCH_URL_LENGTH ?
+           normalized.substring(0, MAX_MATCH_URL_LENGTH) : normalized;
 }
 
 // The host of an already normalized url. Userinfo and port are dropped so that
@@ -65,14 +75,183 @@ function compileRegExp(source) {
     }
 }
 
-function escapeRegExpChars(text) {
-    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// ---- what a match rule is allowed to cost ---------------------------------
+//
+// selectStylesForUrl runs every stored pattern against the url on every capture,
+// in the service worker - the one thing that can finish the job, clear the badge
+// and answer the popup. A regex has no timeout, and a worker has nothing that
+// can interrupt one: a pattern like "(a+)+b", tried against a url that nearly
+// matches, does not come back, and the extension is wedged until the browser
+// restarts it. The patterns are not all the user's own, either. Every style
+// migrated from v1 is a regex by construction, and an imported file is one
+// somebody else wrote.
+//
+// So the cost of a match is bounded from three directions: the url is capped
+// above, patterns are capped in length here, and a regex whose *shape* can
+// backtrack exponentially is refused outright.
+var MAX_STYLE_PATTERN_LENGTH = 500;
+var MAX_MATCH_URL_LENGTH = 1024;
+
+// Unbounded repeats a single pattern may hold. Nesting is the expensive case,
+// but repeats in sequence are not free either: ".*x.*x.*x.*y" against a url that
+// never matches is polynomial in the url's length, with the number of repeats
+// for an exponent.
+var MAX_UNBOUNDED_QUANTIFIERS = 4;
+
+// A {n,m} counting this high is read as unbounded: "(a+){20}" backtracks like
+// "(a+)+" does, and no url pattern needs to count that far.
+var MAX_SAFE_REPEAT = 10;
+
+// The length of the quantifier at `index`, if it is one that can repeat without
+// a small ceiling; 0 for anything else - including "?", which is bounded, and a
+// brace that is not a repeat at all ("{abc}" is literal text in a JS regex).
+function unboundedQuantifierLength(pattern, index) {
+    let ch = pattern.charAt(index);
+    if (ch === '*' || ch === '+') {
+        return 1;
+    }
+    if (ch !== '{') {
+        return 0;
+    }
+    let end = pattern.indexOf('}', index);
+    if (end === -1) {
+        return 0;
+    }
+    let body = pattern.substring(index + 1, end);
+    // "{,5}" is literal too - a JS repeat has to start with a number
+    if (!/^[0-9]+(,[0-9]*)?$/.test(body)) {
+        return 0;
+    }
+    let parts = body.split(',');
+    let max = parts.length > 1 ?
+              (parts[1] === '' ? Infinity : parseInt(parts[1], 10)) :
+              parseInt(parts[0], 10);
+    return max >= MAX_SAFE_REPEAT ? (end - index + 1) : 0;
 }
 
-// Only "*" is a wildcard. "?" is left alone deliberately: it is the query
-// separator, and a pattern like "example.com/?page=2" has to mean what it says.
-function globToRegExpSource(pattern) {
-    return escapeRegExpChars(pattern).replace(/\\\*/g, '.*');
+// Whether a group's body is something a repeat around it could match more than
+// one way: another unbounded repeat, or a choice. Those are the two shapes that
+// give the engine somewhere to backtrack to.
+function bodyCanRepeat(body) {
+    let inClass = false;
+    for (let i = 0; i < body.length; i++) {
+        let ch = body.charAt(i);
+        if (ch === '\\') {
+            i++;
+        } else if (inClass) {
+            inClass = ch !== ']';
+        } else if (ch === '[') {
+            inClass = true;
+        } else if (ch === '|' || unboundedQuantifierLength(body, i) > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Whether a regex is one the worker can afford to run, as a code naming why not:
+// '' for a pattern that is fine, 'length' for one over the cap, 'backtracking'
+// for one whose shape can take exponential - or steeply polynomial - time.
+//
+// This is a heuristic, and deliberately the blunt one. Whether two branches of an
+// alternation actually overlap is not a question a scanner can answer, so a
+// repeat wrapped around anything that can itself repeat, or around a choice, is
+// refused whether or not it would have been slow. That turns away patterns that
+// were fine - "(foo|bar)+" is harmless - and each of those can be written another
+// way, usually as the glob or prefix the author meant. Refusing a safe pattern
+// costs one style; accepting an unsafe one costs the extension.
+//
+// It is a mitigation and not a proof. The durable fix is a matcher that cannot
+// backtrack at all, or an execution context that can be killed; a service worker
+// offers neither.
+function regexPatternRisk(source) {
+    let pattern = String(source === undefined || source === null ? '' : source);
+    if (pattern.length > MAX_STYLE_PATTERN_LENGTH) {
+        return 'length';
+    }
+
+    let groupStarts = [];
+    let unbounded = 0;
+    let inClass = false;
+
+    for (let i = 0; i < pattern.length; i++) {
+        let ch = pattern.charAt(i);
+        if (ch === '\\') {
+            i++;
+            continue;
+        }
+        if (inClass) {
+            inClass = ch !== ']';
+            continue;
+        }
+        if (ch === '[') {
+            inClass = true;
+            continue;
+        }
+        if (ch === '(') {
+            groupStarts.push(i);
+            continue;
+        }
+        if (ch === ')') {
+            // an unbalanced ")" is a pattern that will not compile; the scan
+            // leaves saying so to compileRegExp
+            let start = groupStarts.length > 0 ? groupStarts.pop() : -1;
+            if (start > -1 && unboundedQuantifierLength(pattern, i + 1) > 0 &&
+                bodyCanRepeat(pattern.substring(start + 1, i))) {
+                return 'backtracking';
+            }
+            continue;
+        }
+        // the quantifier that closed a group is reached here, as the character
+        // after the ")", and counts like any other
+        let quantifier = unboundedQuantifierLength(pattern, i);
+        if (quantifier > 0) {
+            unbounded++;
+            if (unbounded > MAX_UNBOUNDED_QUANTIFIERS) {
+                return 'backtracking';
+            }
+            i += quantifier - 1;
+        }
+    }
+
+    return '';
+}
+
+// The compiled pattern, or null if it does not compile *or* is one of the above.
+// Both are the same answer as far as matching is concerned - see styleMatchesUrl.
+function compileSafeRegExp(source) {
+    return regexPatternRisk(source) === '' ? compileRegExp(source) : null;
+}
+
+// Glob matching without a regex, so that a pattern cannot cost more than the url
+// is long however many wildcards are in it - "^.*x.*x.*x.*y" is the polynomial
+// case above, and a glob is the one pattern type a user is meant to reach for.
+//
+// "*" is the only wildcard, which is what makes the linear form possible: the
+// pieces between the wildcards have to appear in order, the first has to be at
+// the start, and taking the earliest occurrence of each is always as good as any
+// later one. "?" is not a wildcard deliberately: it is the query separator, and
+// a pattern like "example.com/?page=2" has to mean what it says.
+function globMatchesUrl(pattern, normalizedUrl) {
+    let pieces = pattern.split('*');
+    let at = 0;
+
+    for (let index = 0; index < pieces.length; index++) {
+        let piece = pieces[index];
+        if (piece === '') {
+            continue;
+        }
+        // anchored at the start, open at the end
+        let found = index === 0 ?
+                    (normalizedUrl.indexOf(piece) === 0 ? 0 : -1) :
+                    normalizedUrl.indexOf(piece, at);
+        if (found === -1) {
+            return false;
+        }
+        at = found + piece.length;
+    }
+
+    return true;
 }
 
 // Whether one match rule covers a url that normalizeUrlForMatch has already been
@@ -105,12 +284,14 @@ function styleMatchesUrl(match, normalizedUrl) {
     // Anchored at the start and open at the end, so "reddit.com/r/*/comments"
     // covers the whole thread url rather than only the shortest form of it.
     if (match.type === 'glob') {
-        let globRegex = compileRegExp('^' + globToRegExpSource(normalizeUrlForMatch(pattern)));
-        return !!globRegex && globRegex.test(normalizedUrl);
+        return globMatchesUrl(normalizeUrlForMatch(pattern), normalizedUrl);
     }
 
-    // regex, unanchored - which is how v1 tested them
-    let regex = compileRegExp(pattern);
+    // regex, unanchored - which is how v1 tested them. A pattern the worker
+    // cannot afford to run matches nothing, for the same reason one that does
+    // not compile matches nothing: styling no page is something the user can
+    // see and fix, and a wedged service worker is not.
+    let regex = compileSafeRegExp(pattern);
     return !!regex && regex.test(normalizedUrl);
 }
 
@@ -738,59 +919,18 @@ function styleExportFileName(title) {
 // That is a tracking beacon fired by a file the user was invited to trust, and
 // there is nothing a site style needs a remote resource for.
 //
-// saveEbook.js removes the same two constructs from the stylesheets that go into
-// a book, for reasons of its own (an epub has to read offline, and a remote
-// reference has to be declared). The rules are deliberately spelled out again
-// here rather than shared: that file writes ebooks and is not loaded by the
-// service worker, and this one has to report what it took out so that the user
-// is told rather than quietly protected.
-
-var STYLE_IMPORT_REGEX = /@import\b(?:[^;{}'"]|'[^']*'|"[^"]*")*(?:;|(?=\})|$)/gi;
-var STYLE_URL_REGEX = /\burl\(\s*(?:"([^"]*)"|'([^']*)'|([^)"'\s]*))\s*\)/gi;
-
-// Anything with a scheme, plus the scheme-relative "//host/path" form. A data:
-// url is the resource itself rather than an address to fetch it from, and a
-// relative one cannot leave the page the style is running on.
-function isRemoteStyleUrl(target) {
-    let value = String(target === undefined || target === null ? '' : target).trim();
-    if (/^data:/i.test(value)) {
-        return false;
-    }
-    return /^(?:[a-z][a-z0-9+.\-]*:|\/\/)/i.test(value);
-}
-
-// The css with those references gone, and the list of what went - the second
-// half being the point: a style that quietly does less than the file said is
-// worse than one that says what was dropped from it.
+// saveEbook.js removes the same constructs from the stylesheets that go into a
+// book, for reasons of its own (an epub has to read offline, and a remote
+// reference has to be declared). Both call cssSanitizer.js, which is where the
+// rule and the reasoning behind it live: a stylesheet has more than one way to
+// name an address - url(), image-set(), a custom property holding a string, an
+// identifier spelled with css escapes - and finding all of them takes a
+// tokenizer, which is not a thing worth writing twice.
 //
-// A removed url() becomes 'none' rather than nothing, for the reason saveEbook.js
-// gives: an empty value takes the whole declaration - and any fallback beside it
-// - down with it.
+// What this call site adds is the report. The user is told what was taken out of
+// a file they were given, rather than quietly protected from it.
 function stripRemoteCssReferences(css) {
-    let removed = [];
-    let note = (reference) => {
-        let text = String(reference).replace(/\s+/g, ' ').trim();
-        if (text !== '' && removed.indexOf(text) < 0) {
-            removed.push(text);
-        }
-    };
-
-    let cleaned = String(css === undefined || css === null ? '' : css)
-        .replace(STYLE_IMPORT_REGEX, (rule) => {
-            note(rule);
-            return '';
-        })
-        .replace(STYLE_URL_REGEX, (rule, quoted, single, bare) => {
-            let target = quoted !== undefined ? quoted :
-                         single !== undefined ? single : bare;
-            if (!isRemoteStyleUrl(target)) {
-                return rule;
-            }
-            note(target);
-            return 'none';
-        });
-
-    return {css: cleaned, removed: removed};
+    return sanitizeCssResources(css);
 }
 
 // The styles in a file somebody was given, or in text they pasted.
@@ -812,13 +952,18 @@ function stripRemoteCssReferences(css) {
 // The id is otherwise kept, which is what makes importing a newer copy of a
 // style an update to the one already here rather than a second copy of it.
 //
+// A regex the matcher will not run - see regexPatternRisk - is reported the same
+// way the stripped css is. The style is imported all the same, because the
+// pattern is the only part of it that is unusable and the user can rewrite that;
+// what would not be honest is letting a style in that quietly never applies.
+//
 // `error` is a code rather than a sentence: this file has no messages in it.
 function readStyleImport(text) {
     let parsed = null;
     try {
         parsed = JSON.parse(String(text === undefined || text === null ? '' : text));
     } catch (e) {
-        return {error: 'unreadable', entries: [], stripped: []};
+        return {error: 'unreadable', entries: [], stripped: [], unusable: []};
     }
 
     let source = null;
@@ -828,11 +973,12 @@ function readStyleImport(text) {
         source = Array.isArray(parsed.entries) ? parsed.entries : [parsed];
     } else {
         // a number, a string, a bare null - json, but not a style
-        return {error: 'unreadable', entries: [], stripped: []};
+        return {error: 'unreadable', entries: [], stripped: [], unusable: []};
     }
 
     let entries = [];
     let stripped = [];
+    let unusable = [];
     for (let raw of source) {
         if (!raw || typeof raw !== 'object') {
             continue;
@@ -852,12 +998,18 @@ function readStyleImport(text) {
         if (clean.removed.length > 0) {
             stripped.push({title: entry.title, references: clean.removed});
         }
+
+        let risk = entry.scope === 'site' && entry.match.type === 'regex' ?
+                   regexPatternRisk(entry.match.pattern) : '';
+        if (risk !== '') {
+            unusable.push({title: entry.title, pattern: entry.match.pattern, reason: risk});
+        }
     }
 
     if (entries.length === 0) {
-        return {error: 'empty', entries: [], stripped: []};
+        return {error: 'empty', entries: [], stripped: [], unusable: []};
     }
-    return {error: '', entries: entries, stripped: stripped};
+    return {error: '', entries: entries, stripped: stripped, unusable: unusable};
 }
 
 // What importing these would do to this library, so that it can be said before

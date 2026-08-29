@@ -11,8 +11,10 @@
          the page able to read everything it did. It is an extension page now. -->
     <script src="libs/jszip.js"></script>
     <script src="utils.js"></script>
-    <!-- the same sanitizer the content script runs, so that content this page
-         writes satisfies the invariants the build stage relies on -->
+    <!-- the same sanitizers the content script runs, so that the content and the
+         stylesheets this page writes satisfy the invariants the build stage
+         relies on -->
+    <script src="cssSanitizer.js"></script>
     <script src="sanitizeHtml.js"></script>
     <script src="saveEbook.js"></script>
     <!-- renders one chapter the way the build writes it, for the preview panel -->

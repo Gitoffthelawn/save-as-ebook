@@ -1,8 +1,33 @@
-function setIncludeStyle(includeStyle) {
+// What every setter below hands its callback: null when the write landed, and a
+// string saying why when it did not. The background answers each write with
+// {ok: true} or {ok: false, error} - see storageSet() there - and a message that
+// was never answered at all (the worker torn down mid-write, the page outliving
+// it) is a failure too, which is what the lastError read is for.
+//
+// It exists so that a page cannot report success by leaving an argument out:
+// every caller that tells the user something was saved has to look at this
+// first.
+function storageWriteError(response) {
+    // reading it is also what keeps it from being logged as unchecked
+    let lastError = chrome.runtime.lastError;
+    if (!response) {
+        return lastError && lastError.message ? lastError.message :
+               'the extension could not be reached';
+    }
+    if (response.ok === false) {
+        return response.error || 'storage write failed';
+    }
+    return null;
+}
+
+function setIncludeStyle(includeStyle, callback) {
     chrome.runtime.sendMessage({
         type: "set include style",
         includeStyle: includeStyle
     }, function(response) {
+        if (callback) {
+            callback(storageWriteError(response));
+        }
     });
 }
 
@@ -34,7 +59,7 @@ function saveStyleLibrary(library, callback) {
         library: library
     }, function(response) {
         if (callback) {
-            callback();
+            callback(storageWriteError(response));
         }
     });
 }
@@ -55,7 +80,7 @@ function clearStyleSnapshot(callback) {
         type: "clear style snapshot"
     }, function(response) {
         if (callback) {
-            callback();
+            callback(storageWriteError(response));
         }
     });
 }
@@ -68,11 +93,14 @@ function getEbookTitle(callback) {
     });
 }
 
-function saveEbookTitle(title) {
+function saveEbookTitle(title, callback) {
     chrome.runtime.sendMessage({
         type: "set title",
         title: title
     }, function(response) {
+        if (callback) {
+            callback(storageWriteError(response));
+        }
     });
 }
 
@@ -89,11 +117,14 @@ function getBookCss(callback) {
     });
 }
 
-function saveBookCss(css) {
+function saveBookCss(css, callback) {
     chrome.runtime.sendMessage({
         type: "set book css",
         css: css
     }, function(response) {
+        if (callback) {
+            callback(storageWriteError(response));
+        }
     });
 }
 
@@ -115,11 +146,14 @@ function getBookMetadata(callback) {
     });
 }
 
-function saveBookMetadata(metadata) {
+function saveBookMetadata(metadata, callback) {
     chrome.runtime.sendMessage({
         type: "set book metadata",
         metadata: metadata
     }, function(response) {
+        if (callback) {
+            callback(storageWriteError(response));
+        }
     });
 }
 
@@ -161,11 +195,15 @@ function getEbookPages(callback) {
     });
 }
 
-function saveEbookPages(pages) {
+function saveEbookPages(pages, callback) {
     chrome.runtime.sendMessage({
         type: "set",
         pages: pages
-    }, function(response) {});
+    }, function(response) {
+        if (callback) {
+            callback(storageWriteError(response));
+        }
+    });
 }
 
 // Discards the chapters, the title, the identifier and the stylesheet written
@@ -177,7 +215,7 @@ function removeEbook(callback) {
         type: "remove"
     }, function(response) {
         if (callback) {
-            callback();
+            callback(storageWriteError(response));
         }
     });
 }
@@ -207,27 +245,48 @@ function getCurrentUrl() {
 // ("", "javascript", "{{locale}}") is filtered out first. Underscores are
 // repaired rather than rejected - lang="en_US" is invalid html, but its intent
 // is not in doubt.
+//
+// Subtags are positional, so checking each one on its own as "1-8 alphanumeric"
+// is a weaker test than it looks: it accepts "en-1", which epubcheck rejects
+// with OPF-092 because a bare digit is neither a script, a region nor a
+// variant. The shape below is the RFC 5646 langtag grammar - the same one
+// epubcheck parses - with only the primary subtag narrowed. That narrowing is
+// the deliberate part: the grammar also allows a 4-8 letter primary subtag, and
+// excluding it is what stops "javascript" and "default" from being taken for
+// languages.
+//
+// Intl.getCanonicalLocales() rejects "en-1" too, but it is a different gate
+// than the one wanted here - it throws on well-formed extlang tags ("zh-yue")
+// and rewrites deprecated ones ("iw" -> "he", "en-US-POSIX" ->
+// "en-US-u-va-posix"). Losing or restating a tag epubcheck would have accepted
+// costs the page its language for nothing.
+var LANGUAGE_TAG_REGEX = new RegExp(
+    '^[a-z]{2,3}' +                          // language
+    '(-[a-z]{3}){0,3}' +                     // extlang
+    '(-[a-z]{4})?' +                         // script
+    '(-([a-z]{2}|[0-9]{3}))?' +              // region
+    '(-([a-z0-9]{5,8}|[0-9][a-z0-9]{3}))*' + // variant
+    '(-[a-wy-z0-9](-[a-z0-9]{2,8})+)*' +     // extension
+    '(-x(-[a-z0-9]{1,8})+)?$',               // private use
+    'i');
+
 function normalizeLanguageTag(raw) {
     if (!raw || typeof raw !== 'string') {
         return '';
     }
-    let subtags = raw.trim().replace(/_/g, '-').split('-');
-    // The primary subtag is an ISO 639 code. The 4-8 letter range is reserved or
-    // registered and no real page uses it, so excluding it here is what stops
-    // "javascript" and "default" from being taken for languages.
-    if (!/^[a-zA-Z]{2,3}$/.test(subtags[0])) {
+    let text = raw.trim().replace(/_/g, '-');
+    if (!LANGUAGE_TAG_REGEX.test(text)) {
         return '';
-    }
-    for (let i = 1; i < subtags.length; i++) {
-        if (!/^[a-zA-Z0-9]{1,8}$/.test(subtags[i])) {
-            return '';
-        }
     }
     // Conventional casing - language lower, script title, region upper. Tags are
     // case insensitive, so this is cosmetic, but it keeps en-US out of the file
-    // spelled three different ways.
-    return subtags.map(function(subtag, index) {
-        if (index === 0) {
+    // spelled three different ways. A one-character subtag opens an extension or
+    // the private use section, and nothing after it is a region however much
+    // "en-US-u-ca-gregory" looks like it has a second one.
+    let extension = false;
+    return text.split('-').map(function(subtag, index) {
+        extension = extension || (index > 0 && subtag.length === 1);
+        if (index === 0 || extension) {
             return subtag.toLowerCase();
         }
         if (/^[a-zA-Z]{4}$/.test(subtag)) {
@@ -243,6 +302,52 @@ function normalizeLanguageTag(raw) {
 function yearIsPlausible(year) {
     let value = parseInt(year, 10);
     return value >= 1400 && value <= new Date().getFullYear() + 1;
+}
+
+function daysInMonth(year, month) {
+    if (month === 2) {
+        return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 29 : 28;
+    }
+    return [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+}
+
+// A shape test says text is spelled like a date; it does not say the date
+// exists. "2024-02-31" and "2024-01-01T29:70Z" are both well formed and both
+// impossible - epubcheck reports the first on dc:date as OPF-053, and no
+// reading system can do anything sensible with the second. So the callers match
+// their own grammar first - the dc:date subset below and the html datetime
+// subset in sanitizeHtml.js are not the same subset, which is why the shape
+// stays with each of them - and then ask this whether the numbers they matched
+// are a real moment. Fields the text leaves out are not invented: a bare
+// "2024-02" is a real month and stays one.
+function dateTimeFieldsAreValid(text) {
+    let calendar = /^([0-9]{4})(?:-([0-9]{2})(?:-([0-9]{2}))?)?(?:[T ]|$)/.exec(text);
+    if (calendar) {
+        let month = calendar[2] === undefined ? 1 : parseInt(calendar[2], 10);
+        let day = calendar[3] === undefined ? 1 : parseInt(calendar[3], 10);
+        if (month < 1 || month > 12 || day < 1 ||
+            day > daysInMonth(parseInt(calendar[1], 10), month)) {
+            return false;
+        }
+    }
+    // Anchored at the end so that the offset is only read where one can be: the
+    // "-01" ending a bare date is a day, not a negative timezone.
+    let clock = /(?:^|[T ])([0-9]{2}):([0-9]{2})(?::([0-9]{2}))?(?:\.[0-9]+)?(?:Z|[+-]([0-9]{2}):?([0-9]{2}))?$/
+        .exec(text);
+    if (clock) {
+        // 24:00 and a leap second are both spellable and neither is in the W3C
+        // profile epub asks for.
+        if (parseInt(clock[1], 10) > 23 || parseInt(clock[2], 10) > 59 ||
+            (clock[3] !== undefined && parseInt(clock[3], 10) > 59)) {
+            return false;
+        }
+        // The html limit on an offset is +-23:59; the real world stops at 14:00.
+        if (clock[4] !== undefined &&
+            (parseInt(clock[4], 10) > 23 || parseInt(clock[5], 10) > 59)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // dc:date must be a W3C-DTF date, and pages supply everything from "2024-03-01"
@@ -262,7 +367,8 @@ function normalizeDate(raw) {
         /^\d{4}-\d{2}$/.test(text) ||
         /^\d{4}-\d{2}-\d{2}$/.test(text) ||
         /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(text)) {
-        return yearIsPlausible(text.substring(0, 4)) ? text : '';
+        return yearIsPlausible(text.substring(0, 4)) && dateTimeFieldsAreValid(text) ?
+            text : '';
     }
     let parsed = new Date(text);
     if (isNaN(parsed.getTime()) || !yearIsPlausible(parsed.getUTCFullYear())) {
@@ -534,47 +640,6 @@ function getBase64ImgData(srcTxt) {
     }
 }
 
-function getXPath(elm) {
-    if (!elm) return ''
-
-    let allNodes = document.getElementsByTagName('*');
-    for (let segs = []; elm && elm.nodeType === 1; elm = elm.parentNode) {
-        if (elm.hasAttribute('id')) {
-            let uniqueIdCount = 0;
-            for (let n = 0; n < allNodes.length; n++) {
-                if (allNodes[n].hasAttribute('id') && allNodes[n].id === elm.id) {
-                    uniqueIdCount++;
-                }
-                if (uniqueIdCount > 1) {
-                    break;
-                }
-            }
-            if (uniqueIdCount === 1) {
-                segs.unshift('id("' + elm.getAttribute('id') + '")');
-                return segs.join('/');
-            } else {
-                segs.unshift(elm.localName.toLowerCase() + '[@id="' + elm.getAttribute('id') + '"]');
-            }
-        } else if (elm.hasAttribute('class')) {
-            segs.unshift(elm.localName.toLowerCase() + '[@class="' + elm.getAttribute('class') + '"]');
-        } else {
-            for (i = 1, sib = elm.previousSibling; sib; sib = sib.previousSibling) {
-                if (sib.localName === elm.localName) {
-                    i++;
-                }
-            }
-            segs.unshift(elm.localName.toLowerCase() + '[' + i + ']');
-        }
-    }
-    return segs.length ? '/' + segs.join('/') : null;
-}
-
-function lookupElementByXPath(path) {
-    let evaluator = new XPathEvaluator();
-    let result = evaluator.evaluate(path, document.documentElement, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-    return  result.singleNodeValue;
-}
-
 function generateRandomTag(tagLen) {
     tagLen = tagLen || 5;
     let text = '';
@@ -667,8 +732,35 @@ function getEbookFileName(name) {
                    .replace(/&apos;/ig, '');
 }
 
-function getPageUrl(url) {
-    return url.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'') + Math.floor(Math.random() * 10000) + '.xhtml';
+// Long enough that a chapter is recognizable by its file name, short enough
+// that a title written as a sentence does not become the whole of the path.
+var MAX_SLUG_LENGTH = 40;
+
+// An ascii, filename-safe form of a title - or '' when the title holds nothing
+// ascii at all, which is every title in Cyrillic, CJK, Greek, Arabic, Hebrew or
+// emoji. That empty string is the honest answer rather than a failure: there is
+// no transliteration here worth the name, so a caller building a file name has
+// to bring its own way of being unique instead of leaning on whatever survived
+// the slug. Accents are folded onto the letters they are drawn over, so a title
+// in a Latin script keeps its words.
+function slugifyTitle(title) {
+    return String(title === undefined || title === null ? '' : title)
+                   .toLowerCase()
+                   .normalize('NFD')
+                   .replace(/[\u0300-\u036f]/g, '')
+                   .replace(/[^a-z0-9]+/g, '_')
+                   .substring(0, MAX_SLUG_LENGTH)
+                   .replace(/^_+|_+$/g, '');
+}
+
+// The name this chapter is stored under. It is not the name it is written into
+// the archive under: buildEbook() derives that from the chapter's position in
+// the book, because nothing that ends in a random number is unique enough to
+// name a file that another file could overwrite. This one only has to be a
+// readable label on a stored record, which is why a title with no ascii in it
+// can fall back to a bare 'page' here without anything being lost.
+function getPageUrl(title) {
+    return (slugifyTitle(title) || 'page') + generateRandomNumber() + '.xhtml';
 }
 
 function getPageTitle(title) {

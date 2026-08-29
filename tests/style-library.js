@@ -13,10 +13,12 @@ const vm = require('vm');
 // browser provides, and a sandbox would give everything it builds a different
 // Array and Object prototype - which deepStrictEqual reports as a difference
 // between two structures that are identical.
-vm.runInThisContext(
-    fs.readFileSync(path.join(__dirname, '..', 'web-extension', 'styleLibrary.js'), 'utf8'),
-    {filename: 'styleLibrary.js'}
-);
+for (const file of ['cssSanitizer.js', 'styleLibrary.js']) {
+    vm.runInThisContext(
+        fs.readFileSync(path.join(__dirname, '..', 'web-extension', file), 'utf8'),
+        {filename: file}
+    );
+}
 const lib = globalThis;
 
 let failures = 0;
@@ -121,6 +123,79 @@ test('an unusable url matches no site style but still takes the themes', () => {
     const entries = [siteEntry('s', 'domain', 'example.com'), {id: 't', scope: 'theme'}];
     assert.deepStrictEqual(selected('', entries), ['t']);
     assert.deepStrictEqual(selected(null, entries), ['t']);
+});
+
+// ---- what a match rule is allowed to cost ---------------------------------
+//
+// Every stored pattern is run against the url on every capture, in the service
+// worker, which has no way to interrupt a regex that does not come back. See
+// regexPatternRisk.
+
+test('a regex that can backtrack exponentially is refused', () => {
+    for (const pattern of ['(a+)+b', '(a*)*b', '(a|a)*b', '([a-z]+)*x', '(?:a+|b)+c',
+                           '(a+){20}', '((a)+)+b', 'x(\\s+)*y']) {
+        assert.strictEqual(lib.regexPatternRisk(pattern), 'backtracking', pattern);
+    }
+    // repeats in sequence are not free either: each one is another exponent on
+    // the length of a url that never matches
+    assert.strictEqual(lib.regexPatternRisk('.*x.*x.*x.*x.*x.*y'), 'backtracking');
+    assert.strictEqual(lib.regexPatternRisk('a'.repeat(lib.MAX_STYLE_PATTERN_LENGTH + 1)),
+                       'length');
+});
+
+test('the patterns people actually write are not refused', () => {
+    for (const pattern of ['reddit\\.com\\/r\\/[^\\/]+\\/comments', 'medium\\.com',
+                           '^(www\\.)?example\\.com', 'twitter\\.com\\/.+',
+                           'news\\.ycombinator\\.com\\/item\\?id=[0-9]+',
+                           'example\\.com\\/(news|blog)\\/[0-9]{4}', '.*\\.example\\.com.*',
+                           'a{3}b{2}', '[({]+', 'x{,5}y']) {
+        assert.strictEqual(lib.regexPatternRisk(pattern), '', pattern);
+    }
+});
+
+test('a refused pattern matches nothing rather than being run', () => {
+    // the same answer as a pattern that does not compile: a style that applies
+    // to no page is something the user can see and fix, a wedged worker is not
+    assert.deepStrictEqual(selected('https://example.com/aaaa', [
+        siteEntry('slow', 'regex', '(a+)+b'),
+        siteEntry('fine', 'domain', 'example.com')
+    ]), ['fine']);
+});
+
+test('matching a whole library against a hostile url is quick', () => {
+    // What this is really testing is that nothing here hands a backtracking
+    // pattern to the regex engine. Run against the shipped matcher before the
+    // refusal existed, this case does not finish.
+    const entries = [
+        siteEntry('r1', 'regex', '(a+)+b'),
+        siteEntry('r2', 'regex', '([a-z]+)*!'),
+        siteEntry('r3', 'regex', '(a|aa)+c'),
+        siteEntry('g', 'glob', '*a*a*a*a*a*a*a*a*a*a*a*a*b'),
+        siteEntry('p', 'prefix', 'example.com')
+    ];
+    const url = 'https://example.com/' + 'a'.repeat(4000) + '!';
+    const started = Date.now();
+    assert.deepStrictEqual(selected(url, entries), ['p']);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 1000, 'matching took ' + elapsed + 'ms');
+});
+
+test('a url longer than any real page url is capped before it is matched', () => {
+    const url = 'https://example.com/' + 'x'.repeat(lib.MAX_MATCH_URL_LENGTH * 3);
+    assert.strictEqual(lib.normalizeUrlForMatch(url).length, lib.MAX_MATCH_URL_LENGTH);
+    // the front of the url is the part every pattern type reads, so capping the
+    // tail changes no answer anybody was relying on
+    assert.deepStrictEqual(selected(url, [siteEntry('d', 'domain', 'example.com')]), ['d']);
+});
+
+test('a glob with many wildcards is matched without a regex', () => {
+    const entries = [siteEntry('g', 'glob', 'example.com/*/b/*/c*d')];
+    assert.deepStrictEqual(selected('https://example.com/x/b/y/c-and-d', entries), ['g']);
+    assert.deepStrictEqual(selected('https://example.com/x/b/y/d-then-c', entries), []);
+    // leftmost is as good as any later occurrence when the wildcards are open
+    assert.deepStrictEqual(
+        selected('https://example.com/a/a/b/a/cd', [siteEntry('g', 'glob', 'example.com/*a/b*')]),
+        ['g']);
 });
 
 // ---- what gets selected ---------------------------------------------------
@@ -766,6 +841,67 @@ test('a stylesheet with nothing to strip is not reported as stripped', () => {
     assert.strictEqual(result.entries[0].css, 'p {color: red}');
 });
 
+// url() is one way to write an address, and it was the only one the old pattern
+// knew. Every case here is css a browser fetches and that pattern let through:
+// the first is ordinary css a style author could write by accident, the rest are
+// somebody spelling url() so that a text search does not see it.
+test('an address written some way other than url() is still an address', () => {
+    const cases = [
+        ['image-set takes a bare string, and it is a url',
+         'a{background-image:image-set("https://tracker.test/px.png" 1x)}'],
+        ['so does the prefixed spelling of it',
+         'a{background-image:-webkit-image-set(url(https://tracker.test/px.png) 1x)}'],
+        ['a comment may sit anywhere a space may',
+         'a{background:url( /*c*/ "https://tracker.test/px.png")}'],
+        ['an escape is how a stylesheet writes a character, url included',
+         'a{background:\\75 rl("https://tracker.test/px.png")}'],
+        ['and the at-keyword can be written the same way',
+         '@\\69 mport "https://tracker.test/x.css";'],
+        ['a custom property holds the address and something else spends it',
+         ':root{--px:"https://tracker.test/px.png"}' +
+             'a{background-image:image-set(var(--px) 1x)}'],
+        ['src() is url() under another name',
+         '@font-face{font-family:x;src:src("https://tracker.test/f.woff2")}'],
+        ['an @import inside a block is an @import',
+         '@media print{@import "https://tracker.test/y.css";p{color:red}}']
+    ];
+
+    for (const [what, css] of cases) {
+        const result = lib.stripRemoteCssReferences(css);
+        assert.strictEqual(result.css.indexOf('tracker.test'), -1, what + ' -- ' + result.css);
+        assert.ok(result.removed.length > 0, what + ' -- and it is reported');
+    }
+});
+
+// The other half: reading css as tokens rather than as text means the things
+// that only look like addresses stay where they are.
+test('what is not an address is left where it was written', () => {
+    const kept = [
+        'p{content:"visit https://example.com for more"}',
+        'a[href="https://example.com"]{color:red}',
+        '/* url(https://example.com/x.png) */p{color:red}',
+        'p{background:url(data:image/gif;base64,R0lGOD)}',
+        'p{background:url("../images/x.png")}',
+        'p{filter:url(#blur)}',
+        '@media print{p{page-break-after:avoid;--x:1}}'
+    ];
+
+    for (const css of kept) {
+        const result = lib.stripRemoteCssReferences(css);
+        assert.strictEqual(result.css, css, 'unchanged, byte for byte');
+        assert.deepStrictEqual(result.removed, []);
+    }
+});
+
+// A url token holds no strings and ends at its own paren, so the characters that
+// end things everywhere else end nothing inside one.
+test('a semicolon or a brace inside a url is part of the url', () => {
+    const css = '@import "a;b.css" screen;.a{background:url(data:image/svg+xml;utf8,<a{}/>)}';
+    const result = lib.stripRemoteCssReferences(css);
+    assert.strictEqual(result.css, '.a{background:url(data:image/svg+xml;utf8,<a{}/>)}');
+    assert.deepStrictEqual(result.removed, ['@import "a;b.css" screen;']);
+});
+
 test('an import says what it would add and what it would land on top of', () => {
     const before = lib.normalizeStyleLibrary({entries: [
         {id: 'shared', title: 'Shared', scope: 'site', css: '.old {}',
@@ -808,6 +944,19 @@ test('replacing takes the style\'s place; keeping both leaves it where it was', 
         'two entries under one id would make an edit land on whichever was found first');
     assert.strictEqual(kept.library.entries[1].id, kept.entries[0].id,
         'the caller has to be able to point at what it just wrote');
+});
+
+test('an import says which patterns will never be run', () => {
+    const result = lib.readStyleImport(JSON.stringify([
+        {title: 'Slow', scope: 'site', css: '.a {}', match: {type: 'regex', pattern: '(a+)+b'}},
+        {title: 'Fine', scope: 'site', css: '.b {}', match: {type: 'regex', pattern: 'example\\.com'}}
+    ]));
+
+    assert.strictEqual(result.error, '');
+    assert.deepStrictEqual(result.entries.map((entry) => entry.title), ['Slow', 'Fine'],
+        'the style still arrives - the pattern is the only part of it that is unusable');
+    assert.deepStrictEqual(result.unusable,
+        [{title: 'Slow', pattern: '(a+)+b', reason: 'backtracking'}]);
 });
 
 test('an import with nothing to collide with is added either way', () => {
@@ -863,6 +1012,8 @@ test('styles/catalog.json says what the merge and the library UI expect of it', 
             assert.strictEqual(entry.enabled, true, where + ' ships off, so nobody would find it');
             if (entry.match.type === 'regex') {
                 assert.ok(new RegExp(entry.match.pattern), where + ' has a pattern that does not compile');
+                assert.strictEqual(lib.regexPatternRisk(entry.match.pattern), '',
+                    where + ' ships a pattern the matcher refuses to run');
             }
         } else {
             assert.strictEqual(entry.enabled, false,

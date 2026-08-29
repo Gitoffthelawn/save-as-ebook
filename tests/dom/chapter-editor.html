@@ -15,6 +15,10 @@ var sent = [];
 // what was written, so a build can be checked against what the page held rather
 // than against what storage would have answered with
 var written = {pages: null, title: null};
+// What the background answers a write with. A refusal is the shape the editor
+// has to be able to tell from a success: chrome.storage runs the callback
+// either way, so an answer is the only thing that carries the difference.
+var refuseWrites = false;
 
 window.chrome = {
   runtime: {
@@ -24,8 +28,13 @@ window.chrome = {
     sendMessage: function(msg, cb) {
       sent.push(msg.type);
       var reply = {};
-      if (msg.type === 'set') written.pages = msg.pages;
-      if (msg.type === 'set title') written.title = msg.title;
+      if (msg.type.indexOf('set') === 0 || msg.type === 'remove') {
+        reply = refuseWrites ? {ok: false, error: 'QUOTA_BYTES quota exceeded'} : {ok: true};
+      }
+      // a refused write stores nothing, which is the half of it the page cannot
+      // see for itself
+      if (msg.type === 'set' && !refuseWrites) written.pages = msg.pages;
+      if (msg.type === 'set title' && !refuseWrites) written.title = msg.title;
       if (msg.type === 'get') reply = {allPages: FIXTURE_PAGES};
       if (msg.type === 'get title') reply = {title: 'My Book'};
       if (msg.type === 'get uuid') reply = {uuid: 'fixture-uuid'};
@@ -47,12 +56,24 @@ window.addEventListener('error', function(e){ errors.push(e.message); });
 <script src="../../web-extension/utils.js"></script>
 <script src="../../web-extension/libs/jszip.js"></script>
 <script src="../../web-extension/sanitizeHtml.js"></script>
+<script src="../../web-extension/cssSanitizer.js"></script>
 <script src="../../web-extension/saveEbook.js"></script>
 <script src="../../web-extension/chapterPreview.js"></script>
 <script src="../../web-extension/chapterContentEditor.js"></script>
 <script src="../../web-extension/chapterEditor.js"></script>
 
 <script>
+// A write from this page is a message and the answer to it, and the fixture's
+// stub answers on a timer - so what a save leads to (the confirmation it prints,
+// the close that follows, the dirty baseline it resets, the unload guard that
+// comes back after the close) is several turns of the event loop away from the
+// click. The steps below wait for that rather than asserting into the middle of
+// it: the editor now says a book was saved when the writes come back, which is
+// the whole point of the change these tests are about.
+function afterWrites(fn) {
+  setTimeout(fn, 50);
+}
+
 function report(name, ok, detail) {
   var li = document.createElement('li');
   li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' -- ' + detail : '');
@@ -111,6 +132,32 @@ setTimeout(function () {
            !!built && built.meta.uuid === 'fixture-uuid',
            built ? String(built.meta.uuid) : 'no build');
 
+    // ---- a title box that has been emptied ----
+    //
+    // The build has a fallback for a chapter that reaches it without a title,
+    // but a box on the screen with nothing in it is a rename in progress: the
+    // page says which row it is and puts the cursor back in it rather than
+    // publishing a book with a chapter called "Untitled chapter 1".
+    var blankAlert = null;
+    window.alert = function (text) { blankAlert = text; };
+    built = null;
+    written.pages = null;
+    written.title = null;
+    var emptiedBox = document.getElementById('text0');
+    emptiedBox.value = '   ';
+    document.getElementsByClassName('chapterEditor-generate-button')[0].click();
+
+    report('generating with an empty chapter title says so',
+           blankAlert === 'blankChapterTitleWarning', String(blankAlert));
+    report('an empty chapter title builds nothing', built === null,
+           built ? 'built ' + built.pages.length + ' chapters' : '');
+    report('an empty chapter title writes nothing', written.pages === null,
+           written.pages ? 'wrote ' + written.pages.length : '');
+    report('the cursor goes back to the box that was emptied',
+           document.activeElement === emptiedBox,
+           document.activeElement ? String(document.activeElement.id) : 'nothing focused');
+    emptiedBox.value = 'Renamed One';
+
     // ---- saving changes says so and leaves ----
     //
     // The tab is the editor, so a save that closed silently would look exactly
@@ -139,51 +186,219 @@ setTimeout(function () {
       saveChangesButton.click();
     }
 
-    report('saving wrote what the page shows',
-           !!written.pages && written.pages.length === 2 &&
-           written.pages[1].title === 'Renamed Two' &&
-           written.title === 'Saved Book',
-           written.pages ? written.pages.length + ' chapters, title ' +
-                           String(written.title) : 'nothing written');
-    report('saving confirms it saved', alerted === 'changesSaved',
-           String(alerted));
-    report('the editor closes after the confirmation', closed === 1,
-           'closed ' + closed + ' times');
+    // Everything a save leads to - the confirmation, the close it makes, the
+    // guard that comes back after the close - now waits for the four writes to
+    // be answered, so the steps that assert on it wait too.
+    afterWrites(function () {
+      report('saving wrote what the page shows',
+             !!written.pages && written.pages.length === 2 &&
+             written.pages[1].title === 'Renamed Two' &&
+             written.title === 'Saved Book',
+             written.pages ? written.pages.length + ' chapters, title ' +
+                             String(written.title) : 'nothing written');
+      report('saving confirms it saved', alerted === 'changesSaved',
+             String(alerted));
+      report('the editor closes after the confirmation', closed === 1,
+             'closed ' + closed + ' times');
 
-    // ---- removing a chapter asks first ----
-    //
-    // A row's Remove button takes the chapter out with nothing to undo it, so
-    // it has to be a question rather than a click away from losing a chapter.
-    var confirmCalls = 0;
-    var asked = null;
-    var confirmAnswer = false;
-    window.confirm = function (text) { confirmCalls++; asked = text; return confirmAnswer; };
+      // ---- removing a chapter asks first ----
+      //
+      // A row's Remove button takes the chapter out with nothing to undo it, so
+      // it has to be a question rather than a click away from losing a chapter.
+      var confirmCalls = 0;
+      var asked = null;
+      var confirmAnswer = false;
+      window.confirm = function (text) { confirmCalls++; asked = text; return confirmAnswer; };
 
-    var firstRow = document.getElementById('li0');
-    var removeButton = firstRow.getElementsByTagName('button')[1];
-    removeButton.click();
-    report('removing a chapter asks first', confirmCalls === 1,
-           'asked ' + confirmCalls + ' times');
-    report('the question names the chapter as the row shows it',
-           String(asked).indexOf('Renamed One') > -1, String(asked));
-    report('answering no keeps the chapter', firstRow.style.display !== 'none',
-           'display ' + String(firstRow.style.display));
+      var firstRow = document.getElementById('li0');
+      var removeButton = firstRow.getElementsByTagName('button')[1];
+      removeButton.click();
+      report('removing a chapter asks first', confirmCalls === 1,
+             'asked ' + confirmCalls + ' times');
+      report('the question names the chapter as the row shows it',
+             String(asked).indexOf('Renamed One') > -1, String(asked));
+      report('answering no keeps the chapter', firstRow.style.display !== 'none',
+             'display ' + String(firstRow.style.display));
 
-    confirmAnswer = true;
-    removeButton.click();
-    report('answering yes removes the chapter', firstRow.style.display === 'none',
-           'display ' + String(firstRow.style.display));
+      confirmAnswer = true;
+      removeButton.click();
+      report('answering yes removes the chapter', firstRow.style.display === 'none',
+             'display ' + String(firstRow.style.display));
 
-    written.pages = null;
-    if (saveChangesButton) {
-      saveChangesButton.click();
-    }
-    report('the removed chapter is not saved',
-           !!written.pages && written.pages.length === 1 &&
-           written.pages[0].title === 'Renamed Two',
-           written.pages ? written.pages.length + ' chapters' : 'nothing written');
+      written.pages = null;
+      if (saveChangesButton) {
+        saveChangesButton.click();
+      }
+      report('the removed chapter is not saved',
+             !!written.pages && written.pages.length === 1 &&
+             written.pages[0].title === 'Renamed Two',
+             written.pages ? written.pages.length + ' chapters' : 'nothing written');
 
-    document.title = 'DONE';
+      // Everything below happens after that save has landed, the way a user
+      // does it: the save above closed the editor, and the unload guard it
+      // stood down for that close comes back once the close has had its chance.
+      afterWrites(function () {
+        // ---- closing the editor does not discard the book ----
+        //
+        // Everything on this page - the book title, the stylesheet, the metadata
+        // boxes, the renames, the order and what is marked removed - lives here
+        // until something writes it. Escape, a click on the grey margin either side
+        // of the modal and the X are all one keystroke or one stray click, and each
+        // of them closes the tab.
+        var upperClose = document.getElementById('chapterEditor-modalHeader')
+                                 .getElementsByTagName('button')[0];
+        var modalEl = document.getElementById('chapterEditor-Modal');
+        var chapterList = document.getElementsByClassName('chapterEditor-chapters-list')[0];
+        var asked = [];
+        var answerClose = false;
+        window.confirm = function (text) { asked.push(text); return answerClose; };
+
+        function firesBeforeUnload() {
+          var evt = new Event('beforeunload', {cancelable: true});
+          window.dispatchEvent(evt);
+          return evt.defaultPrevented;
+        }
+
+        function pressEscape() {
+          document.onkeydown({keyCode: 27});
+        }
+
+        function clickBackdrop() {
+          // the grey margin either side of the 70%-wide content: the event's target
+          // is the modal itself, which is what the page's own handler tests for
+          modalEl.click();
+        }
+
+        // nothing has changed since the save above
+        report('an unchanged editor is not holding anything back',
+               firesBeforeUnload() === false);
+
+        // ---- a rename that has not been saved ----
+        asked = [];
+        closed = 0;
+        document.getElementById('text1').value = 'Renamed Again';
+        report('an unsaved rename stops the tab from being closed from the browser',
+               firesBeforeUnload() === true);
+
+        pressEscape();
+        report('escape with unsaved changes asks first', asked.length === 1, asked.join(' | '));
+        report('answering no to escape keeps the tab open', closed === 0,
+               'closed ' + closed + ' times');
+
+        clickBackdrop();
+        report('a backdrop click with unsaved changes asks first', asked.length === 2,
+               asked.join(' | '));
+        report('answering no to the backdrop keeps the tab open', closed === 0,
+               'closed ' + closed + ' times');
+
+        upperClose.click();
+        report('the X with unsaved changes asks first', asked.length === 3, asked.join(' | '));
+        report('answering no to the X keeps the tab open', closed === 0,
+               'closed ' + closed + ' times');
+        report('the question is about the book, not about one chapter',
+               asked[2] === 'discardChangesConfirm', String(asked[2]));
+
+        // ---- everything else the page holds counts as work too ----
+        document.getElementById('text1').value = 'Renamed Two';
+        report('putting the title back makes the editor clean again',
+               firesBeforeUnload() === false);
+
+        document.getElementById('chapterEditor-bookCss').value = 'p { margin: 0 }';
+        report('an unsaved book stylesheet counts', firesBeforeUnload() === true);
+        document.getElementById('chapterEditor-bookCss').value = '';
+
+        document.getElementById('chapterEditor-bookMeta-publisher').value = 'A Publisher';
+        report('unsaved book metadata counts', firesBeforeUnload() === true);
+        document.getElementById('chapterEditor-bookMeta-publisher').value = '';
+
+        document.getElementById('chapterEditor-ebookTitle').value = 'Another Title';
+        report('an unsaved book title counts', firesBeforeUnload() === true);
+        document.getElementById('chapterEditor-ebookTitle').value = 'Saved Book';
+
+        chapterList.appendChild(chapterList.children[0]);
+        report('an unsaved reorder counts', firesBeforeUnload() === true);
+        chapterList.insertBefore(chapterList.children[1], chapterList.children[0]);
+        report('putting the order back makes the editor clean again',
+               firesBeforeUnload() === false);
+
+        // ---- a row marked removed is a change too ----
+        //
+        // Nothing writes it until the book is saved, and the row simply stops
+        // being drawn - so of everything this page holds, this is the change that
+        // is least visible and costs a whole chapter.
+        asked = [];
+        answerClose = true; // the row's own "remove this chapter?" question
+        document.getElementById('li1').getElementsByTagName('button')[1].click();
+        answerClose = false;
+        report('the row asked before marking the chapter removed', asked.length === 1,
+               asked.join(' | '));
+        report('a chapter marked removed counts as unsaved work',
+               firesBeforeUnload() === true);
+        // Generate rather than Save changes: it writes the same things, and it is
+        // the one that leaves the tab open to go on asserting against.
+        document.getElementsByClassName('chapterEditor-generate-button')[0].click();
+        // the reset of the baseline is a write coming back - see afterWrites
+        afterWrites(function () {
+          report('saving the removal makes the editor clean again',
+                 firesBeforeUnload() === false);
+
+          // ---- a close the user agreed to, and one there is nothing to ask about ----
+          asked = [];
+          closed = 0;
+          upperClose.click();
+          report('closing an unchanged editor asks nothing', asked.length === 0,
+                 asked.join(' | '));
+          report('closing an unchanged editor closes', closed === 1,
+                 'closed ' + closed + ' times');
+          // a change made after the click, while the tab is on its way out: the
+          // guard is stood down for a close the user has already been through
+          document.getElementById('text1').value = 'Changed On The Way Out';
+          report('a close it has already agreed to does not ask again on the way out',
+                 firesBeforeUnload() === false);
+
+          setTimeout(function () {
+            // ...and comes back for a tab the browser declined to close, rather
+            // than leaving the book unguarded for the rest of its life
+            report('a tab that did not actually close is guarded again',
+                   firesBeforeUnload() === true);
+
+            // ---- and the answer that does discard ----
+            asked = [];
+            closed = 0;
+            answerClose = true;
+            upperClose.click();
+            report('answering yes discards the changes and closes',
+                   asked.length === 1 && closed === 1,
+                   'asked ' + asked.length + ', closed ' + closed);
+
+            // ---- a save the profile refuses ----
+            //
+            // chrome.storage.local.set runs its callback whether or not it wrote
+            // anything, so this page used to say "changes saved" and close the
+            // tab on a book that had not been stored. What it says now is
+            // decided by the answers to its four writes.
+            refuseWrites = true;
+            alerted = null;
+            closed = 0;
+            document.getElementById('text1').value = 'A Rename Nothing Will Keep';
+            saveChangesButton.click();
+
+            afterWrites(function () {
+              report('a refused save says so instead of saying it saved',
+                     alerted === 'storageWriteFailed', String(alerted));
+              report('a refused save leaves the editor open',
+                     closed === 0, 'closed ' + closed + ' times');
+              // the baseline is not reset by a write that did not land, so the
+              // work is still work and the tab still says so on the way out
+              report('a refused save leaves the changes unsaved',
+                     firesBeforeUnload() === true);
+
+              document.title = 'DONE';
+            });
+          }, 0);
+        });
+      });
+    });
   }, 100);
 }, 300);
 </script>
