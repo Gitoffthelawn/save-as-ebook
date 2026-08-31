@@ -902,6 +902,62 @@ test('a semicolon or a brace inside a url is part of the url', () => {
     assert.deepStrictEqual(result.removed, ['@import "a;b.css" screen;']);
 });
 
+// The scheme is as escapable as the function name is, and it is the half that
+// decides whether the address is remote - so it has to be read decoded too.
+test('an escape hides the scheme as easily as it hides the url', () => {
+    for (const css of ['a{background:url(htt\\70 s://tracker.test/px.png)}',
+                       'a{background:url("htt\\70 s://tracker.test/px.png")}',
+                       'a{background:image-set("\\68 ttps://tracker.test/px.png" 1x)}']) {
+        const result = lib.stripRemoteCssReferences(css);
+        assert.strictEqual(result.css.indexOf('tracker.test'), -1, css);
+        assert.ok(result.removed.length > 0, css + ' -- and it is reported');
+    }
+});
+
+// A function argument is a function argument however many calls deep it sits,
+// and the address is the innermost thing, not the outermost.
+test('an address nested inside other functions is still the address', () => {
+    const result = lib.stripRemoteCssReferences(
+        'a{background:cross-fade(image-set(url(https://tracker.test/px.png) 1x),' +
+            'url(../local.png),50%)}');
+    assert.strictEqual(result.css.indexOf('tracker.test'), -1);
+    assert.ok(result.css.indexOf('url(../local.png)') > -1,
+        'the sibling that names a local file is untouched');
+    assert.ok(result.css.indexOf('cross-fade(image-set(none 1x)') > -1,
+        'and only the address inside is replaced, not the calls around it');
+    assert.deepStrictEqual(result.removed, ['https://tracker.test/px.png']);
+});
+
+// Malformed css still has to come out the other side as the rest of a
+// stylesheet. A string that never closes is where css error recovery starts:
+// the declaration holding it is dropped and the next rule is read normally, so
+// scanning past it for a closing paren would delete a file's worth of rules
+// that a browser would have honoured.
+test('an unterminated string costs its own declaration and no more', () => {
+    const result = lib.stripRemoteCssReferences(
+        'a{background:url("https://tracker.test/px.png\n}\nb{color:red}');
+    assert.strictEqual(result.css.indexOf('tracker.test'), -1, 'the address still goes');
+    assert.ok(result.css.indexOf('b{color:red}') > -1,
+        'the rule after the malformed one survives');
+    assert.deepStrictEqual(result.removed, ['https://tracker.test/px.png']);
+
+    // The same shape with nothing remote in it is not this pass's business at
+    // all, so it is copied through exactly as written.
+    const local = 'a{background:url("../p.png\n}\nb{color:red}';
+    assert.strictEqual(lib.stripRemoteCssReferences(local).css, local);
+});
+
+// The one url in css that is a name rather than an address. Rewriting it would
+// break every namespace-qualified selector in the file and report a tracker
+// that was never contacted.
+test('a namespace uri is not fetched and is not touched', () => {
+    const css = '@namespace url(http://www.w3.org/1999/xhtml);' +
+        '@namespace svg "http://www.w3.org/2000/svg";svg|circle{fill:red}';
+    const result = lib.stripRemoteCssReferences(css);
+    assert.strictEqual(result.css, css, 'unchanged, byte for byte');
+    assert.deepStrictEqual(result.removed, []);
+});
+
 test('an import says what it would add and what it would land on top of', () => {
     const before = lib.normalizeStyleLibrary({entries: [
         {id: 'shared', title: 'Shared', scope: 'site', css: '.old {}',

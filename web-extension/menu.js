@@ -34,6 +34,14 @@ const failureMessages = {
     'restricted-tab': 'restrictedTabMessage',
     'busy': 'busyMessage',
     'no-tab': 'noTabMessage',
+    // The service worker never took the command at all - see dispatch. Not a
+    // verdict the background sends, because a background that could send it
+    // would have run the command.
+    'not-started': 'notStartedMessage',
+    // ...and a command that did start and then stopped reporting - see
+    // watchJob. The only one of these the user can do something about, which is
+    // why it says what that is.
+    'stopped': 'stoppedMessage',
     // not a command that never started, but the same surface: the checkbox in
     // the style list showing a state the profile was refused
     'storage-write': 'storageWriteFailed'
@@ -55,11 +63,88 @@ function showFailure(reason) {
     if (!messageName) {
         return;
     }
-    // whatever this popup had asked for is not running, so the wait is over
+    // whatever this popup had asked for is not running, so the wait is over -
+    // and there is no longer a job to watch for
+    stopWatchingJob();
     document.getElementById('busy').style.display = 'none';
     let failed = document.getElementById('failedMessage');
     failed.textContent = chrome.i18n.getMessage(messageName);
     failed.style.display = 'block';
+}
+
+// The overlay's other exit. A command refused before a job existed says so
+// through popup-failed, and a job that ends normally closes this popup through
+// popup-close - but a job that *starts* and then stops reporting reaches
+// neither. The tab is navigated away or torn down while the page is still
+// downloading images or building the zip: no 'done' is ever sent, so no
+// finishJob runs, so nothing closes the popup and nothing takes the overlay
+// down.
+//
+// The background already knows how to notice this - getJob discards a job whose
+// heartbeat has been silent for JOB_TIMEOUT - but only when something asks it,
+// and while a popup sat waiting nothing was asking. So the popup asks. 'is
+// busy?' is the question that makes the background check, and a "no" to it is
+// the answer that ends the wait.
+//
+// The poll interval is well under JOB_TIMEOUT: it is not a deadline of its own,
+// only how often the background is given the chance to apply its.
+const JOB_POLL_INTERVAL = 3000;
+
+// How long popup-close is given to arrive before the silence is called a
+// failure. A job that finished normally removes its session record and *then*
+// asks this popup to close, so a poll landing between those two steps sees a
+// job that is gone and a popup that is about to go: without the grace the user
+// would be shown "the capture stopped" for a save that worked, for as long as
+// it took the close to arrive. The window closing takes the timer with it.
+const JOB_CLOSE_GRACE = 2000;
+
+let jobPoll = null;
+let jobGone = null;
+// Whether this popup has ever seen the job it is waiting on actually running. A
+// poll can outrun the claim - the background injects seven content scripts
+// before it claims anything - and a "no job" from before the job exists means
+// the opposite of a "no job" from after it. Nothing is concluded until the job
+// has been seen at least once.
+let jobSeen = false;
+
+function watchJob(seen) {
+    stopWatchingJob();
+    jobSeen = !!seen;
+    jobPoll = setInterval(pollJob, JOB_POLL_INTERVAL);
+}
+
+function stopWatchingJob() {
+    if (jobPoll !== null) {
+        clearInterval(jobPoll);
+        jobPoll = null;
+    }
+    if (jobGone !== null) {
+        clearTimeout(jobGone);
+        jobGone = null;
+    }
+}
+
+function pollJob() {
+    chrome.runtime.sendMessage({type: 'is busy?'}, function(response) {
+        // a worker that has stopped answering is a job that has stopped running
+        void chrome.runtime.lastError;
+
+        if (response && response.isBusy) {
+            jobSeen = true;
+            // still going - and any grace timer from a previous poll was about
+            // a job that turns out not to be over
+            if (jobGone !== null) {
+                clearTimeout(jobGone);
+                jobGone = null;
+            }
+            return;
+        }
+
+        if (!jobSeen || jobGone !== null) {
+            return;
+        }
+        jobGone = setTimeout(() => showFailure('stopped'), JOB_CLOSE_GRACE);
+    });
 }
 
 // the service worker cannot close the popup directly, it asks for it
@@ -79,11 +164,19 @@ chrome.runtime.onMessage.addListener((request) => {
 // not load. It does now - for the style list below - so the two would be one
 // name meaning whichever was loaded last; there is one of them, in utils.js.
 
+// A popup opened while a capture is already running shows that capture's
+// overlay, so it is waiting on a job it did not start - and it has to watch that
+// job for the same reason the one that started it does. This is also where a job
+// that has already gone stale is cleared: the question itself is what makes the
+// background apply JOB_TIMEOUT, so the popup that asks it on open is answered
+// "no" rather than shown a spinner over a capture that stopped some time ago.
 chrome.runtime.sendMessage({
     type: "is busy?"
 }, function(response) {
-    if (response.isBusy) {
+    void chrome.runtime.lastError;
+    if (response && response.isBusy) {
         document.getElementById('busy').style.display = 'block';
+        watchJob(true);
     } else {
         document.getElementById('busy').style.display = 'none';
     }
@@ -363,12 +456,30 @@ document.getElementById("editChapters").onclick = function() {
 // and makes it once a capture exists to replace them with (see dispatch and
 // applyAction in background.js).
 function dispatch(commandType) {
-    // a message left over from the last command says nothing about this one
+    // a message left over from the last command says nothing about this one,
+    // and neither does a watch on the job it was waiting for
+    stopWatchingJob();
     document.getElementById('failedMessage').style.display = 'none';
     document.getElementById('busy').style.display = 'block';
     chrome.runtime.sendMessage({
         type: commandType
     }, function(response) {
+        void chrome.runtime.lastError;
+
+        // The background answers {started: true} the moment it accepts the
+        // command, before it runs any of it (see _execRequest). No answer at
+        // all means the service worker never took it - there is nothing running
+        // to send popup-close and nothing running to send popup-failed either,
+        // so this callback is the only place the overlay can come down.
+        if (!response || !response.started) {
+            showFailure('not-started');
+            return;
+        }
+
+        // Accepted, not finished: what happens next is a job that may still be
+        // refused before it is claimed - popup-failed - or claimed and then
+        // lost with the tab.
+        watchJob(false);
     });
 }
 

@@ -80,9 +80,12 @@ window.chrome = {
   </mjx-container>
   </p>
 
-  <!-- No src at all, which is how a lazy loader ships an image. Today this
-       reaches getImageSrc() as '' and the tag is dropped; Readability promotes
-       data-src first, so the image is downloaded instead. -->
+  <!-- No src at all, which is how a lazy loader ships an image. Two different
+       passes now arrive at the same answer here: the read phase resolves the
+       source before Readability runs, and Readability promotes data-src itself.
+       The assertion below says only that reader mode keeps the image - which
+       path found it is tests/dom/lazy-images.html's subject, and the plain path
+       is the one that used to drop it. -->
   <img data-src="lazy-image.png" alt="LAZYALT">
 </article>
 
@@ -151,7 +154,7 @@ window.addEventListener('load', function () {
          content.indexOf('alt="CANVASLABEL"') > -1);
   report('no <canvas> reaches the output', content.indexOf('<canvas') < 0);
 
-  // ---- the free win ----
+  // ---- lazily loaded images ----
   report('a data-src image is promoted and extracted',
          content.indexOf('alt="LAZYALT"') > -1 &&
          allImages.some(function (i) { return i.originalUrl.indexOf('lazy-image.png') > -1; }),

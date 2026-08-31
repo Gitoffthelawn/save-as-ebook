@@ -170,8 +170,10 @@ setTimeout(function () {
          sanitizeStylesheet('p{background-image:url("//cdn.test/x.png")}') ===
              'p{background-image:none}',
          sanitizeStylesheet('p{background-image:url("//cdn.test/x.png")}'));
-  // it names a picture the book really contains
-  report('a reference into the archive is left alone',
+  // Asked without a resolver - which is how the preview calls it - a local url
+  // is nobody's business here: whether it names a file is a question about the
+  // archive, and there is no archive in front of this call.
+  report('a local reference is left alone when nothing is checking the archive',
          sanitizeStylesheet('p{background-image:url("../images/x.png")}') ===
              'p{background-image:url("../images/x.png")}');
   // carried in the file rather than fetched from anywhere
@@ -216,6 +218,60 @@ setTimeout(function () {
     report('what is not a fetch is left as written: ' + css,
            sanitizeStylesheet(css) === css, sanitizeStylesheet(css));
   });
+
+  // ---- and what a local url is asked, when there is an archive to ask about ---
+  //
+  // Not remote is not the same as there. A url() naming a file the package does
+  // not hold is RSC-007, which fails the whole book over one background image,
+  // so the build hands sanitizeStylesheet() a resolver that answers from the
+  // images it is about to write. These are the two depths a stylesheet lands at:
+  // OEBPS/style/styleN.css, a folder below the pictures, and OEBPS/ebook.css,
+  // beside them.
+  function archiveResolver(prefix) {
+    return function (target) {
+      var match = String(target).match(/^(?:\.{1,2}\/)*images\/([^/?#]+)(?:[?#].*)?$/i);
+      return match && match[1] === 'x.png' ? prefix + match[1] : null;
+    };
+  }
+  var chapterCss = archiveResolver('../images/');
+  var bookCss = archiveResolver('images/');
+
+  report('a picture the archive holds survives, written exactly as it was',
+         sanitizeStylesheet('p{background-image:url(../images/x.png)}', chapterCss) ===
+             'p{background-image:url(../images/x.png)}',
+         sanitizeStylesheet('p{background-image:url(../images/x.png)}', chapterCss));
+  report('one the archive does not hold becomes a value the property accepts',
+         sanitizeStylesheet('p{background-image:url(missing.png)}', chapterCss) ===
+             'p{background-image:none}',
+         sanitizeStylesheet('p{background-image:url(missing.png)}', chapterCss));
+  // the mistake a user typing into the editor cannot see: they name the picture
+  // the way the chapter's markup does, and the stylesheet is a folder deeper
+  report('a real picture named from the wrong folder is repaired, not dropped',
+         sanitizeStylesheet('p{background-image:url(images/x.png)}', chapterCss) ===
+             'p{background-image:url("../images/x.png")}',
+         sanitizeStylesheet('p{background-image:url(images/x.png)}', chapterCss));
+  report('and the book stylesheet reaches the same picture without going up',
+         sanitizeStylesheet('p{background-image:url("../images/x.png")}', bookCss) ===
+             'p{background-image:url("images/x.png")}',
+         sanitizeStylesheet('p{background-image:url("../images/x.png")}', bookCss));
+  // three things a resolver that judges file names must never be asked about
+  report('a data url is still carried rather than looked up',
+         sanitizeStylesheet('p{background-image:url(data:image/gif;base64,R0l)}', chapterCss) ===
+             'p{background-image:url(data:image/gif;base64,R0l)}');
+  report('a fragment points inside the document, not at a file',
+         sanitizeStylesheet('p{filter:url(#blur)}', chapterCss) === 'p{filter:url(#blur)}');
+  report('and the strings other functions take are their own business',
+         sanitizeStylesheet('@font-face{font-family:x;src:local("Arial")}', chapterCss) ===
+             '@font-face{font-family:x;src:local("Arial")}',
+         sanitizeStylesheet('@font-face{font-family:x;src:local("Arial")}', chapterCss));
+  // a name the unquoted url token cannot carry, which is why a repair is written
+  // back quoted rather than as it was matched
+  report('a repaired name that needs quoting gets it',
+         sanitizeStylesheet('p{background-image:url(images/od%20d.png)}',
+                            function () { return '../images/od d".png'; }) ===
+             'p{background-image:url("../images/od d\\".png")}',
+         sanitizeStylesheet('p{background-image:url(images/od%20d.png)}',
+                            function () { return '../images/od d".png'; }));
 
   // ---- what the chapter's stylesheet is --------------------------------------
   report('the captured stylesheet comes first, the user\'s after it',

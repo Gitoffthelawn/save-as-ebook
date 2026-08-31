@@ -39,6 +39,14 @@ window.chrome = {
     <source srcset="picked.jpg 1200w">
     <img id="f" src="fallback.jpg" alt="LAZYSIX" width="120" height="80">
   </picture>
+  <!-- A lazily loaded <picture>: the candidates are parked in data-srcset, so
+       the browser has nothing to select from and currentSrc is empty. Nothing
+       the live page can be asked answers this one - the <source> beside the
+       <img> is the whole answer. -->
+  <picture>
+    <source data-srcset="deferred.jpg 900w">
+    <img id="i" alt="LAZYSEVEN" width="120" height="80">
+  </picture>
   <img id="g" src="plain.jpg" alt="PLAIN" width="120" height="80">
   <img id="h" data-src="unsized.jpg" alt="UNSIZED">
 </article>
@@ -151,6 +159,8 @@ window.addEventListener('load', function () {
          saved('real5.jpg') && !saved('spacer.gif'), queuedNames);
   report('the <source> the browser picked beats the <img> fallback',
          saved('picked.jpg') && !saved('fallback.jpg'), queuedNames);
+  report('a <picture> whose candidates never reached srcset is still saved',
+         saved('deferred.jpg'), queuedNames);
   report('an ordinary image is untouched', saved('plain.jpg'), queuedNames);
 
   // Recorded rather than required: an image the page gave no size to lays out
@@ -160,7 +170,7 @@ window.addEventListener('load', function () {
 
   var refs = content.match(/\.\.\/images\/[^"']+/g) || [];
   report('every image in the content resolves to a file the book will hold',
-         refs.length >= 7 && refs.length === new Set(refs).size,
+         refs.length >= 8 && refs.length === new Set(refs).size,
          'refs=' + refs.join(' '));
   // the detail is one line on purpose - the harness reads results line by line
   report('no placeholder data uri reaches the content',
@@ -195,6 +205,108 @@ window.addEventListener('load', function () {
      '<img src="../images/a.png" alt="x"/>');
   eq('an image with no usable source anywhere is still dropped',
      sanitizeChapterContent('<img data-src="https://example.com/a.png" alt="x">'), '');
+
+  // ---- 7. a <picture> with no live element to ask ------------------------
+  //
+  // currentSrc is the browser's own answer to which <source> won, and it is the
+  // one this path does not have. The sources themselves are still in the markup,
+  // and they are where the image is named when the <img> only carries a
+  // fallback. resolveImageSrc is the identity here so that the assertions read
+  // as "which url won" rather than as archive filenames.
+
+  function pickSrc(html, resolve) {
+    var out = parseHTML(html, sanitizeOptions({
+      resolveImageSrc: resolve || function (value) { return value; }
+    }));
+    var found = /<img[^>]*\ssrc="([^"]*)"/.exec(out);
+    return found ? found[1] : out;
+  }
+
+  eq('a <source> beats the placeholder the <img> falls back to',
+     pickSrc('<picture><source srcset="real.jpg 1200w">' +
+             '<img src="/img/blank.gif" alt="x"></picture>'), 'real.jpg');
+  eq('an <img> with no src of its own is saved by its <source>',
+     pickSrc('<picture><source srcset="only.jpg"><img alt="x"></picture>'), 'only.jpg');
+  eq('a <source> does not beat a real src',
+     pickSrc('<picture><source srcset="other.jpg">' +
+             '<img src="photo.jpg" alt="x"></picture>'), 'photo.jpg');
+  eq('a lazily parked <source> is read too',
+     pickSrc('<picture><source data-srcset="lazy.jpg 800w"><img alt="x"></picture>'),
+     'lazy.jpg');
+  // The ordinary shape of a <picture> today. Taking the avif because it was
+  // written first loses the image at the download stage - the book has no media
+  // type for those bytes - while the jpeg beside it would have arrived intact.
+  eq('a format the book cannot hold sorts behind one it can',
+     pickSrc('<picture><source type="image/avif" srcset="a.avif">' +
+             '<source type="image/jpeg" srcset="a.jpg"><img alt="x"></picture>'), 'a.jpg');
+  // ...but it is still better than nothing, which is what the image was before.
+  eq('an unusable format is still tried when it is all there is',
+     pickSrc('<picture><source type="image/avif" srcset="a.avif"><img alt="x"></picture>'),
+     'a.avif');
+  eq('a <source> rescues an <img> whose own src does not resolve',
+     pickSrc('<picture><source srcset="good.jpg"><img src="bad.jpg" alt="x"></picture>',
+             function (value) { return value === 'bad.jpg' ? '' : value; }), 'good.jpg');
+  eq('the <img>’s own lazy attribute still comes first',
+     pickSrc('<picture><source srcset="source.jpg">' +
+             '<img data-src="lazy.jpg" alt="x"></picture>'), 'lazy.jpg');
+  // An unclosed <picture> is the case that could hand one image's sources to the
+  // next one; the list is consumed by the <img> inside it, so it cannot.
+  eq('a later image does not inherit the picture it is not in',
+     pickSrc('<picture><source srcset="in.jpg"><img alt="a"></picture>' +
+             '<img alt="b" data-lazy="b.jpg">'), 'in.jpg');
+  eq('and the second image is the one that got b.jpg',
+     parseHTML('<picture><source srcset="in.jpg"><img alt="a"></picture>' +
+               '<img alt="b" data-lazy="b.jpg">',
+               sanitizeOptions({resolveImageSrc: function (v) { return v; }})),
+     '<img src="in.jpg" alt="a"/><img src="b.jpg" alt="b"/>');
+  // <video>'s sources are not a picture's, and its content is dropped whole
+  eq('a <video> source is not mistaken for a picture’s',
+     pickSrc('<video><source src="clip.mp4"></video><img alt="x" data-src="after.jpg">'),
+     'after.jpg');
+
+  // ---- 8. the same page, captured as a selection --------------------------
+  //
+  // Reader mode never reaches a selection - the user has already said what the
+  // content is - so a selection is the one capture where the plain path is the
+  // only path. It is also the one the read phase reaches differently: the clone
+  // is a range's contents rather than the body, so the marks have to survive
+  // Range.cloneContents().
+
+  allImages = []; extractedImages = []; imageFileNames.clear();
+  classNameToCss.clear(); cssToClassName.clear();
+
+  var selection = window.getSelection();
+  var range = document.createRange();
+  range.selectNodeContents(document.querySelector('article'));
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  var selectionState = readLivePage(false, []);
+  var fragments = getSelectedNodes();
+  clearLiveMarks(selectionState);
+  var selected = fragments.map(function (fragment) {
+    return getContent(fragment, selectionState);
+  }).join('');
+  selection.removeAllRanges();
+
+  var selectedUrls = allImages.map(function (i) { return i.originalUrl; }).join(' ');
+  function selectedHas(name) { return selectedUrls.indexOf('/' + name) > -1; }
+
+  report('a selected lazy image is saved, not dropped',
+         selectedHas('real-photo.jpg'), selectedUrls);
+  report('a selected placeholder is replaced by the photograph behind it',
+         selectedHas('real2.jpg') && selected.indexOf('data:') < 0, selectedUrls);
+  report('a selected srcset-only image is saved',
+         selectedHas('only.jpg'), selectedUrls);
+  report('the <source> the browser picked wins in a selection too',
+         selectedHas('picked.jpg') && !selectedHas('fallback.jpg'), selectedUrls);
+  report('a selected lazy <picture> is read from its <source>',
+         selectedHas('deferred.jpg'), selectedUrls);
+  report('every selected image resolves to a file the book will hold',
+         (selected.match(/\.\.\/images\//g) || []).length >= 8,
+         selected.replace(/\s+/g, ' ').slice(0, 200));
+  report('no marker attributes left behind by the selection',
+         document.querySelectorAll('[data-sae-mark]').length === 0);
 
   document.title = 'DONE';
 });

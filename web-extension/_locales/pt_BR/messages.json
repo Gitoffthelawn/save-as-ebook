@@ -60,6 +60,12 @@
     "noTabMessage": {
         "message": "Salvar como eBook não encontrou a página para ler - por favor, tente novamente."
     },
+    "notStartedMessage": {
+        "message": "Salvar como eBook não conseguiu iniciar este comando - a extensão não respondeu. Por favor, tente novamente."
+    },
+    "stoppedMessage": {
+        "message": "A captura parou antes de terminar - sair da página ou recarregá-la durante o salvamento a interrompe. Nada foi baixado, por favor, tente novamente."
+    },
     "chapterEditorTitle": {
         "message": "Editor de capítulos"
     },

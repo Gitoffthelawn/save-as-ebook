@@ -63,6 +63,12 @@
     "noTabMessage": {
         "message": "Save as eBook could not find the page to read - please try again."
     },
+    "notStartedMessage": {
+        "message": "Save as eBook could not start this command - the extension did not answer. Please try again."
+    },
+    "stoppedMessage": {
+        "message": "The capture stopped before it finished - leaving or reloading the page while it is being saved ends it. Nothing was downloaded, please try again."
+    },
     "chapterEditorTitle": {
         "message": "Chapter Editor"
     },

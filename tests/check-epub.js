@@ -243,6 +243,45 @@ JSZip.loadAsync(raw).then(async (zip) => {
     check('every <img> in the content resolves to a file in the archive',
           dangling.length === 0, dangling.join(', '));
 
+    // The same rule for the stylesheets, which reference files too and are the
+    // easier place to forget it: a url() naming something the archive does not
+    // hold is RSC-007, and one background image fails the whole package. The two
+    // depths are the trap - OEBPS/ebook.css sits beside images/, OEBPS/style/*
+    // is a folder below - so the check is resolution against the file doing the
+    // referencing rather than a look at the text.
+    //
+    // Scanned here rather than parsed through cssSanitizer.js: a checker that
+    // borrows the code which wrote the value can only ever agree with it.
+    const danglingCss = [];
+    const remoteCss = [];
+    for (const name of names.filter((n) => n.endsWith('.css'))) {
+        const css = await zip.file(name).async('string');
+        for (const m of css.matchAll(/\burl\(\s*(?:"([^"]*)"|'([^']*)'|([^)"'\s][^)]*?))\s*\)/gi)) {
+            const target = (m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]).trim();
+            // the resource carried in the file, and a reference into the
+            // document using it: neither names a file in this archive
+            if (target === '' || target.charAt(0) === '#' || /^data:/i.test(target)) {
+                continue;
+            }
+            if (/^(?:[a-z][a-z0-9+.\-]*:|\/\/)/i.test(target)) {
+                remoteCss.push(name + ' -> ' + target);
+                continue;
+            }
+            const resolved = path.posix.normalize(
+                path.posix.join(path.posix.dirname(name), target));
+            if (names.indexOf(resolved) < 0) {
+                danglingCss.push(name + ' -> ' + target);
+            }
+        }
+    }
+    check('every url() in a stylesheet resolves to a file in the archive',
+          danglingCss.length === 0, danglingCss.join(', '));
+    // and no manifest item claims properties="remote-resources", so a surviving
+    // one would be a package contradicting itself as well as a book that needs
+    // the network to look right
+    check('no stylesheet reaches off the archive',
+          remoteCss.length === 0, remoteCss.join(', '));
+
     check('every content document declares a matching xml:lang and lang',
           langless.length === 0, langless.join(', '));
 

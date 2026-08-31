@@ -77,7 +77,20 @@ const chapters = [
                    // and that what does escape a stylesheet is taken out before
                    // it can contradict a manifest that claims no remote resources
                    '.a1 {background-image: url("https://cdn.example.com/paper.png");}\n' +
-                   '@import url("https://cdn.example.com/more.css");',
+                   '@import url("https://cdn.example.com/more.css");\n' +
+                   // A reference to a file nobody downloaded. Not remote, so the
+                   // remote rule has nothing to say about it, and it lands in
+                   // OEBPS/style/ where there is no such file: RSC-007, which
+                   // fails the package over a background image. This is the
+                   // audit's own reproduction, kept here so the next one shows
+                   // up as an EPUBCheck error in the normal suite.
+                   '.a1 {background-image: url(missing.png);}\n' +
+                   // And the mistake beside it, which has a picture behind it:
+                   // the chapter names images/img-1.png the way it reads in the
+                   // chapter's own markup, but this file is a folder deeper. It
+                   // has to reach the same image rather than be dropped with the
+                   // one above.
+                   '.a1 {list-style-image: url(images/img-1.png);}',
         // img-3 is the chapter a version that could not type a webp left in
         // storage: an image with no resolvable media type, which cannot be
         // declared in the manifest. It and the <img> below pointing at it must
@@ -305,8 +318,14 @@ if (chaptersFile) {
 vm.runInContext('buildEbook(FIXTURE, {title: "Fixture Book", css: BOOK_CSS, metadata: BOOK_META})',
                 Object.assign(sandbox, {
                     FIXTURE: single ? toBuild.slice(0, 1) : toBuild,
+                    // The same two references from the other depth: ebook.css is
+                    // beside images/, so the prefix that is right one folder
+                    // down is wrong here, and a book stylesheet may name a
+                    // picture that arrived with any chapter.
                     BOOK_CSS: 'body {\n    font-family: serif;\n    line-height: 1.5;\n}\n' +
-                              'blockquote {\n    font-style: italic;\n}\n',
+                              'blockquote {\n    font-style: italic;\n}\n' +
+                              'ul {\n    list-style-image: url("../images/img-1.png");\n}\n' +
+                              '.nowhere {\n    background-image: url(no-such-file.png);\n}\n',
                     BOOK_META: {publisher: 'A & B Books <Ltd>'}
                 }));
 

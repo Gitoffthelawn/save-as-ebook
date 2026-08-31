@@ -524,6 +524,61 @@ function pickFromSrcset(value) {
     return best;
 }
 
+// The image types an epub 3.3 reading system must support. The same set
+// getFileExtension() accepts, written as media types rather than as extensions
+// because that is how a <source> states its format - avif is the one that
+// matters, and it is absent from both lists for the same reason.
+var EMBEDDABLE_IMAGE_MEDIA_TYPES = [
+    'image/png', 'image/gif', 'image/jpeg', 'image/svg+xml', 'image/webp'
+];
+
+// The urls a <picture>'s <source> elements name, best first.
+//
+// A <picture> is one image written several ways: every <source> above the <img>
+// is a better encoding for a browser that can decode it, and the <img> itself is
+// the fallback that every browser can. Which one was chosen is a question only
+// the live page can answer - that is currentSrc - so this is what is left when
+// the markup is all there is: the inside of a same-origin iframe, a chapter
+// re-sanitized after the page is gone.
+//
+// Document order, except that a source naming a format the book cannot hold
+// sorts last. An avif written first is the ordinary shape of a <picture> today,
+// and taking it because it came first loses the image at the download stage,
+// where the jpeg underneath it would have arrived intact.
+function pictureSourceUrls(sources) {
+    let embeddable = [];
+    let foreign = [];
+    (sources || []).forEach(function (source) {
+        let url = pickFromSrcset(source && source.srcset);
+        if (url === '') {
+            return;
+        }
+        // "image/jpeg; charset=..." is not a thing a <source> should say, but a
+        // parameter is legal in the attribute and must not hide the type.
+        let type = String(source.type == null ? '' : source.type)
+                   .split(';')[0].trim().toLowerCase();
+        if (type !== '' && EMBEDDABLE_IMAGE_MEDIA_TYPES.indexOf(type) < 0) {
+            foreign.push(url);
+        } else {
+            embeddable.push(url);
+        }
+    });
+    return embeddable.concat(foreign);
+}
+
+// A tag's attributes as a lookup. No prototype: an attribute the page called
+// "constructor" must read as absent, not as a function. First wins, which is
+// what the html parser does with a repeated attribute.
+function attributeMap(attrs) {
+    let map = Object.create(null);
+    for (let i = 0; i < attrs.length; i++) {
+        if (!(attrs[i].name in map)) {
+            map[attrs[i].name] = attrs[i].value;
+        }
+    }
+    return map;
+}
+
 // Every source an <img> offers, best first, for the caller to try in order until
 // one of them resolves. Reading them in a fixed order rather than taking the
 // first that exists is what keeps a placeholder from beating the picture it
@@ -535,8 +590,11 @@ function pickFromSrcset(value) {
 // downstream can work out for itself, and is null off the live page.
 // renderedPlaceholder says the element finished loading a 1x1, which is a fact
 // about the bytes rather than a guess about the url, and the strongest signal
-// there is that src is standing in for something.
-function imageSrcCandidates(getAttribute, currentSrc, renderedPlaceholder) {
+// there is that src is standing in for something. pictureSources are the
+// <source> elements of the <picture> this <img> is inside, in document order,
+// and matter for the same reason: off the live page they are the only place its
+// real image is named.
+function imageSrcCandidates(getAttribute, currentSrc, renderedPlaceholder, pictureSources) {
     let attr = function (name) {
         let value = getAttribute(name);
         return String(value == null ? '' : value).trim();
@@ -567,15 +625,24 @@ function imageSrcCandidates(getAttribute, currentSrc, renderedPlaceholder) {
     }
     LAZY_IMAGE_SRC_ATTRIBUTES.forEach(function (name) { add(attr(name)); });
     LAZY_IMAGE_SRCSET_ATTRIBUTES.forEach(function (name) { add(pickFromSrcset(attr(name))); });
+    let pictureUrls = pictureSourceUrls(pictureSources);
     if (usingPlaceholder) {
         addSelected();
         // srcset with no src at all, which the browser resolves and an offline
         // reader cannot
         add(pickFromSrcset(attr('srcset')));
+        // ...and the same set one element up, for a responsive <picture> whose
+        // <img> carries nothing but the alt text
+        pictureUrls.forEach(add);
         // Last, and only because dropping an image the page did ship is the
         // worse mistake: everything above this line is a guess.
         add(src);
     }
+    // Behind src for an image that named a real one: the other encodings of a
+    // <picture> are the same picture, so they are worth trying if that src turns
+    // out not to resolve, but never ahead of it. The <img> is the encoding the
+    // page guaranteed every reader can open, which is the book's position too.
+    pictureUrls.forEach(add);
     return candidates;
 }
 
@@ -666,6 +733,13 @@ function parseHTML(rawContentString, options) {
     let openTags = [];
     // Tags whose content is being dropped, innermost last
     let skippedTags = [];
+    // The <source> elements of the <picture> currently open, in document order.
+    // <picture> is not an allowed tag, so it is unwrapped and its sources are
+    // dropped - but they are where the image is named when there is no live
+    // element to ask for currentSrc, so they are held until the <img> they
+    // belong to is written. See imageSrcCandidates.
+    let pictureSources = [];
+    let inPicture = false;
 
     let isVoidTag = (tag) => voidTags.indexOf(tag) > -1;
 
@@ -688,6 +762,22 @@ function parseHTML(rawContentString, options) {
                     return;
                 }
 
+                if (tag === 'picture') {
+                    inPicture = true;
+                    pictureSources = [];
+                } else if (tag === 'source' && inPicture) {
+                    let sourceAttrs = attributeMap(attrs);
+                    let srcset = '';
+                    ['srcset'].concat(LAZY_IMAGE_SRCSET_ATTRIBUTES).forEach(function (name) {
+                        if (srcset === '') {
+                            srcset = String(sourceAttrs[name] == null ? '' : sourceAttrs[name]).trim();
+                        }
+                    });
+                    if (srcset !== '') {
+                        pictureSources.push({srcset: srcset, type: sourceAttrs['type']});
+                    }
+                }
+
                 if (allowedTags.indexOf(tag) < 0) {
                     if (strippedContentTags.indexOf(tag) > -1 && !unary && !isVoidTag(tag)) {
                         skippedTags.push(tag);
@@ -701,15 +791,12 @@ function parseHTML(rawContentString, options) {
                     // The source is written first because choosing it needs
                     // every attribute of the tag at once - see
                     // imageSrcCandidates - rather than the one named src.
-                    // No prototype: an attribute the page called "constructor"
-                    // must read as absent, not as a function. First wins, which
-                    // is what the html parser does with a repeated attribute.
-                    let tagAttrs = Object.create(null);
-                    for (let i = 0; i < attrs.length; i++) {
-                        if (!(attrs[i].name in tagAttrs)) {
-                            tagAttrs[attrs[i].name] = attrs[i].value;
-                        }
-                    }
+                    let tagAttrs = attributeMap(attrs);
+                    // Consumed here rather than at </picture>: a page that never
+                    // closes the element can then mislead at most this one <img>,
+                    // and a <picture> holds exactly one anyway.
+                    let sources = pictureSources;
+                    pictureSources = [];
                     let tmpSrc = '';
                     // Off the live page there is no currentSrc and no loaded
                     // bitmap to measure: extraction has already resolved those
@@ -718,7 +805,7 @@ function parseHTML(rawContentString, options) {
                     // iframe, a chapter being re-sanitized - never had them at all.
                     let srcCandidates = imageSrcCandidates(function (name) {
                         return tagAttrs[name];
-                    }, null, false);
+                    }, null, false, sources);
                     for (let i = 0; i < srcCandidates.length; i++) {
                         tmpSrc = options.resolveImageSrc(srcCandidates[i]);
                         if (tmpSrc !== '') {
@@ -819,6 +906,11 @@ function parseHTML(rawContentString, options) {
                     }
                     // End tag for something never opened inside the dropped content
                     return;
+                }
+
+                if (tag === 'picture') {
+                    inPicture = false;
+                    pictureSources = [];
                 }
 
                 if (allowedTags.indexOf(tag) < 0 || isVoidTag(tag)) {

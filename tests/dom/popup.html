@@ -44,6 +44,15 @@ var includeStyle = true;
 // says otherwise - the checkbox that decides whether the library button captures
 // the page first is defaulted from this.
 var snapshot = null;
+// The background's side of the two answers the popup now acts on: whether a job
+// is running ('is busy?', which the popup polls while it waits) and whether a
+// command was taken at all (the {started: true} every command type is answered
+// with). A test that wants a worker which is not there sets commandReply to
+// undefined.
+var busy = false;
+var commandReply = {started: true};
+var commandTypes = ['save-page', 'save-selection', 'add-page', 'add-selection',
+                    'style-snapshot'];
 
 window.chrome = {
   runtime: {
@@ -53,7 +62,8 @@ window.chrome = {
     sendMessage: function(msg, cb) {
       sent.push(msg.type);
       var reply = {};
-      if (msg.type === 'is busy?') reply = {isBusy: false};
+      if (msg.type === 'is busy?') reply = {isBusy: busy};
+      if (commandTypes.indexOf(msg.type) > -1) reply = commandReply;
       if (msg.type === 'get include style') reply = {includeStyle: includeStyle};
       if (msg.type === 'set include style') { includeStyle = msg.includeStyle; reply = {ok: true}; }
       if (msg.type === 'get reader mode') reply = {readerMode: false};
@@ -346,8 +356,119 @@ function afterToggle() {
          document.getElementById('busy').style.display);
   document.getElementById('busy').style.display = 'none';
 
-  report('nothing threw', errors.length === 0, errors.join(' | '));
-  document.title = 'DONE';
+  // the clicks above each left a watch armed for the job they said they had
+  // started - see afterRefusals, which runs once those replies have landed
+  setTimeout(afterRefusals, 30);
+}
+
+// ---- a command the background never took ----
+//
+// {started: true} is the answer to a command that was accepted. It arrives
+// before the command runs, and it is the only sign this popup gets that
+// anything is running at all: a service worker that fails to start answers
+// nothing, and there is then no job to send popup-close and nothing running to
+// send popup-failed either. This callback is the last place the overlay can
+// come down.
+function afterRefusals() {
+  stopWatchingJob();
+  commandReply = undefined;
+  document.getElementById('savePage').click();
+  setTimeout(afterUnanswered, 30);
+}
+
+function afterUnanswered() {
+  var failed = document.getElementById('failedMessage');
+  report('a command the worker never answered stops the spinner and says so',
+         document.getElementById('busy').style.display === 'none' &&
+         failed.style.display === 'block' &&
+         failed.textContent === 'notStartedMessage',
+         document.getElementById('busy').style.display + '|' + failed.style.display +
+         '|' + failed.textContent);
+  report('and nothing is left watching for a job that was never started',
+         jobPoll === null);
+
+  // ---- a job that started and then stopped reporting ----
+  //
+  // The tab is navigated away while the page is still downloading images or
+  // building the zip. No 'done' is sent, so no finishJob runs, so neither
+  // popup-close nor popup-failed ever arrives - the two exits the tests above
+  // cover. The background does discard a job whose heartbeat has gone quiet,
+  // but only when something asks it, and until this poll existed nothing did.
+  commandReply = {started: true};
+  busy = true;
+  document.getElementById('savePage').click();
+  setTimeout(afterStarted, 30);
+}
+
+function afterStarted() {
+  report('a command that started leaves the popup waiting and watching',
+         document.getElementById('busy').style.display === 'block' && jobPoll !== null,
+         document.getElementById('busy').style.display);
+
+  // still running: the poll says so and nothing changes
+  pollJob();
+  setTimeout(afterRunningPoll, 30);
+}
+
+function afterRunningPoll() {
+  report('while the job is still running the overlay stays up',
+         document.getElementById('busy').style.display === 'block' && jobSeen === true,
+         document.getElementById('busy').style.display + '|' + jobSeen);
+
+  // ...and now it is gone. Not called a failure at once: a job that ended
+  // normally removes its record and *then* asks this popup to close, so a poll
+  // landing between those two steps would flash a failure over a save that
+  // worked, right up until the window closed.
+  busy = false;
+  pollJob();
+  setTimeout(afterGonePoll, 30);
+}
+
+function afterGonePoll() {
+  report('a job that has gone is not called a failure straight away',
+         document.getElementById('busy').style.display === 'block' &&
+         document.getElementById('failedMessage').style.display === 'none',
+         document.getElementById('busy').style.display + '|' +
+         document.getElementById('failedMessage').style.display);
+  // no popup-close arrives, so the grace runs out
+  setTimeout(afterGrace, 2300);
+}
+
+function afterGrace() {
+  var failed = document.getElementById('failedMessage');
+  report('a job that stopped reporting ends the wait once no close has come',
+         document.getElementById('busy').style.display === 'none' &&
+         failed.style.display === 'block' &&
+         failed.textContent === 'stoppedMessage',
+         document.getElementById('busy').style.display + '|' + failed.style.display +
+         '|' + failed.textContent);
+  report('and the polling stopped with it', jobPoll === null);
+
+  // ---- the other direction: a poll that outran the job claim ----
+  //
+  // The background injects the content scripts before it claims anything, so
+  // there is a window in which the command has been accepted and no job exists
+  // yet. A "no job" from inside that window means the opposite of one from
+  // after it, and must not cancel a command that is about to start.
+  busy = false;
+  document.getElementById('savePage').click();
+  setTimeout(afterEarlyPoll, 30);
+}
+
+function afterEarlyPoll() {
+  pollJob();
+  setTimeout(function () {
+    report('a poll that outran the job claim does not cancel the command',
+           document.getElementById('busy').style.display === 'block' &&
+           document.getElementById('failedMessage').style.display === 'none' &&
+           jobPoll !== null,
+           document.getElementById('busy').style.display + '|' +
+           document.getElementById('failedMessage').style.display);
+    stopWatchingJob();
+
+    report('nothing threw', errors.length === 0, errors.join(' | '));
+    document.title = 'DONE';
+  }, 30);
 }
 </script>
 </body>

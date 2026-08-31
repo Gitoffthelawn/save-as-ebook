@@ -258,6 +258,50 @@ function equal(actual, expected, message) {
         });
     });
 
+    // The four-chapter case above mixes scripts; this is the book the finding
+    // actually described. Every title is in a script the slug keeps nothing of,
+    // so every name is its index and nothing else - which is the one arrangement
+    // where the index has to carry the whole burden of being unique, and the one
+    // where a chapter list long enough to reach two digits can put 'ch1' and
+    // 'ch11' in the same folder. Twelve chapters is past that boundary; a
+    // fifty-chapter book of same-script titles was the finding's own example of
+    // where the old four random digits collided about one time in nine.
+    await scenario('a whole book of titles with no ascii in them still names every chapter apart', async () => {
+        const env = makeSandbox();
+        const titles = ['Русская глава', '中文章节', '日本語の章', '한국어 章',
+                        'Ελληνικό κεφάλαιο', 'فصل عربي', 'פרק עברי', 'Глава вторая',
+                        '中文章节二', 'हिन्दी अध्याय', 'ไทยบท', 'Українська глава'];
+        const pages = titles.map((title, index) => chapter({
+            title: title,
+            // one stored name for the whole book: the slug rule kept nothing of
+            // any of these titles, so the old name was the four random digits
+            // alone and every chapter here drew the same four
+            url: '_9753.xhtml',
+            styleFileName: 'style9753.css',
+            sourceUrl: 'https://example.test/p' + index,
+            content: '<p>body ' + index + '</p>'
+        }));
+        const epub = await inspect(env, await build(env, pages));
+
+        equal(epub.pages.length, titles.length, 'every chapter should be declared in the manifest');
+        equal(new Set(epub.pages).size, titles.length, 'no two chapters may be written to one file');
+        equal(new Set(epub.styles).size, titles.length, 'no two chapters may share a stylesheet');
+        // the names are the indices, so this is also the assertion that a
+        // one-digit index is not a prefix of a two-digit one
+        equal(epub.pages[1], 'OEBPS/pages/ch1.xhtml', 'a title with no ascii should name a file by index alone');
+        equal(epub.pages[11], 'OEBPS/pages/ch11.xhtml', 'the twelfth chapter must not land on the second');
+
+        // and the content, because a collision was never a naming problem: it
+        // was chapters leaving the book without a word being said about it
+        const bodies = await Promise.all(epub.pages.map((name, index) => epub.page(index)));
+        titles.forEach((title, index) => {
+            ok(bodies[index].includes('<p>body ' + index + '</p>'),
+               'chapter ' + index + ' should hold its own content');
+            ok(bodies[index].includes(title),
+               'chapter ' + index + ' should be titled ' + title);
+        });
+    });
+
     // A blank title used to be filtered out with the malformed records, so a
     // chapter whose title was cleared in the editor - to retype it, or by a
     // stray select-all - was dropped from the archive with the row still sitting
@@ -622,6 +666,7 @@ function equal(actual, expected, message) {
             // captured css reaches this too: 'list-style' serializes an absolute
             // url whenever the source page gave its bullets a picture
             styleFileContent: 'ul{list-style:outside none url("https://cdn.test/bullet.png")}',
+            images: [{filename: 'local.png', data: IMAGE_BYTES}],
             customCss: [
                 '@import url("https://fonts.test/face.css");',
                 "@import 'local.css';",
@@ -652,9 +697,75 @@ function equal(actual, expected, message) {
 
         ok(style.includes('url("../images/local.png")'),
            'a reference to a picture the book really contains is kept: ' + style);
+        ok(epub.names.includes('OEBPS/images/local.png'),
+           'and the picture it names is a file this archive holds');
         ok(style.includes('url(data:image/gif;base64,R0lGOD)'),
            'a data url is carried in the file rather than fetched, and is kept');
         ok(style.includes('.kept{color:red}'), 'and everything else is left alone');
+    });
+
+    // A url that is not remote used to be kept on the strength of not being
+    // remote, which is a different question from whether it is there. EPUBCheck
+    // answers the second one with RSC-007 and takes the whole package down with
+    // it, so the build has to answer it first.
+    await scenario('a stylesheet url that names no file in the archive is removed', async () => {
+        const env = makeSandbox();
+        const epub = await inspect(env, await build(env, [chapter({
+            images: [{filename: 'photo.png', data: IMAGE_BYTES}],
+            content: '<p>Text <img src="../images/photo.png" alt="" /></p>',
+            customCss: [
+                // the audit's own reproduction: a background nobody downloaded
+                '.gap{background-image:url(missing.png)}',
+                // a font, which this build never writes and so never has
+                '@font-face{font-family:x;src:url("fonts/x.woff2")}',
+                // a path out of the archive entirely
+                '.up{background-image:url("../../outside.png")}',
+                // an image record that exists, named the way the editor's box
+                // invites: from the chapter, which is not where the file lands
+                '.repaired{background-image:url(images/photo.png)}',
+                // and one already written the way the archive reads
+                '.right{background-image:url(../images/photo.png)}',
+                // a fragment is a reference into this document, not to a file
+                '.filtered{filter:url(#blur)}'
+            ].join('\n')
+        })], {css: 'body{background-image:url(images/photo.png)}\n' +
+                   'p{background-image:url(nothing-here.png)}'}));
+
+        const style = await epub.style(0);
+        ok(!/missing\.png|x\.woff2|outside\.png/.test(style),
+           'a reference to a file the archive does not contain survived: ' + style);
+        ok((style.match(/background-image:none/g) || []).length === 2,
+           'and each one leaves a value the property accepts: ' + style);
+        ok(style.includes('.repaired{background-image:url("../images/photo.png")}'),
+           'a real picture named from the wrong folder should be repaired, not dropped: ' + style);
+        ok(style.includes('.right{background-image:url(../images/photo.png)}'),
+           'and one already correct should be left exactly as written: ' + style);
+        ok(style.includes('url(#blur)'),
+           'a fragment names no file and is not this rule\'s business: ' + style);
+
+        // Same rule, different depth: ebook.css sits beside images/, so the
+        // prefix that is right for a chapter stylesheet is wrong here.
+        const book = await epub.read('OEBPS/ebook.css');
+        ok(book.includes('body{background-image:url(images/photo.png)}'),
+           'the book stylesheet reaches images/ without going up a folder: ' + book);
+        ok(!book.includes('nothing-here.png') && book.includes('p{background-image:none}'),
+           'and it is held to the same archive as the chapters: ' + book);
+    });
+
+    // The other direction: what a stylesheet may name is what the archive holds,
+    // which is every chapter's images and not only the chapter it belongs to -
+    // OEBPS/images/ is one namespace for the whole book.
+    await scenario('a stylesheet may name a picture that arrived with another chapter', async () => {
+        const env = makeSandbox();
+        const epub = await inspect(env, await build(env, [
+            chapter({url: 'one.xhtml', title: 'One',
+                     images: [{filename: 'shared.png', data: IMAGE_BYTES}],
+                     content: '<p>One <img src="../images/shared.png" alt="" /></p>'}),
+            chapter({url: 'two.xhtml', title: 'Two',
+                     customCss: '.b{background-image:url(../images/shared.png)}'})
+        ]));
+        ok((await epub.style(1)).includes('url(../images/shared.png)'),
+           'the second chapter may style itself with the first chapter\'s picture');
     });
 
     // ---- what the user said about the book ------------------------------------
