@@ -42,10 +42,18 @@
 //   - every @import goes, remote or not. A remote one is the fetch above; a
 //     local one names a file the archive has no way to contain.
 //
-// A relative url() is left alone: "../images/photo.jpg" from a chapter
-// stylesheet resolves to a picture the book really does contain. data: urls stay
-// for the same reason - they are the resource itself, carried in the file,
-// rather than an address to go and get it from.
+// A relative url() is not remote, so none of the above applies to it - but it is
+// not automatically fine either: "../images/photo.jpg" is only a picture if
+// something at that path exists. Whether it does is a question about where the
+// stylesheet is going to live, which this file cannot answer and its callers
+// can, so a caller may pass a resolveUrl option and be asked. saveEbook.js does,
+// because a book stylesheet naming a file the archive does not contain is an
+// EPUBCheck error that fails the whole package; styleLibrary.js does not, since
+// css injected into a live page resolves against that page and nothing here
+// knows which one. Absent the option, a relative url is left as it was written.
+//
+// data: urls stay either way - they are the resource itself, carried in the
+// file, rather than an address to go and get it from.
 //
 // Nothing here touches the DOM or chrome.*: the service worker has neither, and
 // a stylesheet parser that can only run where there is a document would be a
@@ -66,6 +74,28 @@ function isRemoteCssUrl(target) {
         return false;
     }
     return /^(?:[a-z][a-z0-9+.\-]*:|\/\/)/i.test(value);
+}
+
+// Which of the targets that are not remote actually name a file, and so are
+// worth asking a caller's resolveUrl about. Two are not: a data: url carries the
+// resource rather than addressing one, and a bare fragment - url(#blur) for a
+// filter, a clip path, a gradient - points into the document using it and at no
+// file at all. Neither can dangle, so neither is the resolver's business, and
+// handing them over would only give a resolver that judges files the chance to
+// answer wrongly about something that is not one.
+function isLocalCssFileUrl(target) {
+    var value = String(target === undefined || target === null ? '' : target).trim();
+    return value !== '' && value.charAt(0) !== '#' && !/^data:/i.test(value);
+}
+
+// A url written back out, which happens only when a resolver returns a different
+// address from the one it was given. Always the quoted form: a file name may
+// hold a character the unquoted url token cannot carry - a space, a paren, a
+// quote of its own - and inside a string only three characters need escaping.
+function quoteCssUrl(value) {
+    return '"' + String(value).replace(/[\\"\n]/g, function(ch) {
+        return ch === '\n' ? '\\A ' : '\\' + ch;
+    }) + '"';
 }
 
 // ---- the four things that decide where a token ends --------------------------
@@ -169,6 +199,12 @@ function readCssIdent(css, index) {
 // A quoted string. An unescaped newline inside one ends it - the token is a
 // parse error at that point, and treating the rest of the file as string
 // content would hide everything after it from this pass.
+//
+// Whether the closing quote was actually there is reported, because the two
+// endings mean different things to a caller that is about to replace a span of
+// text: a closed string is a value, an unclosed one is the point where css
+// error recovery takes over and everything after it stops being what it looks
+// like.
 function readCssString(css, index) {
     var quote = css.charAt(index);
     var value = '';
@@ -176,10 +212,10 @@ function readCssString(css, index) {
     while (index < css.length) {
         var ch = css.charAt(index);
         if (ch === quote) {
-            return {value: value, next: index + 1};
+            return {value: value, next: index + 1, terminated: true};
         }
         if (ch === '\n') {
-            return {value: value, next: index};
+            return {value: value, next: index, terminated: false};
         }
         if (ch === '\\') {
             if (css.charAt(index + 1) === '\n') {
@@ -194,7 +230,7 @@ function readCssString(css, index) {
         value += ch;
         index++;
     }
-    return {value: value, next: index};
+    return {value: value, next: index, terminated: false};
 }
 
 function readCssComment(css, index) {
@@ -364,8 +400,21 @@ function endOfCssAtRule(css, index) {
 // This is a filter, not a formatter: css a reading system does not understand is
 // css it ignores, and re-serializing a stylesheet to remove two constructs from
 // it would put this file in the business of having an opinion about the rest.
-function sanitizeCssResources(css) {
+//
+// options.resolveUrl, if given, is asked about every url() and src() target that
+// is not remote and does name a file - see isLocalCssFileUrl(). It answers with
+// the address to write instead, or with null for a file that is not there, which
+// is removed and reported exactly as a remote one is. It is asked about url()
+// and src() only, and deliberately not about the bare strings inside other
+// functions: there, "an address" is a guess about a value whose meaning belongs
+// to the function holding it, and format("woff2") and local("Arial") are strings
+// that a resolver judging file names would delete. The remote rule can be
+// stricter there because an http url inside any function has no innocent
+// reading; "does this file exist" has plenty.
+function sanitizeCssResources(css, options) {
     var source = String(css === undefined || css === null ? '' : css);
+    var resolveUrl = options && typeof options.resolveUrl === 'function' ?
+                     options.resolveUrl : null;
     var out = '';
     var copied = 0;
     var removed = [];
@@ -404,7 +453,15 @@ function sanitizeCssResources(css) {
         if (quote === '"' || quote === '\'') {
             var string = readCssString(source, at);
             target = string.value;
-            end = endOfCssFunction(source, string.next);
+            // A string that never closed is a parse error, and css recovers from
+            // one by dropping the declaration it sits in - not the rest of the
+            // file. Scanning on for a ')' that is not coming would find the end
+            // of the stylesheet and take every rule after this one with it, so
+            // the replacement stops at the string. What is written back is
+            // 'none' followed by whatever the recovery point was, which is the
+            // same shape a browser is left holding.
+            end = string.terminated ? endOfCssFunction(source, string.next)
+                                    : string.next;
         } else if (name === 'url') {
             var token = readCssUrlToken(source, at);
             target = token.value;
@@ -421,6 +478,23 @@ function sanitizeCssResources(css) {
         if (isRemoteCssUrl(target)) {
             note(target);
             replaceSpan(start, end, REMOVED_CSS_URL);
+            return end;
+        }
+
+        if (resolveUrl && isLocalCssFileUrl(target)) {
+            var resolved = resolveUrl(target);
+            if (resolved === null || resolved === undefined || resolved === '') {
+                note(target);
+                replaceSpan(start, end, REMOVED_CSS_URL);
+            } else if (resolved !== target) {
+                // The function keeps the name it was written with rather than a
+                // canonical one: url() and src() are not interchangeable to
+                // every parser, and this pass has no business renaming a
+                // construct it is only correcting the address of.
+                replaceSpan(start, end,
+                            source.substring(start, afterParen - 1) +
+                            '(' + quoteCssUrl(resolved) + ')');
+            }
         }
         return end;
     }
@@ -452,6 +526,18 @@ function sanitizeCssResources(css) {
 
         if (ch === '@' && startsCssIdent(source, index + 1)) {
             var atKeyword = readCssIdent(source, index + 1);
+            // @namespace names a namespace; it does not fetch one. The url in
+            // "@namespace url(http://www.w3.org/1999/xhtml)" is an identifier
+            // that happens to be spelled as an address - no browser requests
+            // it - so the prelude is stepped over rather than read. Judging it
+            // by shape would rewrite it to 'none', which breaks every
+            // namespace-qualified selector in the file and reports a tracker
+            // that was never there.
+            if (atKeyword.value.toLowerCase() === 'namespace') {
+                index = endOfCssAtRule(source, atKeyword.next);
+                atDeclarationStart = true;
+                continue;
+            }
             if (atKeyword.value.toLowerCase() === 'import') {
                 var ruleEnd = endOfCssAtRule(source, atKeyword.next);
                 note(source.substring(index, ruleEnd));

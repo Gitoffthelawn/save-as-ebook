@@ -60,6 +60,12 @@
     "noTabMessage": {
         "message": "Enregistrer comme eBook n'a pas trouvé la page à lire - merci de réessayer."
     },
+    "notStartedMessage": {
+        "message": "Enregistrer comme eBook n'a pas pu démarrer cette commande - l'extension n'a pas répondu. Merci de réessayer."
+    },
+    "stoppedMessage": {
+        "message": "La capture s'est arrêtée avant la fin - quitter ou recharger la page pendant l'enregistrement l'interrompt. Rien n'a été téléchargé, merci de réessayer."
+    },
     "chapterEditorTitle": {
         "message": "Éditeur de chapitre"
     },

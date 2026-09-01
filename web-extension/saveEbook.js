@@ -32,25 +32,72 @@ var cssFileName = 'ebook.css';
 // file states the whole rule and why it is that rule; this one only says which
 // half of the result it wants.
 //
-// A url() that is not remote is left alone: "../images/photo.jpg" from a chapter
-// stylesheet resolves to a picture the book really does contain, and using one as
-// a background is a reasonable thing to want. data: urls stay for the same
-// reason - they are carried in the file rather than fetched.
-function sanitizeStylesheet(css) {
-    return sanitizeCssResources(css).css;
+// A url() that is not remote survives that pass, because "../images/photo.jpg"
+// from a chapter stylesheet can resolve to a picture the book really does
+// contain, and using one as a background is a reasonable thing to want. Whether
+// it does resolve is the second question, and archiveCssUrl() below is where the
+// build answers it. data: urls stay throughout - they are carried in the file
+// rather than fetched.
+function sanitizeStylesheet(css, resolveUrl) {
+    return sanitizeCssResources(css, resolveUrl ? {resolveUrl: resolveUrl} : null).css;
 }
+
+// The one file a stylesheet in this archive can address.
+//
+// EPUB has no tolerance for the difference between a reference that resolves and
+// one that does not: a stylesheet naming a file the package does not contain is
+// RSC-007, and one background image is enough to make the whole book fail
+// validation. So a local url is not taken on trust. It is looked up among the
+// images the build is about to write, in the same shape an <img> src takes - see
+// dropMissingImages(), which does this for the markup - and anything that is not
+// one of them goes.
+//
+// What resolves is written back with the prefix that reaches the images folder
+// from the file being written, which is not the same string in the two places a
+// stylesheet lands: OEBPS/ebook.css is beside images/, OEBPS/style/styleN.css is
+// a folder below it. That is why the leading '../' segments are matched loosely
+// and then restated rather than checked - a user typing css into the editor is
+// naming the picture they can see in the chapter, and they have no way to know
+// which of the two files their rule is about to end up in. Getting the prefix
+// wrong is the same dangling reference as naming a file that was never there,
+// and it is the more likely of the two mistakes.
+//
+// Every rejected reference is collected rather than counted, because the useful
+// thing to say about one is which address it was.
+function archiveCssUrl(allImages, imagesPath, dropped) {
+    var filenames = Object.create(null);
+    allImages.forEach(function(image) {
+        filenames[image.filename] = true;
+    });
+    return function(target) {
+        var match = String(target).match(/^(?:\.{1,2}\/)*images\/([^/?#]+)(?:[?#].*)?$/i);
+        if (match && filenames[match[1]]) {
+            return imagesPath + match[1];
+        }
+        dropped.push(target);
+        return null;
+    };
+}
+
+// Where images/ is from each of the two files that carry css.
+var BOOK_CSS_IMAGES_PATH = 'images/';
+var CHAPTER_CSS_IMAGES_PATH = '../images/';
 
 // The stylesheet a chapter is written with: what extraction captured from the
 // page, then what the user added in the editor. In that order, so that a rule
 // the user writes wins over the scraped one it collides with - which is the
 // whole point of being able to write one.
-function chapterStyleContent(page) {
+//
+// resolveUrl is the build's; the chapter preview calls this without one, since
+// nothing it renders is read out of an archive.
+function chapterStyleContent(page, resolveUrl) {
     var captured = typeof page.styleFileContent === 'string' ? page.styleFileContent : '';
     var authored = typeof page.customCss === 'string' ? page.customCss : '';
     if (authored.trim() === '') {
-        return sanitizeStylesheet(captured);
+        return sanitizeStylesheet(captured, resolveUrl);
     }
-    return sanitizeStylesheet(captured === '' ? authored : captured + '\n' + authored);
+    return sanitizeStylesheet(captured === '' ? authored : captured + '\n' + authored,
+                              resolveUrl);
 }
 
 // Compression is set per file, never globally: OCF requires 'mimetype' to be
@@ -1196,11 +1243,36 @@ function buildEbook(allPages, bookMeta, jobId) {
     // The book-wide stylesheet: written by hand in the chapter editor, empty for
     // every book whose author never opened that box. Every chapter links it, and
     // so does the table of contents.
-    oebps.file(cssFileName, sanitizeStylesheet(bookMeta.css), DEFLATED);
+    //
+    // Both stylesheets have their local url()s checked against the images this
+    // archive is about to hold - see archiveCssUrl() - and both are checked
+    // against the same list: OEBPS/images/ is one namespace for the whole book,
+    // so a rule in ebook.css may name a picture that arrived with any chapter.
+    var droppedCssUrls = [];
+    oebps.file(cssFileName,
+               sanitizeStylesheet(bookMeta.css,
+                                  archiveCssUrl(allImages, BOOK_CSS_IMAGES_PATH,
+                                                droppedCssUrls)),
+               DEFLATED);
+    // One resolver for every chapter stylesheet, because they all land in the
+    // same folder and read from the same images.
+    var chapterCssUrl = archiveCssUrl(allImages, CHAPTER_CSS_IMAGES_PATH, droppedCssUrls);
     var styleFolder = oebps.folder('style');
     allPages.forEach(function(page) {
-        styleFolder.file(page.styleFileName, chapterStyleContent(page), DEFLATED);
+        styleFolder.file(page.styleFileName, chapterStyleContent(page, chapterCssUrl),
+                         DEFLATED);
     });
+    // Said rather than raised. A dropped reference costs a background image and
+    // the book is otherwise the one that was asked for, which does not justify
+    // stopping a download the user is waiting on - and the alternative to
+    // dropping it is a package no reading system will open. Named once each: the
+    // same rule copied into every chapter's box is one mistake, not twenty.
+    if (droppedCssUrls.length > 0) {
+        console.log('Stylesheet references to files this book does not contain, removed: ' +
+                    droppedCssUrls.filter(function(url, index) {
+                        return droppedCssUrls.indexOf(url) === index;
+                    }).join(', '));
+    }
 
     var pagesFolder = oebps.folder('pages');
     allPages.forEach(function(page, index) {
