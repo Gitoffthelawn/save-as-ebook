@@ -176,27 +176,40 @@ and, while removing, names the element a click is about to take.
 Saving a chapter puts it back in the list. The book itself is still not written
 until **Generate** in the editor.
 
-
 ### Style Library
 
-Some pages carry things a book should not: a sidebar, a cookie banner, a sticky
-header that reappears in the middle of a chapter. The **Style Library** holds the
-CSS that is applied to a page *while it is being captured*, so that what is saved
-is the page without them.
+The Style Library holds CSS that is applied while a page is captured. Use it to
+remove cookie notices, menus, ads, sidebars, comments, and other content that
+should not enter the EPUB.
 
-A style is a name, a note, a rule about which pages it covers, and some CSS. When
-a page is saved, every style that is switched on and covers that address is
-applied first, and only then is the page read into the book. Hiding an element
-with a style keeps it out of the .epub for good; this is not a viewing setting.
-Twenty four styles ship with the extension: cleanups for Reddit, Wikipedia,
-Hacker News, Medium and X, general ones that hide consent banners, ads, sidebars,
-comments, share buttons and newsletter prompts on any site, and whole-book looks
-such as serif reading, large print, compact and no images.
+This differs from the **eBook Stylesheet** in the chapter editor:
 
-The library is reached from the extension popup, whose button lists the styles
-the page in front of you would take, each of which can be switched on or off
-there. It is not the same thing as the eBook Stylesheet in the chapter editor:
-that one styles the book that comes out, this one changes pages on the way in.
+1. Style Library CSS changes the source page before it becomes a chapter.
+2. eBook Stylesheet CSS changes the finished book.
+
+The extension includes nineteen capture styles. Some apply to particular
+sites. Others can apply to every page. You can enable them, edit them, duplicate
+them, or create your own.
+
+To make a style for the current page:
+
+1. Open the extension menu.
+2. Leave **Capture this page first** selected.
+3. Choose **Style Library**.
+4. Create or open a style.
+5. Write CSS, use one of the prepared rules, or choose **Pick element** and
+   click something in the preview.
+6. Save the style.
+
+Clear **Capture this page first** to open the library with its last captured
+page. This is faster when you do not need a new preview.
+
+A style can apply to every captured page or to addresses matched by domain, URL
+prefix, glob, or regular expression. The library also supports JSON import and
+export.
+
+Remote `url()` and `@import` references are removed from imported CSS. This
+prevents an imported style from contacting another site during capture.
 
 ![alt style-library.png](https://github.com/alexadam/save-as-ebook/blob/master/imgs/style-library.png?raw=true)
 
@@ -278,6 +291,27 @@ in Chrome:
 2. Scroll down
 3. Click on Keyboard shortcuts
 ```
+
+## Fixed in 2.3.0
+
+- Preserved buffered books until a new page or selection is successfully extracted, preventing failed captures from deleting existing chapters.
+- Added unique job IDs and ownership checks so stale heartbeats or completion messages cannot interfere with newer captures.
+- Replaced endless popup spinners with clear errors for restricted tabs, busy jobs, missing responses, and interrupted captures.
+- Detected storage write failures throughout the popup and editors instead of incorrectly reporting that changes were saved.
+- Warned before closing the chapter editor with unsaved book, metadata, CSS, chapter, order, or removal changes.
+- Kept chapters with blank titles, added safe fallback titles, and focused the empty title before generation rather than silently dropping content.
+- Captured responsive, `<picture>`, `srcset`, and common lazy loaded images more reliably, including pages that use placeholder pixels.
+- Reported images omitted because downloads were blocked or their formats were unsupported, while still producing the eBook.
+- Rounded and validated generated SVG and image dimensions so fractional or invalid values no longer break EPUB validation.
+- Generated deterministic, unique chapter and stylesheet filenames, preventing collisions, overwritten chapters, and invalid manifests.
+- Strengthened language tag and date validation, including stored metadata from older versions, so invalid values cannot reach the EPUB package.
+- Restricted MathML attributes by element and normalized unsupported constructs, preventing invalid formulas from invalidating the book.
+- Replaced regex based CSS resource filtering with a tokenizer that handles escapes, comments, nested functions, `image-set()`, imports, and other disguised remote references.
+- Removed or repaired missing local CSS resource references, including incorrect image paths, before packaging the EPUB.
+- Avoided creating an empty `images/` directory in text only books, eliminating the associated EPUBCheck warning.
+- Rejected overly long or potentially catastrophic style library regular expressions so matching cannot freeze the extension.
+- Removed dead helper code and implicit global XPath utilities that could throw or leak state.
+- Expanded automated coverage for capture failures, popup recovery, editor persistence, sanitization, image handling, stylesheet safety, and warning free EPUBCheck output.
 
 ## Added in 2.2.0
 
